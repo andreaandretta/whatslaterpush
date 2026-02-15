@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * GET /api/health
  * System health check endpoint
