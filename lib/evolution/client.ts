@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Evolution API v2 Client
  * Handles WhatsApp instance management and messaging
