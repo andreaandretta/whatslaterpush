@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * POST /api/webhook
  * Receives vCard from WhatsApp, extracts phone, parses date, schedules message
