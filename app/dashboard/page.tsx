@@ -1,6 +1,6 @@
 // @ts-nocheck
 'use client'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import React from 'react'
 
 export default function DashboardPage() {
@@ -11,11 +11,52 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(null)
   const refreshTimer = useRef(null)
+  const [messages, setMessages] = useState([])
+  const [messagesLoading, setMessagesLoading] = useState(true)
+  const msgTimer = useRef(null)
+
+  const fetchMessages = useCallback(async () => {
+    try {
+      const res = await fetch('/api/messages')
+      if (res.ok) {
+        const data = await res.json()
+        setMessages(Array.isArray(data) ? data : [])
+      }
+    } catch (e) { /* ignore */ }
+    finally { setMessagesLoading(false) }
+  }, [])
 
   useEffect(() => {
     checkStatus()
-    return () => { if (refreshTimer.current) clearInterval(refreshTimer.current) }
-  }, [])
+    fetchMessages()
+    msgTimer.current = setInterval(fetchMessages, 30000)
+    return () => {
+      if (refreshTimer.current) clearInterval(refreshTimer.current)
+      if (msgTimer.current) clearInterval(msgTimer.current)
+    }
+  }, [fetchMessages])
+
+  const handleCancel = async (id) => {
+    try {
+      await fetch('/api/messages', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status: 'cancelled' }),
+      })
+      fetchMessages()
+    } catch (e) { /* ignore */ }
+  }
+
+  const handleDelete = async (id) => {
+    try {
+      await fetch('/api/messages', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      fetchMessages()
+    } catch (e) { /* ignore */ }
+  }
 
   const checkStatus = async () => {
     try {
@@ -76,6 +117,49 @@ export default function DashboardPage() {
 
   const C = React.createElement
   const colors = { disconnected: 'bg-red-100 text-red-700', connecting: 'bg-orange-100 text-orange-700', connected: 'bg-green-100 text-green-700' }
+  const statusColors = { pending: 'bg-yellow-100 text-yellow-800', sent: 'bg-green-100 text-green-800', failed: 'bg-red-100 text-red-800', cancelled: 'bg-gray-100 text-gray-600' }
+
+  const formatDate = (d) => { try { return new Date(d).toLocaleString() } catch(e) { return d } }
+  const truncate = (s, n) => { if (!s) return ''; return s.length > n ? s.substring(0, n) + '...' : s }
+
+  const renderMessages = () => {
+    if (messagesLoading) {
+      return C('div', { className: 'bg-white rounded-3xl shadow-sm border border-gray-100 p-12 text-center' },
+        C('p', { className: 'text-gray-400 animate-pulse' }, 'Loading messages...')
+      )
+    }
+    if (messages.length === 0) {
+      return C('div', { className: 'bg-white rounded-3xl shadow-sm border border-gray-100 p-12 text-center' },
+        C('p', { className: 'text-gray-500' }, status === 'connected' ? 'No scheduled messages yet. Send a vCard to Note to Self!' : 'Connect WhatsApp first to start scheduling.')
+      )
+    }
+    return C('div', { className: 'space-y-3' },
+      ...messages.map((msg) =>
+        C('div', { key: msg.id, className: 'bg-white rounded-2xl shadow-sm border border-gray-100 p-5' },
+          C('div', { className: 'flex items-start justify-between gap-4' },
+            C('div', { className: 'flex-1 min-w-0' },
+              C('div', { className: 'flex items-center gap-2 mb-1' },
+                C('span', { className: 'font-medium text-gray-900 truncate' }, msg.recipient_name || msg.recipient_number || 'Unknown'),
+                C('span', { className: 'px-2 py-0.5 rounded-full text-xs font-medium ' + (statusColors[msg.status] || 'bg-gray-100 text-gray-600') }, msg.status)
+              ),
+              C('p', { className: 'text-sm text-gray-600 mb-1' }, truncate(msg.parsed_message || msg.caption || '', 80)),
+              C('p', { className: 'text-xs text-gray-400' }, formatDate(msg.scheduled_at))
+            ),
+            C('div', { className: 'flex gap-2 flex-shrink-0' },
+              msg.status === 'pending' ? C('button', {
+                onClick: () => handleCancel(msg.id),
+                className: 'px-3 py-1.5 text-xs font-medium rounded-lg border border-orange-200 text-orange-700 hover:bg-orange-50 transition-colors'
+              }, 'Cancel') : null,
+              C('button', {
+                onClick: () => handleDelete(msg.id),
+                className: 'px-3 py-1.5 text-xs font-medium rounded-lg border border-red-200 text-red-700 hover:bg-red-50 transition-colors'
+              }, 'Delete')
+            )
+          )
+        )
+      )
+    )
+  }
 
   return C('div', { className: 'min-h-screen bg-gray-50' },
     C('header', { className: 'bg-white border-b border-gray-200 sticky top-0 z-10' },
@@ -90,38 +174,39 @@ export default function DashboardPage() {
           C('div', { className: 'bg-white rounded-3xl shadow-sm border border-gray-100 p-8' },
             C('h2', { className: 'text-xl font-semibold text-gray-900 mb-6' }, 'Connect WhatsApp'),
             status === 'connected'
-              ? C('div', { className: 'text-center py-8' },
-                  C('div', { className: 'text-5xl mb-4' }, String.fromCodePoint(0x2705)),
-                  C('h3', { className: 'text-lg font-semibold text-green-700 mb-4' }, 'Connected!'),
-                  C('button', { onClick: handleDisconnect, className: 'px-4 py-2 text-sm border rounded-xl hover:bg-gray-50' }, 'Disconnect')
-                )
-              : C('div', { className: 'space-y-5' },
-                  qrCode ? C('div', { className: 'border-2 border-green-100 rounded-2xl p-6 text-center' },
-                    C('p', { className: 'text-sm text-gray-500 mb-4' }, 'Scan with WhatsApp'),
-                    C('img', { src: qrCode, alt: 'QR Code', className: 'w-56 h-56 mx-auto rounded-xl' }),
-                    C('p', { className: 'text-xs text-green-600 mt-2 animate-pulse' }, 'Auto-refreshing every 20s...')
-                  ) : null,
-                  pairingCode ? C('div', { className: 'bg-green-50 border border-green-200 rounded-2xl p-6 text-center' },
-                    C('p', { className: 'text-sm text-gray-600 mb-3' }, 'Pairing code:'),
-                    C('div', { className: 'text-3xl font-bold text-green-700 font-mono tracking-widest' }, pairingCode)
-                  ) : null,
-                  error ? C('div', { className: 'bg-red-50 border border-red-200 rounded-xl p-4 text-center text-sm text-red-600' }, error) : null,
-                  C('button', { onClick: handleGetCode, disabled: isLoading, className: 'w-full h-14 text-lg font-semibold rounded-2xl bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors' },
-                    isLoading ? 'Generating...' : qrCode ? 'Refresh QR Code' : 'Get Code')
-                )
+            ? C('div', { className: 'text-center py-8' },
+                C('div', { className: 'text-5xl mb-4' }, String.fromCodePoint(0x2705)),
+                C('h3', { className: 'text-lg font-semibold text-green-700 mb-4' }, 'Connected!'),
+                C('button', { onClick: handleDisconnect, className: 'px-4 py-2 text-sm border rounded-xl hover:bg-gray-50' }, 'Disconnect')
+              )
+            : C('div', { className: 'space-y-5' },
+                qrCode ? C('div', { className: 'border-2 border-green-100 rounded-2xl p-6 text-center' },
+                  C('p', { className: 'text-sm text-gray-500 mb-4' }, 'Scan with WhatsApp'),
+                  C('img', { src: qrCode, alt: 'QR Code', className: 'w-56 h-56 mx-auto rounded-xl' }),
+                  C('p', { className: 'text-xs text-green-600 mt-2 animate-pulse' }, 'Auto-refreshing every 20s...')
+                ) : null,
+                pairingCode ? C('div', { className: 'bg-green-50 border border-green-200 rounded-2xl p-6 text-center' },
+                  C('p', { className: 'text-sm text-gray-600 mb-3' }, 'Pairing code:'),
+                  C('div', { className: 'text-3xl font-bold text-green-700 font-mono tracking-widest' }, pairingCode)
+                ) : null,
+                error ? C('div', { className: 'bg-red-50 border border-red-200 rounded-xl p-4 text-center text-sm text-red-600' }, error) : null,
+                C('button', { onClick: handleGetCode, disabled: isLoading, className: 'w-full h-14 text-lg font-semibold rounded-2xl bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors' },
+                  isLoading ? 'Generating...' : qrCode ? 'Refresh QR Code' : 'Get Code')
+              )
           ),
           C('div', { className: 'mt-6 bg-white rounded-3xl shadow-sm border border-gray-100 p-6' },
             C('h3', { className: 'font-semibold text-gray-900 mb-3' }, 'How it works'),
-            C('p', { className: 'text-sm text-gray-500' }, '1. Click Get Code  2. Scan QR  3. Send vCard+date to Note to Self  4. We schedule it!')
+            C('p', { className: 'text-sm text-gray-500' }, '1. Click Get Code 2. Scan QR 3. Send vCard+date to Note to Self 4. We schedule it!')
           )
         ),
         C('div', { className: 'lg:col-span-2' },
-          C('h2', { className: 'text-xl font-semibold text-gray-900 mb-6' }, 'Scheduled Messages'),
-          C('div', { className: 'bg-white rounded-3xl shadow-sm border border-gray-100 p-12 text-center' },
-            C('p', { className: 'text-gray-500' }, status === 'connected' ? 'Send a vCard to Note to Self to schedule messages.' : 'Connect WhatsApp first to start scheduling.')
-          )
+          C('div', { className: 'flex items-center justify-between mb-6' },
+            C('h2', { className: 'text-xl font-semibold text-gray-900' }, 'Scheduled Messages'),
+            C('span', { className: 'text-xs text-gray-400' }, messages.length + ' message' + (messages.length !== 1 ? 's' : ''))
+          ),
+          renderMessages()
         )
       )
     )
   )
-          }
+}
