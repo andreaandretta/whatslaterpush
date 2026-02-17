@@ -1,129 +1,126 @@
 // @ts-nocheck
-import { NextRequest, NextResponse } from 'next/server'
-import { createServiceClient } from '@/lib/supabase/server'
-import { evolutionClient } from '@/lib/evolution/client'
+import { createClient } from '@supabase/supabase-js';
+import { NextResponse } from 'next/server';
 
-const CRON_SECRET = process.env.CRON_SECRET || ''
-const INSTANCE_NAME = 'SchedWhats-Primary'
+const supabase = createClient(
+        process.env.SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
 
-export const dynamic = 'force-dynamic'
-export const revalidate = 0
+// Rate limiting semplice
+const rateLimit = new Map();
 
-export async function GET(request: NextRequest) {
-      const authHeader = request.headers.get('authorization')
-      if (CRON_SECRET && authHeader && authHeader !== `Bearer ${CRON_SECRET}`) {
-              return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-      }
+export async function GET(req: Request) {
+        try {
+                  // Rate limit: max 50 invii per minuto totali
+          const now = Date.now();
+                  const windowStart = now - 60000;
+                  let requestCount = 0;
+                  for (const [time] of rateLimit) {
+                              if (time > windowStart) requestCount++;
+                  }
+                  if (requestCount > 50) {
+                              return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+                  }
+                  rateLimit.set(now, true);
 
-  const supabase = createServiceClient()
-      const results = []
-            let processed = 0
+          // Trova utenti attivi
+          const { data: users } = await supabase
+                    .from('user_instances')
+                    .select('id, phone_number')
+                    .or('subscription_status.eq.active,trial_ends_at.gte.' + new Date().toISOString());
 
-  try {
-          const now = new Date().toISOString()
+          let sent = 0;
+                  let failed = 0;
 
-        const { data: activeUsers } = await supabase
-            .from('user_instances')
-            .select('id, phone_number, instance_name')
-            .or(`subscription_status.eq.active,trial_ends_at.gte.${now}`)
+          for (const user of users || []) {
+                      // Max 10 messaggi per utente per ciclo
+                    const { data: messages } = await supabase
+                        .from('scheduled_messages')
+                        .select('*')
+                        .eq('user_instance_id', user.id)
+                        .eq('status', 'pending')
+                        .lte('scheduled_at', new Date().toISOString())
+                        .limit(10);
 
-        const activeUserIds = (activeUsers || []).map(u => u.id)
+                    for (const msg of messages || []) {
+                                  try {
+                                                  const res = await fetch(
+                                                                    process.env.EVOLUTION_API_URL + '/message/sendText/SchedWhats-Primary',
+                                                        {
+                                                                            method: 'POST',
+                                                                            headers: {
+                                                                                                  'apikey': process.env.EVOLUTION_API_KEY!,
+                                                                                                  'Content-Type': 'application/json'
+                                                                            },
+                                                                            body: JSON.stringify({
+                                                                                                  number: msg.recipient_number,
+                                                                                                  text: msg.parsed_message
+                                                                            })
+                                                        }
+                                                                  );
 
-        const { data: messages, error: fetchError } = await supabase
-            .from('scheduled_messages')
-            .select('*')
-            .eq('status', 'pending')
-            .lte('scheduled_at', now)
-            .order('scheduled_at', { ascending: true })
-            .limit(10)
+                                    if (!res.ok) throw new Error('HTTP ' + res.status);
 
-        if (fetchError) {
-                  console.error('Cron fetch error:', fetchError)
-                  return NextResponse.json({ error: fetchError.message }, { status: 500 })
+                                    await supabase
+                                                    .from('scheduled_messages')
+                                                    .update({ 
+                                                                          status: 'sent', 
+                                                                        sent_at: new Date().toISOString(),
+                                                                        user_notified: true
+                                                    })
+                                                    .eq('id', msg.id);
+
+                                    // Notifica mittente
+                                    await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/SchedWhats-Primary', {
+                                                      method: 'POST',
+                                                      headers: {
+                                                                          'apikey': process.env.EVOLUTION_API_KEY!,
+                                                                          'Content-Type': 'application/json'
+                                                      },
+                                                      body: JSON.stringify({
+                                                                          number: msg.instance_phone,
+                                                                          text: 'Messaggio inviato con successo a ' + (msg.recipient_name || msg.recipient_number) + '!'
+                                                      })
+                                    });
+
+                                    sent++;
+
+                                  } catch (err: any) {
+                                                  const newRetry = (msg.retry_count || 0) + 1;
+                                                  await supabase
+                                                    .from('scheduled_messages')
+                                                    .update({ 
+                                                                          status: newRetry >= 3 ? 'failed' : 'pending',
+                                                                        retry_count: newRetry,
+                                                                        error_message: err.message,
+                                                                        scheduled_at: newRetry < 3 ? 
+                                                                          new Date(Date.now() + 5 * 60 * 1000).toISOString() :
+                                                                                              msg.scheduled_at
+                                                    })
+                                                    .eq('id', msg.id);
+
+                                    if (newRetry >= 3) {
+                                                      await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/SchedWhats-Primary', {
+                                                                          method: 'POST',
+                                                                          headers: {
+                                                                                                'apikey': process.env.EVOLUTION_API_KEY!,
+                                                                                                'Content-Type': 'application/json'
+                                                                          },
+                                                                          body: JSON.stringify({
+                                                                                                number: msg.instance_phone,
+                                                                                                text: 'Impossibile inviare messaggio a ' + msg.recipient_number + '. Verifica che il numero sia corretto.'
+                                                                          })
+                                                      });
+                                                      failed++;
+                                    }
+                                  }
+                    }
+          }
+
+          return NextResponse.json({ sent, failed, timestamp: new Date().toISOString() });
+
+        } catch (err: any) {
+                  return NextResponse.json({ error: err.message }, { status: 500 });
         }
-
-        if (!messages || messages.length === 0) {
-                  return NextResponse.json({ sent: 0, message: 'No pending messages' })
-        }
-
-        const eligibleMessages = messages.filter(msg => {
-                  if (!msg.user_instance_id) return true
-                  return activeUserIds.includes(msg.user_instance_id)
-        })
-
-        const expiredMessages = messages.filter(msg => {
-                  if (!msg.user_instance_id) return false
-                  return !activeUserIds.includes(msg.user_instance_id)
-        })
-
-        for (const expMsg of expiredMessages) {
-                  await supabase
-                    .from('scheduled_messages')
-                    .update({ status: 'failed', updated_at: now })
-                    .eq('id', expMsg.id)
-                  results.push({ id: expMsg.id, status: 'expired_user', skipped: true })
-        }
-
-        for (const msg of eligibleMessages) {
-                  processed++
-                            try {
-                                        await supabase
-                                          .from('scheduled_messages')
-                                          .update({ status: 'processing' })
-                                          .eq('id', msg.id)
-
-                    let instanceName = INSTANCE_NAME
-                                        if (msg.instance_id) {
-                                                      const { data: inst } = await supabase
-                                                        .from('whatsapp_instances')
-                                                        .select('instance_name')
-                                                        .eq('id', msg.instance_id)
-                                                        .single()
-                                                      if (inst) instanceName = inst.instance_name
-                                        }
-
-                    const messageText = msg.parsed_message || msg.caption || 'Scheduled message'
-                                        await evolutionClient.sendMessage(instanceName, {
-                                                      number: msg.recipient_number,
-                                                      text: messageText,
-                                                      options: { delay: 1200, presence: 'composing' },
-                                        })
-
-                    await supabase
-                                          .from('scheduled_messages')
-                                          .update({ status: 'sent', sent_at: now })
-                                          .eq('id', msg.id)
-
-                    await supabase.from('message_logs').insert({
-                                  message_id: msg.id,
-                                  user_id: msg.user_id,
-                                  log_type: 'sent',
-                                  details: { recipient: msg.recipient_number, instanceName },
-                    })
-
-                    results.push({ id: msg.id, status: 'sent' })
-                            } catch (sendError) {
-                                        console.error(`Failed to send ${msg.id}:`, sendError)
-                                        const retryCount = (msg.retry_count || 0) + 1
-                                        const maxRetries = msg.max_retries || 3
-                                        const newStatus = retryCount >= maxRetries ? 'failed' : 'pending'
-
-                    await supabase
-                                          .from('scheduled_messages')
-                                          .update({ status: newStatus, retry_count: retryCount })
-                                          .eq('id', msg.id)
-
-                    results.push({ id: msg.id, status: newStatus, error: String(sendError) })
-                            }
-        }
-
-        return NextResponse.json({ processed, skipped_expired: expiredMessages.length, results, timestamp: now })
-  } catch (error) {
-          console.error('Cron fatal error:', error)
-          return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
-
-export async function POST(request: NextRequest) {
-      return GET(request)
 }
