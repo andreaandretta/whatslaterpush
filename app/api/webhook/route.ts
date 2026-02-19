@@ -5,295 +5,167 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 const supabase = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
-// Mappa numeri italiani in lettere → cifre
-const NUMERI_IT: Record<string, number> = {
-      'un': 1, 'uno': 1, 'una': 1,
-      'due': 2,
-      'tre': 3,
-      'quattro': 4,
-      'cinque': 5,
-      'sei': 6,
-      'sette': 7,
-      'otto': 8,
-      'nove': 9,
-      'dieci': 10,
-      'undici': 11,
-      'dodici': 12,
-      'quindici': 15,
-      'venti': 20,
-      'trenta': 30,
-      'quaranta': 40,
-      'cinquanta': 50,
-      'sessanta': 60,
+// Rome offset in ms (positivo = Rome è avanti a UTC)
+function getRomeOffsetMs(): number {
+  const now = new Date();
+  const utcStr = now.toLocaleString('en-CA', { timeZone: 'UTC', hour12: false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const romeStr = now.toLocaleString('en-CA', { timeZone: 'Europe/Rome', hour12: false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  return new Date(romeStr.replace(', ','T')).getTime() - new Date(utcStr.replace(', ','T')).getTime();
+}
+function nowRome(): Date { return new Date(new Date().getTime() + getRomeOffsetMs()); }
+function romeToUtc(d: Date): Date { return new Date(d.getTime() - getRomeOffsetMs()); }
+
+const NUMERI_IT: Record<string,number> = {
+  'un':1,'uno':1,'una':1,'due':2,'tre':3,'quattro':4,'cinque':5,
+  'sei':6,'sette':7,'otto':8,'nove':9,'dieci':10,'undici':11,
+  'dodici':12,'quindici':15,'venti':20,'trenta':30,'quaranta':40,'cinquanta':50,'sessanta':60,
 };
 
-function parseItalianDate(text: string): Date | null {
-      const now = new Date();
-      const lower = text.toLowerCase();
+function normalizeNumbers(s: string): string {
+  for (const [w,n] of Object.entries(NUMERI_IT)) s = s.replace(new RegExp('\\b'+w+'\\b','gi'),String(n));
+  return s;
+}
 
-  // Normalizza numeri in lettere → cifre
-  let normalized = lower;
-      for (const [word, num] of Object.entries(NUMERI_IT)) {
-              normalized = normalized.replace(new RegExp(`\\b${word}\\b`, 'gi'), String(num));
-      }
-
-  // Pattern: "fra N minuti/ore/giorni"
-  const fraMatch = normalized.match(/fra\s+(\d+)\s*(minuto|minuti|ora|ore|giorno|giorni)/);
-      if (fraMatch) {
-              const amount = parseInt(fraMatch[1]);
-              const unit = fraMatch[2];
-              const d = new Date(now);
-              if (unit.startsWith('minuto') || unit.startsWith('minuti')) d.setMinutes(d.getMinutes() + amount);
-              else if (unit.startsWith('ora') || unit.startsWith('ore')) d.setHours(d.getHours() + amount);
-              else if (unit.startsWith('giorno') || unit.startsWith('giorni')) d.setDate(d.getDate() + amount);
-              return d;
-      }
-
-  // Pattern: "alle HH:MM" o "alle H"
-  const timeMatch = normalized.match(/alle?\s+(\d{1,2})(?::(\d{2}))?/);
-      if (timeMatch) {
-              const h = parseInt(timeMatch[1]);
-              const m = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
-              const d = new Date(now);
-              d.setHours(h, m, 0, 0);
-              if (d <= now) d.setDate(d.getDate() + 1);
-              return d;
-      }
-
-  // Pattern: "domani alle H" o "domani H:MM"
-  const domaniMatch = normalized.match(/domani(?:\s+alle?\s+(\d{1,2})(?::(\d{2}))?)?/);
-      if (domaniMatch) {
-              const d = new Date(now);
-              d.setDate(d.getDate() + 1);
-              if (domaniMatch[1]) {
-                        d.setHours(parseInt(domaniMatch[1]), domaniMatch[2] ? parseInt(domaniMatch[2]) : 0, 0, 0);
-              }
-              return d;
-      }
-
+function parseCommand(text: string): { date: Date; cmdStart: number; cmdEnd: number }|null {
+  const norm = normalizeNumbers(text.toLowerCase());
+  const nowR = nowRome();
+  const fraM = /fra\s+(\d+)\s*(minuto|minuti|ora|ore|giorno|giorni)/.exec(norm);
+  if (fraM) {
+    const n=parseInt(fraM[1]), u=fraM[2], d=new Date(nowR);
+    if (u.startsWith('minut')) d.setMinutes(d.getMinutes()+n);
+    else if (u.startsWith('or')) d.setHours(d.getHours()+n);
+    else d.setDate(d.getDate()+n);
+    return { date: romeToUtc(d), cmdStart: fraM.index, cmdEnd: fraM.index+fraM[0].length };
+  }
+  const domM = /domani(?:\s+alle?\s+(\d{1,2})(?::(\d{2}))?)?/.exec(norm);
+  if (domM) {
+    const d=new Date(nowR); d.setDate(d.getDate()+1);
+    d.setHours(domM[1]?parseInt(domM[1]):9, domM[2]?parseInt(domM[2]):0, 0, 0);
+    return { date: romeToUtc(d), cmdStart: domM.index, cmdEnd: domM.index+domM[0].length };
+  }
+  const alleM = /alle?\s+(\d{1,2})(?::(\d{2}))?/.exec(norm);
+  if (alleM) {
+    const d=new Date(nowR); d.setHours(parseInt(alleM[1]), alleM[2]?parseInt(alleM[2]):0, 0, 0);
+    if (d<=nowR) d.setDate(d.getDate()+1);
+    return { date: romeToUtc(d), cmdStart: alleM.index, cmdEnd: alleM.index+alleM[0].length };
+  }
   return null;
 }
 
-function formatDateItalian(date: Date): string {
-      return date.toLocaleString('it-IT', {
-              day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
-              timeZone: 'Europe/Rome'
-      });
+const SCHED_KW = /\b(manda|mandami|scrivi|scrivimi|dici|avvisa|avvisami|invia|inviami|ricordami|promemoria|reminder)\b/gi;
+function extractContent(raw: string): string {
+  const t = raw
+    .replace(/\bfra\s+\w+\s*(minuto|minuti|ora|ore|giorno|giorni)\b/gi,'')
+    .replace(/\bdomani(?:\s+alle?\s+\d{1,2}(?::\d{2})?)?\b/gi,'')
+    .replace(/\balle?\s+\d{1,2}(?::\d{2})?\b/gi,'')
+    .replace(SCHED_KW,'')
+    .replace(/^[\s,.:;!?-]+|[\s,.:;!?-]+$/g,'').replace(/\s{2,}/g,' ').trim();
+  return t||raw;
 }
 
-async function notifyUser(phone: string, message: string) {
-      if (!phone) return;
-      try {
-              const res = await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/SchedWhats-Primary', {
-                        method: 'POST',
-                        headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ number: phone, text: message })
-              });
-              console.log('notifyUser status:', res.status, 'phone:', phone);
-      } catch (e: any) {
-              console.error('notifyUser error:', e.message);
-      }
+function formatRome(d: Date): string {
+  return d.toLocaleString('it-IT',{ day:'numeric', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Rome' });
+}
+
+async function notifyOwner(instanceName: string, phone: string, msg: string) {
+  if (!phone||!instanceName) return;
+  try {
+    const r = await fetch(`${process.env.EVOLUTION_API_URL}/message/sendText/${instanceName}`, {
+      method:'POST', headers:{ 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type':'application/json' },
+      body: JSON.stringify({ number: phone, text: msg })
+    });
+    console.log('notify', instanceName, phone, r.status);
+  } catch(e: any) { console.error('notify err:', e.message); }
 }
 
 export async function POST(req: Request) {
-      try {
-              const payload = await req.json();
-              const data = payload?.data;
+  try {
+    const payload = await req.json();
+    const data = payload?.data;
+    if (!data?.message||!data?.key) return NextResponse.json({ ok:true });
+    if (!data.key?.fromMe) return NextResponse.json({ ok:true });
 
-        if (!data?.message || !data?.key) {
-                  return NextResponse.json({ ok: true });
-        }
+    const instanceName = payload.instance||'SchedWhats-Primary';
 
-        // Solo messaggi inviati da noi (fromMe=true)
-        if (!data.key?.fromMe) {
-                  return NextResponse.json({ ok: true });
-        }
+    const { data: inst } = await supabase.from('user_instances')
+      .select('phone_number, id, subscription_status, trial_ends_at')
+      .eq('instance_name', instanceName)
+      .order('created_at',{ascending:true}).limit(1).single();
 
-        const instanceName = payload.instance || 'SchedWhats-Primary';
+    if (!inst?.phone_number) { console.log('No owner for:', instanceName); return NextResponse.json({ ok:true }); }
+    const ownerPhone = inst.phone_number, instanceId = inst.id;
+    console.log('WEBHOOK', instanceName, ownerPhone, JSON.stringify(Object.keys(data.message||{})));
 
-        // Trova l'OWNER dell'istanza
-        const { data: ownerInstance } = await supabase
-                .from('user_instances')
-                .select('phone_number, id')
-                .eq('instance_name', instanceName)
-                .order('created_at', { ascending: true })
-                .limit(1)
-                .single();
-
-        const ownerPhone = ownerInstance?.phone_number;
-              const userInstanceId = ownerInstance?.id;
-
-        if (!ownerPhone || !userInstanceId) {
-                  console.log('Owner not found for instance:', instanceName);
-                  return NextResponse.json({ ok: true });
-        }
-
-        const msgKeys = Object.keys(data.message || {});
-              console.log('=== WEBHOOK ===', 'owner:', ownerPhone, 'msgType:', JSON.stringify(msgKeys));
-
-        // STEP 1: contactMessage → salva pending contact
-        if (data.message?.contactMessage) {
-                  const contact = data.message.contactMessage;
-                  const vcard = contact.vcard || '';
-                  const displayName = contact.displayName || 'Contatto';
-
-                // Prova prima il campo waid nel TEL (più affidabile per numeri WhatsApp)
-                // TEL;type=CELL;waid=393780858599:+39 378 085 8599
-                const waidMatch = vcard.match(/waid=(\d+)/i);
-                  let recipientNumber = waidMatch ? waidMatch[1] : null;
-
-                // Fallback: estrai dal TEL standard
-                if (!recipientNumber) {
-                            const telMatch = vcard.match(/TEL[^:]*:([+\d\s()-]+)/i) ||
-                                                         vcard.match(/TEL[:;]+([+\d\s()-]+)/i);
-                            if (telMatch) {
-                                          recipientNumber = telMatch[1].replace(/[\s()\-+]/g, '');
-                                          // Aggiungi prefisso 39 se numero italiano senza prefisso internazionale
-                              if (recipientNumber.startsWith('0')) {
-                                              recipientNumber = '39' + recipientNumber;
-                              }
-                            }
-                }
-
-                console.log('contactMessage:', displayName, 'waid:', waidMatch?.[1], 'recipientNumber:', recipientNumber);
-
-                if (recipientNumber) {
-                            // Cancella pending precedenti per questo owner
-                    await supabase.from('pending_contacts').delete().eq('owner_phone', ownerPhone);
-
-                    const { error } = await supabase.from('pending_contacts').insert({
-                                  owner_phone: ownerPhone,
-                                  recipient_number: recipientNumber,
-                                  recipient_name: displayName
-                    });
-
-                    if (error) {
-                                  console.error('Error saving pending contact:', error.message);
-                    } else {
-                                  console.log('Pending contact saved:', displayName, recipientNumber);
-                    }
-                } else {
-                            console.log('Could not extract number from vCard:', vcard);
-                }
-
-                return NextResponse.json({ ok: true });
-        }
-
-        // STEP 2: testo → cerca pending contact e schedula
-        const messageText = data.message?.conversation ||
-                                    data.message?.extendedTextMessage?.text ||
-                                    data.message?.imageMessage?.caption || '';
-
-        console.log('messageText:', messageText);
-
-        if (!messageText) {
-                  return NextResponse.json({ ok: true });
-        }
-
-        const scheduledDate = parseItalianDate(messageText);
-              if (!scheduledDate) {
-                        console.log('No date found in message:', messageText);
-                        return NextResponse.json({ ok: true });
-              }
-
-        console.log('Parsed date:', scheduledDate.toISOString());
-
-        // Cerca pending contact (max 10 minuti fa)
-        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-              const { data: pendingContact } = await supabase
-                .from('pending_contacts')
-                .select('*')
-                .eq('owner_phone', ownerPhone)
-                .gte('created_at', tenMinutesAgo)
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .single();
-
-        let recipientNumber: string;
-              let recipientName: string;
-
-        if (pendingContact) {
-                  recipientNumber = pendingContact.recipient_number;
-                  recipientName = pendingContact.recipient_name;
-                  console.log('Using pending contact:', recipientName, recipientNumber);
-                  // Cancella il pending usato
-                await supabase.from('pending_contacts').delete().eq('id', pendingContact.id);
-        } else {
-                  // Fallback: Note to Self
-                const remoteJid = data.key?.remoteJid || '';
-                  recipientNumber = remoteJid.replace('@s.whatsapp.net', '').replace('@g.us', '');
-                  recipientName = 'Me Stesso';
-                  console.log('No pending contact, fallback to self:', recipientNumber);
-        }
-
-        console.log('FINAL recipient:', recipientName, recipientNumber);
-
-        // Verifica abbonamento
-        const { data: user } = await supabase
-                .from('user_instances')
-                .select('id, trial_ends_at, subscription_status')
-                .eq('phone_number', ownerPhone)
-                .single();
-
-        if (!user) {
-                  await notifyUser(ownerPhone, '❌ Account non trovato.');
-                  return NextResponse.json({ ok: true });
-        }
-
-        const trialEnd = user.trial_ends_at ? new Date(user.trial_ends_at) : null;
-              const isActive = user.subscription_status === 'active';
-              const isTrialValid = trialEnd && trialEnd > new Date();
-
-        if (!isActive && !isTrialValid) {
-                  await notifyUser(ownerPhone, '❌ Trial scaduto. Abbonati su ' + process.env.NEXT_PUBLIC_APP_URL);
-                  return NextResponse.json({ ok: true });
-        }
-
-        let daysLeft = 0;
-              if (trialEnd) {
-                        daysLeft = Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
-              }
-
-        const timeStr = formatDateItalian(scheduledDate);
-
-        const { data: insertData, error: insertError } = await supabase
-                .from('scheduled_messages')
-                .insert({
-                            user_id: null,
-                            user_instance_id: user.id,
-                            instance_phone: ownerPhone,
-                            recipient_number: recipientNumber,
-                            recipient_name: recipientName,
-                            caption: messageText,
-                            parsed_message: messageText,
-                            scheduled_at: scheduledDate.toISOString(),
-                            status: 'pending',
-                            retry_count: 0,
-                            max_retries: 3
-                })
-                .select();
-
-        if (insertError) {
-                  console.error('Insert error:', JSON.stringify(insertError));
-                  await notifyUser(ownerPhone, '❌ Errore: ' + insertError.message);
-                  return NextResponse.json({ error: insertError.message }, { status: 500 });
-        }
-
-        console.log('Scheduled successfully:', JSON.stringify(insertData?.[0]?.id));
-
-        await notifyUser(
-                  ownerPhone,
-                  `✅ Programmato per ${timeStr} a ${recipientName} (${recipientNumber}). Trial: ${daysLeft} giorni.`
-                );
-
-        return NextResponse.json({ ok: true, scheduled: scheduledDate.toISOString() });
-
-      } catch (err: any) {
-              console.error('Webhook error:', err.message);
-              return NextResponse.json({ error: err.message }, { status: 500 });
+    if (data.message?.contactMessage) {
+      const c=data.message.contactMessage, vcard=c.vcard||'', name=c.displayName||'Contatto';
+      const waid=vcard.match(/waid=(\d+)/i)?.[1];
+      let num=waid||null;
+      if (!num) {
+        const tel=(vcard.match(/TEL[^:]*:([+\d\s()-]+)/i)||vcard.match(/TEL[:;]+([+\d\s()-]+)/i))?.[1];
+        if (tel) { num=tel.replace(/[\s()\-+]/g,''); if(num.startsWith('0')) num='39'+num; }
       }
+      console.log('contact:', name, num);
+      if (num) {
+        await supabase.from('pending_contacts').delete().eq('owner_phone',ownerPhone);
+        await supabase.from('pending_contacts').insert({ owner_phone:ownerPhone, recipient_number:num, recipient_name:name });
+      }
+      return NextResponse.json({ ok:true });
+    }
+
+    const raw=data.message?.conversation||data.message?.extendedTextMessage?.text||data.message?.imageMessage?.caption||'';
+    if (!raw) return NextResponse.json({ ok:true });
+    console.log('raw:', raw);
+
+    const parsed=parseCommand(raw);
+    if (!parsed) { console.log('no cmd:', raw); return NextResponse.json({ ok:true }); }
+
+    const scheduledAt=parsed.date, content=extractContent(raw);
+    console.log('at:', scheduledAt.toISOString(), 'content:', content);
+
+    const { data: pc } = await supabase.from('pending_contacts').select('*')
+      .eq('owner_phone',ownerPhone).gte('created_at',new Date(Date.now()-600000).toISOString())
+      .order('created_at',{ascending:false}).limit(1).single();
+
+    let recNum: string, recName: string;
+    if (pc) {
+      recNum=pc.recipient_number; recName=pc.recipient_name;
+      await supabase.from('pending_contacts').delete().eq('id',pc.id);
+    } else {
+      recNum=(data.key?.remoteJid||'').replace('@s.whatsapp.net','').replace('@g.us','');
+      recName='Me Stesso';
+    }
+    console.log('recipient:', recName, recNum);
+
+    const trialEnd=inst.trial_ends_at?new Date(inst.trial_ends_at):null;
+    if (inst.subscription_status!=='active'&&!(trialEnd&&trialEnd>new Date())) {
+      await notifyOwner(instanceName, ownerPhone, '❌ Trial scaduto. Abbonati su '+process.env.NEXT_PUBLIC_APP_URL);
+      return NextResponse.json({ ok:true });
+    }
+    const daysLeft=trialEnd?Math.max(0,Math.ceil((trialEnd.getTime()-Date.now())/86400000)):0;
+
+    const { error: insErr } = await supabase.from('scheduled_messages').insert({
+      user_id:null, user_instance_id:instanceId, instance_phone:ownerPhone,
+      recipient_number:recNum, recipient_name:recName,
+      caption:raw, parsed_message:content,
+      scheduled_at:scheduledAt.toISOString(), status:'pending', retry_count:0, max_retries:3
+    });
+
+    if (insErr) {
+      console.error('insert err:', insErr.message);
+      await notifyOwner(instanceName, ownerPhone, '❌ Errore DB: '+insErr.message);
+      return NextResponse.json({ error: insErr.message },{ status:500 });
+    }
+
+    await notifyOwner(instanceName, ownerPhone,
+      `✅ Programmato per ${formatRome(scheduledAt)} a ${recName} (${recNum}).\n💬 "${content}"\n⏳ Trial: ${daysLeft} giorni`
+    );
+    return NextResponse.json({ ok:true, scheduled: scheduledAt.toISOString() });
+  } catch(e: any) {
+    console.error('webhook err:', e.message);
+    return NextResponse.json({ error: e.message },{ status:500 });
+  }
 }
