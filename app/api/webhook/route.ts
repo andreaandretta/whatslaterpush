@@ -5,8 +5,8 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 const supabase = createClient(
-  process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
 // Rome timezone helpers
@@ -24,8 +24,10 @@ const NUMERI_IT: Record<string,number> = {
   'sei':6,'sette':7,'otto':8,'nove':9,'dieci':10,'undici':11,
   'dodici':12,'quindici':15,'venti':20,'trenta':30,'quaranta':40,'cinquanta':50,'sessanta':60,
 };
+
 function normalizeNumbers(s: string): string {
-  for (const [w,n] of Object.entries(NUMERI_IT)) s = s.replace(new RegExp('\\b'+w+'\\b','gi'),String(n));
+  for (const [w,n] of Object.entries(NUMERI_IT))
+    s = s.replace(new RegExp('\\b'+w+'\\b','gi'),String(n));
   return s;
 }
 
@@ -38,10 +40,7 @@ function parseCommand(text: string): { date: Date; cmdStart: number; cmdEnd: num
     const d = new Date(nowR);
     d.setDate(parseInt(dateM[1]));
     d.setMonth(parseInt(dateM[2]) - 1);
-    if (dateM[3]) {
-      const yr = dateM[3].length === 2 ? '20' + dateM[3] : dateM[3];
-      d.setFullYear(parseInt(yr));
-    }
+    if (dateM[3]) { const yr = dateM[3].length === 2 ? '20' + dateM[3] : dateM[3]; d.setFullYear(parseInt(yr)); }
     d.setHours(dateM[4] ? parseInt(dateM[4]) : 9, dateM[5] ? parseInt(dateM[5]) : 0, 0, 0);
     return { date: romeToUtc(d), cmdStart: dateM.index, cmdEnd: dateM.index + dateM[0].length };
   }
@@ -77,27 +76,30 @@ function parseCommand(text: string): { date: Date; cmdStart: number; cmdEnd: num
 const SCHED_KW = /\b(manda|mandami|scrivi|scrivimi|dici|avvisa|avvisami|invia|inviami|ricordami|promemoria|reminder)\b/gi;
 
 function extractContent(raw: string, cmdStart: number, cmdEnd: number): string {
-  let t = raw.replace(SCHED_KW, '');
-  const norm = normalizeNumbers(t.toLowerCase());
-  const dateM = /il\s+\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\s*(?:alle?\s+\d{1,2}(?::\d{2})?)?/i.exec(norm);
+  // FIX: normalize text FIRST, then use same string for both regex and slicing
+  // This avoids index mismatch when Italian words like "un" are replaced with "1"
+  let t = normalizeNumbers(raw.replace(SCHED_KW, '').toLowerCase());
+
+  const dateM = /il\s+\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\s*(?:alle?\s+\d{1,2}(?::\d{2})?)?/i.exec(t);
   if (dateM) {
     t = t.slice(0, dateM.index) + t.slice(dateM.index + dateM[0].length);
   } else {
-    const fraM = /fra\s+\d+\s*(minuto|minuti|ora|ore|giorno|giorni)/i.exec(norm);
+    const fraM = /fra\s+\d+\s*(minuto|minuti|ora|ore|giorno|giorni)/i.exec(t);
     if (fraM) {
       t = t.slice(0, fraM.index) + t.slice(fraM.index + fraM[0].length);
     } else {
-      const domM = /domani(?:\s+alle?\s+\d{1,2}(?::\d{2})?)?/i.exec(norm);
+      const domM = /domani(?:\s+alle?\s+\d{1,2}(?::\d{2})?)?/i.exec(t);
       if (domM) {
         t = t.slice(0, domM.index) + t.slice(domM.index + domM[0].length);
       } else {
-        const alleM = /alle?\s+\d{1,2}(?::\d{2})?/i.exec(norm);
+        const alleM = /alle?\s+\d{1,2}(?::\d{2})?/i.exec(t);
         if (alleM) {
           t = t.slice(0, alleM.index) + t.slice(alleM.index + alleM[0].length);
         }
       }
     }
   }
+
   return t.replace(/^[\s,.:;!?-]+|[\s,.:;!?-]+$/g,'').replace(/\s{2,}/g,' ').trim() || raw;
 }
 
@@ -126,7 +128,6 @@ async function findUserByPhone(phone: string): Promise<any> {
   } else {
     variants.add('39' + phone); // con 39
   }
-  
   for (const v of variants) {
     const { data } = await supabase
       .from('user_instances')
@@ -140,11 +141,9 @@ async function findUserByPhone(phone: string): Promise<any> {
 
 // Crea nuovo utente con trial 7 giorni
 async function createUser(phone: string, instanceName: string): Promise<any> {
-  // Normalizza: salva sempre con prefisso 39 se numero italiano
   const normalized = phone.startsWith('39') ? phone : '39' + phone;
-  
   console.log('WEBHOOK: Creazione utente per:', normalized, 'instance:', instanceName);
-  
+
   const { data: newUser, error } = await supabase
     .from('user_instances')
     .insert({
@@ -155,16 +154,15 @@ async function createUser(phone: string, instanceName: string): Promise<any> {
     })
     .select()
     .single();
-  
+
   if (error) {
     console.error('WEBHOOK: Errore creazione utente:', error.message);
-    // Se errore duplicate, riprova con select
     if (error.message.includes('duplicate') || error.message.includes('unique')) {
       return await findUserByPhone(normalized);
     }
     return null;
   }
-  
+
   console.log('WEBHOOK: Utente creato:', newUser.id, normalized);
   return newUser;
 }
@@ -173,26 +171,20 @@ export async function POST(req: Request) {
   try {
     const payload = await req.json();
     const data = payload?.data;
-
     if (!data?.message || !data?.key) return NextResponse.json({ ok:true });
     if (!data.key?.fromMe) return NextResponse.json({ ok:true });
 
-    // STEP 1: Estrai il numero del MITTENTE REALE dal remoteJid
     const senderRaw = (data.key?.remoteJid || '').split('@')[0];
     if (!senderRaw) {
       console.error('WEBHOOK: remoteJid mancante');
       return NextResponse.json({ ok:true });
     }
 
-    // Instance name dal payload Evolution (es. "SchedWhats-Primary")
     const evoInstance = payload.instance || 'SchedWhats-Primary';
-    
     console.log('WEBHOOK: sender=' + senderRaw + ' evoInstance=' + evoInstance);
 
-    // STEP 2: CERCA UTENTE PER PHONE_NUMBER (unica fonte di verità)
     let user = await findUserByPhone(senderRaw);
 
-    // STEP 3: Se non trovato, CREA UTENTE AL VOLO (SEMPRE, mai fallback a un altro utente)
     if (!user) {
       console.log('WEBHOOK: Utente non trovato per ' + senderRaw + ', creazione...');
       user = await createUser(senderRaw, evoInstance);
@@ -203,7 +195,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Cannot create user' }, { status: 500 });
     }
 
-    // STEP 4: Aggiorna instance_name se cambiato (utente si riconnette ad altra istanza)
     if (user.instance_name !== evoInstance) {
       console.log('WEBHOOK: Aggiorno instance_name da', user.instance_name, 'a', evoInstance);
       await supabase
@@ -215,7 +206,6 @@ export async function POST(req: Request) {
 
     const ownerPhone = user.phone_number;
     const instanceName = user.instance_name || evoInstance;
-
     console.log('WEBHOOK: Owner=' + ownerPhone + ' Instance=' + instanceName);
 
     // Gestione vCard
@@ -227,10 +217,7 @@ export async function POST(req: Request) {
       let num = waid || null;
       if (!num) {
         const tel = (vcard.match(/TEL[^:]*:([+\d\s()-]+)/i) || vcard.match(/TEL[:;]+([+\d\s()-]+)/i))?.[1];
-        if (tel) {
-          num = tel.replace(/[\s()\-+]/g,'');
-          if (num.startsWith('0')) num = '39' + num;
-        }
+        if (tel) { num = tel.replace(/[\s()\-+]/g,''); if (num.startsWith('0')) num = '39' + num; }
       }
       console.log('vCard:', name, num, 'owner:', ownerPhone);
       if (num) {
@@ -248,20 +235,19 @@ export async function POST(req: Request) {
     }
 
     // Parsing messaggio testo
-    const raw = data.message?.conversation ||
-                data.message?.extendedTextMessage?.text ||
-                data.message?.imageMessage?.caption || '';
+    const raw = data.message?.conversation || data.message?.extendedTextMessage?.text || data.message?.imageMessage?.caption || '';
     if (!raw) return NextResponse.json({ ok:true });
     console.log('raw:', raw);
 
     const parsed = parseCommand(raw);
-    if (!parsed) { console.log('no cmd:', raw); return NextResponse.json({ ok:true }); }
-
+    if (!parsed) {
+      console.log('no cmd:', raw);
+      return NextResponse.json({ ok:true });
+    }
     const scheduledAt = parsed.date;
     const content = extractContent(raw, parsed.cmdStart, parsed.cmdEnd);
     console.log('at:', scheduledAt.toISOString(), 'msg:', content);
 
-    // Recupera ultimo contatto pending (LIFO, TTL 30 min)
     const { data: pc } = await supabase
       .from('pending_contacts')
       .select('*')
@@ -272,16 +258,10 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     let recNum: string, recName: string;
-    if (pc) {
-      recNum = pc.recipient_number;
-      recName = pc.recipient_name;
-    } else {
-      recNum = ownerPhone;
-      recName = 'Me Stesso';
-    }
+    if (pc) { recNum = pc.recipient_number; recName = pc.recipient_name; }
+    else { recNum = ownerPhone; recName = 'Me Stesso'; }
     console.log('to:', recName, recNum);
 
-    // Check subscription
     const trialEnd = user.trial_ends_at ? new Date(user.trial_ends_at) : null;
     if (user.subscription_status !== 'active' && !(trialEnd && trialEnd > new Date())) {
       await notifyOwner(instanceName, ownerPhone, '\u274c Trial scaduto.');
@@ -289,7 +269,6 @@ export async function POST(req: Request) {
     }
     const daysLeft = trialEnd ? Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / 86400000)) : 0;
 
-    // Salva messaggio
     const { error: insErr } = await supabase.from('scheduled_messages').insert({
       user_instance_id: user.id,
       instance_phone: ownerPhone,
@@ -308,7 +287,6 @@ export async function POST(req: Request) {
       await notifyOwner(instanceName, ownerPhone, '\u274c Errore DB: ' + insErr.message);
       return NextResponse.json({ error: insErr.message }, { status: 500 });
     }
-
     console.log('WEBHOOK: Salvato per', ownerPhone, 'a', recName);
 
     await notifyOwner(instanceName, ownerPhone,
@@ -316,7 +294,6 @@ export async function POST(req: Request) {
     );
 
     return NextResponse.json({ ok:true, scheduled: scheduledAt.toISOString() });
-
   } catch(e: any) {
     console.error('webhook err:', e.message, e.stack);
     return NextResponse.json({ error: e.message }, { status: 500 });
