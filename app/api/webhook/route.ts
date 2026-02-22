@@ -29,12 +29,10 @@ function normalizeNumbers(s: string): string {
   return s;
 }
 
-// P3: Parsing data robusto con date esplicite
 function parseCommand(text: string): { date: Date; cmdStart: number; cmdEnd: number }|null {
   const norm = normalizeNumbers(text.toLowerCase());
   const nowR = nowRome();
 
-  // "il GG/MM/YYYY alle HH:MM" o "il GG/MM alle HH"
   const dateM = /il\s+(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\s*(?:alle?\s+(\d{1,2})(?::(\d{2}))?)?/.exec(norm);
   if (dateM) {
     const d = new Date(nowR);
@@ -48,7 +46,6 @@ function parseCommand(text: string): { date: Date; cmdStart: number; cmdEnd: num
     return { date: romeToUtc(d), cmdStart: dateM.index, cmdEnd: dateM.index + dateM[0].length };
   }
 
-  // "fra X minuti/ore/giorni"
   const fraM = /fra\s+(\d+)\s*(minuto|minuti|ora|ore|giorno|giorni)/.exec(norm);
   if (fraM) {
     const n=parseInt(fraM[1]), u=fraM[2], d=new Date(nowR);
@@ -58,7 +55,6 @@ function parseCommand(text: string): { date: Date; cmdStart: number; cmdEnd: num
     return { date: romeToUtc(d), cmdStart: fraM.index, cmdEnd: fraM.index+fraM[0].length };
   }
 
-  // "domani alle HH:MM"
   const domM = /domani(?:\s+alle?\s+(\d{1,2})(?::(\d{2}))?)?/.exec(norm);
   if (domM) {
     const d=new Date(nowR);
@@ -67,7 +63,6 @@ function parseCommand(text: string): { date: Date; cmdStart: number; cmdEnd: num
     return { date: romeToUtc(d), cmdStart: domM.index, cmdEnd: domM.index+domM[0].length };
   }
 
-  // "alle HH:MM"
   const alleM = /alle?\s+(\d{1,2})(?::(\d{2}))?/.exec(norm);
   if (alleM) {
     const d=new Date(nowR);
@@ -110,7 +105,6 @@ function formatRome(d: Date): string {
   return d.toLocaleString('it-IT',{ day:'numeric', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Rome' });
 }
 
-// P1: Notifica al numero owner corretto usando la sua istanza
 async function notifyOwner(instanceName: string, phone: string, msg: string) {
   if (!phone || !instanceName) return;
   try {
@@ -123,6 +117,58 @@ async function notifyOwner(instanceName: string, phone: string, msg: string) {
   } catch(e: any) { console.error('notify err:', e.message); }
 }
 
+// Cerca utente per phone_number con normalizzazione +39
+async function findUserByPhone(phone: string): Promise<any> {
+  const variants = new Set<string>();
+  variants.add(phone);
+  if (phone.startsWith('39') && phone.length > 9) {
+    variants.add(phone.substring(2)); // senza 39
+  } else {
+    variants.add('39' + phone); // con 39
+  }
+  
+  for (const v of variants) {
+    const { data } = await supabase
+      .from('user_instances')
+      .select('id, phone_number, subscription_status, trial_ends_at, instance_name')
+      .eq('phone_number', v)
+      .maybeSingle();
+    if (data) return data;
+  }
+  return null;
+}
+
+// Crea nuovo utente con trial 7 giorni
+async function createUser(phone: string, instanceName: string): Promise<any> {
+  // Normalizza: salva sempre con prefisso 39 se numero italiano
+  const normalized = phone.startsWith('39') ? phone : '39' + phone;
+  
+  console.log('WEBHOOK: Creazione utente per:', normalized, 'instance:', instanceName);
+  
+  const { data: newUser, error } = await supabase
+    .from('user_instances')
+    .insert({
+      phone_number: normalized,
+      instance_name: instanceName,
+      subscription_status: 'trial',
+      trial_ends_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+    })
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('WEBHOOK: Errore creazione utente:', error.message);
+    // Se errore duplicate, riprova con select
+    if (error.message.includes('duplicate') || error.message.includes('unique')) {
+      return await findUserByPhone(normalized);
+    }
+    return null;
+  }
+  
+  console.log('WEBHOOK: Utente creato:', newUser.id, normalized);
+  return newUser;
+}
+
 export async function POST(req: Request) {
   try {
     const payload = await req.json();
@@ -131,91 +177,46 @@ export async function POST(req: Request) {
     if (!data?.message || !data?.key) return NextResponse.json({ ok:true });
     if (!data.key?.fromMe) return NextResponse.json({ ok:true });
 
-    // P1: Estrai il numero del MITTENTE REALE dal remoteJid
-    // Formato: 393509898408@s.whatsapp.net
+    // STEP 1: Estrai il numero del MITTENTE REALE dal remoteJid
     const senderRaw = (data.key?.remoteJid || '').split('@')[0];
     if (!senderRaw) {
       console.error('WEBHOOK: remoteJid mancante');
       return NextResponse.json({ ok:true });
     }
 
-    // Normalizza numero per ricerca flessibile
-    const senderWith39 = senderRaw.startsWith('39') ? senderRaw : '39' + senderRaw;
-    const senderWithout39 = senderRaw.startsWith('39') ? senderRaw.substring(2) : senderRaw;
+    // Instance name dal payload Evolution (es. "SchedWhats-Primary")
+    const evoInstance = payload.instance || 'SchedWhats-Primary';
+    
+    console.log('WEBHOOK: sender=' + senderRaw + ' evoInstance=' + evoInstance);
 
-    console.log('WEBHOOK: Sender raw:', senderRaw, '-> variants:', senderWith39, senderWithout39);
+    // STEP 2: CERCA UTENTE PER PHONE_NUMBER (unica fonte di verità)
+    let user = await findUserByPhone(senderRaw);
 
-    // P1: CERCA UTENTE per phone_number (identificazione per numero, non per istanza)
-    let user: any = null;
-
-    // Prima cerca per numero esatto
-    const { data: u1 } = await supabase
-      .from('user_instances')
-      .select('id, phone_number, subscription_status, trial_ends_at, instance_name')
-      .eq('phone_number', senderRaw)
-      .maybeSingle();
-    if (u1) user = u1;
-
-    // Poi prova con prefisso 39
+    // STEP 3: Se non trovato, CREA UTENTE AL VOLO (SEMPRE, mai fallback a un altro utente)
     if (!user) {
-      const { data: u2 } = await supabase
-        .from('user_instances')
-        .select('id, phone_number, subscription_status, trial_ends_at, instance_name')
-        .eq('phone_number', senderWith39)
-        .maybeSingle();
-      if (u2) user = u2;
+      console.log('WEBHOOK: Utente non trovato per ' + senderRaw + ', creazione...');
+      user = await createUser(senderRaw, evoInstance);
     }
 
-    // Poi prova senza prefisso 39
     if (!user) {
-      const { data: u3 } = await supabase
-        .from('user_instances')
-        .select('id, phone_number, subscription_status, trial_ends_at, instance_name')
-        .eq('phone_number', senderWithout39)
-        .maybeSingle();
-      if (u3) user = u3;
+      console.error('WEBHOOK: Impossibile creare utente per:', senderRaw);
+      return NextResponse.json({ error: 'Cannot create user' }, { status: 500 });
     }
 
-    // Fallback retrocompatibile: cerca per instance_name dal payload
-    if (!user) {
-      const instanceFromPayload = payload.instance || 'SchedWhats-Primary';
-      console.log('WEBHOOK: Fallback instance_name:', instanceFromPayload);
-      const { data: u4 } = await supabase
+    // STEP 4: Aggiorna instance_name se cambiato (utente si riconnette ad altra istanza)
+    if (user.instance_name !== evoInstance) {
+      console.log('WEBHOOK: Aggiorno instance_name da', user.instance_name, 'a', evoInstance);
+      await supabase
         .from('user_instances')
-        .select('id, phone_number, subscription_status, trial_ends_at, instance_name')
-        .eq('instance_name', instanceFromPayload)
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
-      if (u4) user = u4;
-    }
-
-    // P1: Se ancora non trovato, CREA UTENTE AL VOLO
-    if (!user) {
-      console.log('WEBHOOK: Nuovo utente, creazione automatica per:', senderWith39);
-      const newInstanceName = 'SchedWhats-' + senderWith39;
-      const { data: newUser, error: createErr } = await supabase
-        .from('user_instances')
-        .insert({
-          phone_number: senderWith39,
-          instance_name: newInstanceName,
-          subscription_status: 'trial',
-          trial_ends_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-        })
-        .select()
-        .single();
-      if (createErr) {
-        console.error('WEBHOOK: Errore creazione utente:', createErr.message);
-        return NextResponse.json({ ok:true });
-      }
-      user = newUser;
+        .update({ instance_name: evoInstance })
+        .eq('id', user.id);
+      user.instance_name = evoInstance;
     }
 
     const ownerPhone = user.phone_number;
-    // P1: Usa istanza dinamica per notifiche
-    const instanceName = user.instance_name || ('SchedWhats-' + ownerPhone);
+    const instanceName = user.instance_name || evoInstance;
 
-    console.log('WEBHOOK: Owner confermato:', ownerPhone, '| Instance:', instanceName);
+    console.log('WEBHOOK: Owner=' + ownerPhone + ' Instance=' + instanceName);
 
     // Gestione vCard
     if (data.message?.contactMessage) {
@@ -231,14 +232,14 @@ export async function POST(req: Request) {
           if (num.startsWith('0')) num = '39' + num;
         }
       }
-      console.log('vCard:', name, num, 'per owner:', ownerPhone);
+      console.log('vCard:', name, num, 'owner:', ownerPhone);
       if (num) {
         const { error: upsertErr } = await supabase.from('pending_contacts').upsert(
           { owner_phone: ownerPhone, recipient_number: num, recipient_name: name, created_at: new Date().toISOString() },
           { onConflict: 'owner_phone,recipient_number' }
         );
         if (upsertErr) {
-          console.error('Errore upsert vCard:', upsertErr.message);
+          console.error('vCard upsert err:', upsertErr.message);
           await supabase.from('pending_contacts').delete().eq('owner_phone', ownerPhone).eq('recipient_number', num);
           await supabase.from('pending_contacts').insert({ owner_phone: ownerPhone, recipient_number: num, recipient_name: name });
         }
@@ -258,7 +259,7 @@ export async function POST(req: Request) {
 
     const scheduledAt = parsed.date;
     const content = extractContent(raw, parsed.cmdStart, parsed.cmdEnd);
-    console.log('scheduled_at:', scheduledAt.toISOString(), 'content:', content);
+    console.log('at:', scheduledAt.toISOString(), 'msg:', content);
 
     // Recupera ultimo contatto pending (LIFO, TTL 30 min)
     const { data: pc } = await supabase
@@ -275,24 +276,23 @@ export async function POST(req: Request) {
       recNum = pc.recipient_number;
       recName = pc.recipient_name;
     } else {
-      // Fallback: manda a se stesso
       recNum = ownerPhone;
       recName = 'Me Stesso';
     }
-    console.log('recipient:', recName, recNum);
+    console.log('to:', recName, recNum);
 
     // Check subscription
     const trialEnd = user.trial_ends_at ? new Date(user.trial_ends_at) : null;
     if (user.subscription_status !== 'active' && !(trialEnd && trialEnd > new Date())) {
-      await notifyOwner(instanceName, ownerPhone, '\u274c Trial scaduto. Abbonati su ' + process.env.NEXT_PUBLIC_APP_URL);
+      await notifyOwner(instanceName, ownerPhone, '\u274c Trial scaduto.');
       return NextResponse.json({ ok:true });
     }
     const daysLeft = trialEnd ? Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / 86400000)) : 0;
 
-    // Salva messaggio nel DB
+    // Salva messaggio
     const { error: insErr } = await supabase.from('scheduled_messages').insert({
       user_instance_id: user.id,
-      instance_phone: ownerPhone,  // P1: CRITICO - numero del mittente reale
+      instance_phone: ownerPhone,
       recipient_number: recNum,
       recipient_name: recName,
       caption: raw,
@@ -309,15 +309,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: insErr.message }, { status: 500 });
     }
 
-    // Notifica il MITTENTE CORRETTO
+    console.log('WEBHOOK: Salvato per', ownerPhone, 'a', recName);
+
     await notifyOwner(instanceName, ownerPhone,
-      `\u2705 Programmato per ${formatRome(scheduledAt)} a ${recName} (${recNum}).\n\ud83d\udcac "${content}"\n\u23f3 Trial: ${daysLeft} giorni`
+      `\u2705 Programmato per ${formatRome(scheduledAt)} a ${recName} (${recNum}).\n\ud83d\udcac "${content}"\n\u23f3 Trial: ${daysLeft}g`
     );
 
     return NextResponse.json({ ok:true, scheduled: scheduledAt.toISOString() });
 
   } catch(e: any) {
-    console.error('webhook err:', e.message);
+    console.error('webhook err:', e.message, e.stack);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
-                       }
+}
