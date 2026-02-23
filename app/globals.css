@@ -3,16 +3,6 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    --background: 210 20% 96%;
-    --surface: 0 0% 100%;
-    --primary: 142 70% 49%;
-    --primary-hover: 142 70% 42%;
-    --text-primary: 200 33% 10%;
-    --text-secondary: 195 12% 45%;
-    --border-soft: 200 14% 92%;
-  }
-
   * {
     @apply border-border-soft;
   }

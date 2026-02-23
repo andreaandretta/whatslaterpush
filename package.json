@@ -10,6 +10,7 @@
         "db:types": "npx supabase gen types typescript --project-id $SUPABASE_PROJECT_ID --schema public > types/supabase.ts"
     },
     "dependencies": {
+        "@gsap/react": "^2.1.2",
         "@supabase/ssr": "^0.4.0",
         "@supabase/supabase-js": "^2.45.0",
         "clsx": "^2.1.1",
@@ -22,7 +23,7 @@
         "react": "^18.3.1",
         "react-dom": "^18.3.1",
         "stripe": "^14.5.0",
-        "tailwind-merge": "^2.5.0",
+        "tailwind-merge": "^2.6.1",
         "vcf": "^2.1.2",
         "zod": "^3.23.8"
     },
