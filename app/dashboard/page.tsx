@@ -7,7 +7,7 @@ import { TextPlugin } from 'gsap/TextPlugin';
 import {
         Calendar, MessageCircle, CheckCircle2, ArrowRight, Clock, Smartphone,
         Link as LinkIcon, ChevronDown, Loader2, Paperclip, User, Send, QrCode,
-        Hash, Shield, Zap, RefreshCw, Check, X, LogOut, Trash2, XCircle
+        Hash, Shield, Zap, RefreshCw, Check, X, hLogOut, Trash2, XCircle
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -138,12 +138,12 @@ export default function DashboardPage() {
             } catch(e) {}
   };
 
-  const handleGetCode = async (method = 'qr') => {
+  const handleGetCode = async (method = 'qr', rawPhone = '') => {
             setIsLoading(true); setError(null);
             try {
-                        const storedPhone = getStoredPhone();
+                        const cleanPhone = (rawPhone || getStoredPhone() || '').replace(/\D/g, '') || null; if (method === 'pairing' && (!cleanPhone || cleanPhone.length < 10)) { setError('Inserisci un numero valido (es. 393401234567)'); setIsLoading(false); return; }
                         const res = await fetch('/api/connect', { method:'POST', headers:{'Content-Type':'application/json'},
-                                                                         body: JSON.stringify({ action: 'getCode', phoneNumber: storedPhone || null, instanceName: storedPhone ? null : instanceName }) });
+                                                                         body: JSON.stringify({ action: method === 'pairing' ? 'getPairingCode' : 'getCode', phoneNumber: method === 'pairing' ? cleanPhone : null, instanceName: cleanPhone ? null : instanceName }) });
                         const r = await res.json();
                         if (r.success && r.data) {
                                       if (r.data.instanceName) { setInstanceName(r.data.instanceName); saveInstance(r.data.instanceName); }
@@ -560,7 +560,7 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
         const handleSubmit = (e: React.FormEvent) => {
                   e.preventDefault();
                   if (phone) { savePhone(phone); setUserPhone(phone); }
-                  onGetCode(method);
+                  onGetCode(method, phone);
         };
       
         if (connStatus === 'connected') {
