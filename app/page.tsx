@@ -676,10 +676,10 @@ function ConnectionZone() {
     setStatus('loading');
     
     try {
-      const res = await fetch(`/api/connect?method=${method}`, {
+      const res = await fetch('/api/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phoneNumber: phone })
+        body: JSON.stringify({ action: method === 'pairing' ? 'getPairingCode' : 'getCode', phoneNumber: method === 'pairing' ? phone.replace(/\D/g, '') : null })
       });
 
       if (!res.ok) {
@@ -689,9 +689,9 @@ function ConnectionZone() {
       const data = await res.json();
       
       if (method === 'qr') {
-        setQrCode(data.qrCode);
+        setQrCode(data.data?.qrCode);
       } else {
-        setPairingCode(data.pairingCode);
+        setPairingCode(data.data?.pairingCode);
       }
       
       setStatus('waiting');
