@@ -1,4 +1,4 @@
-// @ts-nocheck
+h// @ts-nocheck
 'use client';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import gsap from 'gsap';
@@ -7,7 +7,7 @@ import { TextPlugin } from 'gsap/TextPlugin';
 import {
         Calendar, MessageCircle, CheckCircle2, ArrowRight, Clock, Smartphone,
         Link as LinkIcon, ChevronDown, Loader2, Paperclip, User, Send, QrCode,
-        Hash, Shield, Zap, RefreshCw, Check, X, hLogOut, Trash2, XCircle
+        Hash, Shield, Zap, RefreshCw, Check, X, LogOut, Trash2, XCircle
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
