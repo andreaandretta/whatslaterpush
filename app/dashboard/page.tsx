@@ -129,7 +129,7 @@ export default function DashboardPage() {
                         const r = await res.json();
                         if (r.success) {
                                       const st = (r.data?.status||'').toLowerCase();
-                                      if (st==='open'||st==='connected') {
+                                      if (st==='open') {
                                                       setConnStatus('connected'); setQrCode(null); setPairingCode(null);
                                                       if(refreshTimer.current) clearInterval(refreshTimer.current);
                                                       if (!getStoredPhone()) detectPhone(instName);
@@ -161,7 +161,7 @@ export default function DashboardPage() {
                                                                                                                               body: JSON.stringify({ action:'status', instanceName: curInst }) });
                                                                         const s = await sr.json();
                                                                         const st = (s.data?.status||'').toLowerCase();
-                                                                        if (st==='open'||st==='connected') {
+                                                                        if (st==='open') {
                                                                                             setConnStatus('connected'); setQrCode(null); setPairingCode(null);
                                                                                             if(refreshTimer.current) clearInterval(refreshTimer.current);
                                                                                             if (!getStoredPhone()) { await detectPhone(curInst); } else { fetchMessages(); }
