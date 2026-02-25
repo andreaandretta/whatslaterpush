@@ -862,7 +862,7 @@ function PricingSection() {
         </div>
 
         <p className="mt-12 text-sm text-text-secondary">
-          Hai un team o un business? <a href="mailto:hello@whatslater.com" className="text-primary font-medium hover:underline">Scrivici.</a>
+          Hai un team o un business? <a href="https://wa.me/393442582226" className="text-primary font-medium hover:underline">Scrivici.</a>
         </p>
       </div>
     </section>
