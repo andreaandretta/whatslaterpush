@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
-import { TextPlugin } from 'gsap/TextPlugin';h
+import { TextPlugin } from 'gsap/TextPlugin';
 import {
         Calendar, MessageCircle, CheckCircle2, ArrowRight, Clock, Smartphone,
         Link as LinkIcon, ChevronDown, Loader2, Paperclip, User, Send, QrCode,
