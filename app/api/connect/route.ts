@@ -62,10 +62,12 @@ async function setWebhook(name: string): Promise<void> {
       method: 'POST',
       headers: { apikey: EVO_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        url: webhookUrl,
-        webhook_by_events: false,
-        webhook_base64: false,
-        events: ['MESSAGES_UPSERT'],
+        webhook: {
+          url: webhookUrl,
+          webhook_by_events: false,
+          webhook_base64: false,
+          events: ['MESSAGES_UPSERT'],
+        }
       }),
     });
     const data = await res.json();
@@ -136,11 +138,18 @@ export async function POST(req: NextRequest) {
     // Step 1: Create instance
     let createRes: any;
     try {
+      const webhookCreateUrl = `${APP_URL}/api/webhook`;
       const createBody = {
         instanceName,
         number: cleanPhone,
         qrcode: true,
         integration: 'WHATSAPP-BAILEYS',
+        webhook: {
+          url: webhookCreateUrl,
+          webhook_by_events: false,
+          webhook_base64: false,
+          events: ['MESSAGES_UPSERT'],
+        },
       };
       console.log('[connect] creating instance:', JSON.stringify(createBody));
       const res = await fetch(`${EVO_URL}/instance/create`, {
