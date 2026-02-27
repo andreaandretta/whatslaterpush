@@ -63,7 +63,7 @@ export default function DashboardPage() {
           setSessionValidated(true);
           return;
         }
-        if (r.status === 'open' && r.owner) {
+        if (r.status === 'open') {
           setUserPhone(storedPhone);
           setInstanceName(storedInst);
           setConnStatus('connected');
@@ -160,12 +160,12 @@ export default function DashboardPage() {
           });
           const s = await sr.json();
           console.log('[dashboard] poll status:', JSON.stringify(s));
-          if (s.status === 'open' && s.owner) {
+          if (s.status === 'open') {
             clearInterval(refreshTimer.current);
             setConnStatus('connected');
             setQrCode(null);
             setPairingCode(null);
-            const phone = s.owner;
+            const phone = s.owner || rawPhone.replace(/\\D/g, '');
             savePhone(phone);
             setUserPhone(phone);
             // Set webhook
