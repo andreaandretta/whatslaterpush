@@ -21,7 +21,7 @@ async function forceDeleteInstance(name: string): Promise<void> {
   } catch (e) {
     console.log('[connect] logout error (ignored):', e);
   }
-  await new Promise(r => setTimeout(r, 800));
+  await new Promise(r => setTimeout(r, 500));
   try {
     await fetch(`${EVO_URL}/instance/delete/${name}`, {
       method: 'DELETE',
@@ -30,7 +30,7 @@ async function forceDeleteInstance(name: string): Promise<void> {
   } catch (e) {
     console.log('[connect] delete error (ignored):', e);
   }
-  await new Promise(r => setTimeout(r, 800));
+  await new Promise(r => setTimeout(r, 500));
   console.log('[connect] forceDelete done:', name);
 }
 
@@ -41,6 +41,7 @@ async function getOwnerPhone(name: string): Promise<string | null> {
     });
     if (!res.ok) return null;
     const data = await res.json();
+    console.log('[connect] fetchInstances raw:', JSON.stringify(data).substring(0, 500));
     const arr = Array.isArray(data) ? data : [data];
     const inst = arr.find((i: any) => i.instance?.instanceName === name || i.name === name);
     if (!inst) return null;
@@ -98,17 +99,17 @@ export async function POST(req: NextRequest) {
 
       if (state === 'open') {
         const owner = await getOwnerPhone(instanceName);
-        console.log('[connect] owner:', owner);
+        console.log('[connect] owner check:', owner);
         if (owner) {
           return NextResponse.json({ status: 'open', owner });
-        } else {
-          return NextResponse.json({ status: 'connecting' });
         }
-      } else if (state === 'connecting' || state === 'qr') {
-        return NextResponse.json({ status: 'connecting' });
-      } else {
-        return NextResponse.json({ status: 'close' });
+        // open but no owner yet — still say open, frontend will handle
+        return NextResponse.json({ status: 'open', owner: null });
       }
+      if (state === 'connecting' || state === 'qr') {
+        return NextResponse.json({ status: 'connecting' });
+      }
+      return NextResponse.json({ status: 'close' });
     } catch (e) {
       console.log('[connect] status error:', e);
       return NextResponse.json({ status: 'not_found' });
@@ -132,7 +133,7 @@ export async function POST(req: NextRequest) {
     // Force delete any existing instance
     await forceDeleteInstance(instanceName);
 
-    // Create instance with phone number (enables pairing code)
+    // Step 1: Create instance
     let createRes: any;
     try {
       const createBody = {
@@ -148,21 +149,29 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify(createBody),
       });
       createRes = await res.json();
-      console.log('[connect] create result:', JSON.stringify(createRes));
+      // Log create result WITHOUT the huge base64 qrcode
+      const logCreate = {...createRes};
+      if (logCreate.qrcode?.base64) logCreate.qrcode = { base64: '(QR_BASE64_OMITTED)' };
+      console.log('[connect] create result keys:', Object.keys(createRes).join(','));
+      console.log('[connect] create result:', JSON.stringify(logCreate).substring(0, 1000));
     } catch (e) {
       console.log('[connect] create error:', e);
       return NextResponse.json({ error: 'Errore creazione istanza Evolution API' }, { status: 500 });
     }
 
-    // Extract QR code from create response
+    // Step 2: Set webhook IMMEDIATELY (don't wait for connection)
+    await setWebhook(instanceName);
+
+    // Step 3: Extract QR code from create response
     let qrCode: string | null =
       createRes?.qrcode?.base64 ||
       createRes?.qrCode?.base64 ||
       createRes?.base64 ||
       null;
 
-    // Wait for QR to be ready if not immediately available
+    // Step 4: If no QR from create, call /instance/connect to get it
     if (!qrCode) {
+      console.log('[connect] no QR from create, calling /instance/connect...');
       await new Promise(r => setTimeout(r, 2000));
       try {
         const qrRes = await fetch(`${EVO_URL}/instance/connect/${instanceName}`, {
@@ -170,35 +179,83 @@ export async function POST(req: NextRequest) {
           headers: { apikey: EVO_KEY },
         });
         const qrData = await qrRes.json();
-        console.log('[connect] qr fallback data:', JSON.stringify(qrData));
+        const logQr = {...qrData};
+        if (logQr.base64) logQr.base64 = '(QR_BASE64_OMITTED)';
+        console.log('[connect] connect/QR fallback:', JSON.stringify(logQr).substring(0, 500));
         qrCode = qrData?.base64 || qrData?.qrcode?.base64 || null;
       } catch (e) {
         console.log('[connect] qr fallback error:', e);
       }
     }
 
-    // Extract pairing code from create response
-    let pairingCode: string | null =
-      createRes?.pairingCode ||
-      createRes?.code ||
-      null;
+    // Step 5: Get pairing code
+    // Try multiple approaches to get the pairing code
+    let pairingCode: string | null = createRes?.pairingCode || createRes?.code || null;
+    console.log('[connect] pairing from create:', pairingCode);
 
-    // Try to get pairing code via dedicated endpoint if not in create response
     if (!pairingCode) {
-      await new Promise(r => setTimeout(r, 1500));
+      // Approach 1: POST /instance/connect/{name} with number
+      console.log('[connect] trying POST /instance/connect for pairing...');
+      await new Promise(r => setTimeout(r, 1000));
       try {
-        const pairRes = await fetch(`${EVO_URL}/instance/pairingCode/${instanceName}`, {
+        const pairRes1 = await fetch(`${EVO_URL}/instance/connect/${instanceName}`, {
           method: 'POST',
           headers: { apikey: EVO_KEY, 'Content-Type': 'application/json' },
           body: JSON.stringify({ number: cleanPhone }),
         });
-        const pairData = await pairRes.json();
-        console.log('[connect] pairingCode result:', JSON.stringify(pairData));
-        pairingCode = pairData?.code || pairData?.pairingCode || null;
+        const pairData1 = await pairRes1.json();
+        const logP1 = {...pairData1};
+        if (logP1.base64) logP1.base64 = '(OMITTED)';
+        console.log('[connect] POST connect result:', JSON.stringify(logP1).substring(0, 500));
+        pairingCode = pairData1?.pairingCode || pairData1?.code || null;
       } catch (e) {
-        console.log('[connect] pairingCode error:', e);
+        console.log('[connect] POST connect error:', e);
       }
     }
+
+    if (!pairingCode) {
+      // Approach 2: POST /instance/pairingCode/{name}
+      console.log('[connect] trying POST /instance/pairingCode...');
+      try {
+        const pairRes2 = await fetch(`${EVO_URL}/instance/pairingCode/${instanceName}`, {
+          method: 'POST',
+          headers: { apikey: EVO_KEY, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ number: cleanPhone }),
+        });
+        const statusCode = pairRes2.status;
+        const pairText = await pairRes2.text();
+        console.log('[connect] pairingCode endpoint status:', statusCode, 'body:', pairText.substring(0, 500));
+        try {
+          const pairData2 = JSON.parse(pairText);
+          pairingCode = pairData2?.code || pairData2?.pairingCode || null;
+        } catch (e) {
+          console.log('[connect] pairingCode parse error');
+        }
+      } catch (e) {
+        console.log('[connect] pairingCode endpoint error:', e);
+      }
+    }
+
+    if (!pairingCode) {
+      // Approach 3: GET /instance/pairingCode/{name}
+      console.log('[connect] trying GET /instance/pairingCode...');
+      try {
+        const pairRes3 = await fetch(`${EVO_URL}/instance/pairingCode/${instanceName}?number=${cleanPhone}`, {
+          method: 'GET',
+          headers: { apikey: EVO_KEY },
+        });
+        const pairText3 = await pairRes3.text();
+        console.log('[connect] GET pairingCode status:', pairRes3.status, 'body:', pairText3.substring(0, 500));
+        try {
+          const pairData3 = JSON.parse(pairText3);
+          pairingCode = pairData3?.code || pairData3?.pairingCode || null;
+        } catch (e) {}
+      } catch (e) {
+        console.log('[connect] GET pairingCode error:', e);
+      }
+    }
+
+    console.log('[connect] final result: qrCode=' + (qrCode ? 'YES' : 'NULL') + ' pairingCode=' + (pairingCode || 'NULL'));
 
     if (!qrCode && !pairingCode) {
       return NextResponse.json(
@@ -207,18 +264,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    return NextResponse.json({
-      instanceName,
-      qrCode,
-      pairingCode,
-    });
+    return NextResponse.json({ instanceName, qrCode, pairingCode });
   }
 
-  // ── GET PHONE (retrieve owner from connected instance) ────────────────────
+  // ── GET PHONE ────────────────────────────────────────────────────────────
   if (action === 'getPhone') {
     const { instanceName } = body;
     if (!instanceName) return NextResponse.json({ error: 'instanceName required' }, { status: 400 });
-
     let attempts = 0;
     while (attempts < 10) {
       attempts++;
@@ -241,7 +293,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true });
   }
 
-  // ── SET WEBHOOK (manual trigger) ──────────────────────────────────────────
+  // ── SET WEBHOOK ──────────────────────────────────────────────────────────
   if (action === 'setWebhook') {
     const { instanceName } = body;
     if (!instanceName) return NextResponse.json({ error: 'instanceName required' }, { status: 400 });
@@ -249,62 +301,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true });
   }
 
-  // ── LEGACY: getCode ────────────────────────────────────────────────────────
-  if (action === 'getCode') {
-    const { phone } = body;
-    const cleanPhone = validatePhone(phone || '');
-    if (!cleanPhone) {
-      return NextResponse.json({ error: 'Numero non valido' }, { status: 400 });
-    }
-    const instanceName = `SchedWhats-${cleanPhone}`;
-    await forceDeleteInstance(instanceName);
-    try {
-      const res = await fetch(`${EVO_URL}/instance/create`, {
-        method: 'POST',
-        headers: { apikey: EVO_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instanceName, qrcode: true, integration: 'WHATSAPP-BAILEYS' }),
-      });
-      const data = await res.json();
-      await new Promise(r => setTimeout(r, 1500));
-      const qrRes = await fetch(`${EVO_URL}/instance/connect/${instanceName}`, {
-        headers: { apikey: EVO_KEY },
-      });
-      const qrData = await qrRes.json();
-      const qrCode = qrData?.base64 || data?.qrcode?.base64 || null;
-      return NextResponse.json({ instanceName, qrCode });
-    } catch (e) {
-      return NextResponse.json({ error: 'Errore QR' }, { status: 500 });
-    }
-  }
-
-  // ── LEGACY: getPairingCode ────────────────────────────────────────────────
-  if (action === 'getPairingCode') {
-    const { phone } = body;
-    const cleanPhone = validatePhone(phone || '');
-    if (!cleanPhone) {
-      return NextResponse.json({ error: 'Numero non valido' }, { status: 400 });
-    }
-    const instanceName = `SchedWhats-${cleanPhone}`;
-    await forceDeleteInstance(instanceName);
-    try {
-      const createRes = await fetch(`${EVO_URL}/instance/create`, {
-        method: 'POST',
-        headers: { apikey: EVO_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instanceName, number: cleanPhone, qrcode: false, integration: 'WHATSAPP-BAILEYS' }),
-      });
-      const createData = await createRes.json();
-      await new Promise(r => setTimeout(r, 1500));
-      const pairRes = await fetch(`${EVO_URL}/instance/pairingCode/${instanceName}`, {
-        method: 'POST',
-        headers: { apikey: EVO_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ number: cleanPhone }),
-      });
-      const pairData = await pairRes.json();
-      const pairingCode = pairData?.code || createData?.pairingCode || null;
-      return NextResponse.json({ instanceName, pairingCode });
-    } catch (e) {
-      return NextResponse.json({ error: 'Errore pairing code' }, { status: 500 });
-    }
+  // ── LEGACY getCode / getPairingCode — REMOVED (they were destroying active sessions) ──
+  if (action === 'getCode' || action === 'getPairingCode') {
+    console.log('[connect] BLOCKED legacy action:', action, '- these are deprecated and destroy sessions');
+    return NextResponse.json({ error: 'Questa azione è stata rimossa. Aggiorna la pagina.' }, { status: 410 });
   }
 
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
