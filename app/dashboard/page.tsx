@@ -20,7 +20,10 @@ const getStoredPhone    = () => (typeof window !== 'undefined' ? localStorage.ge
 const getStoredInstance = () => (typeof window !== 'undefined' ? localStorage.getItem(INST_KEY)  || '' : '');
 const savePhone    = (p: string) => { if (p) localStorage.setItem(PHONE_KEY, p); };
 const saveInstance = (n: string) => { if (n) localStorage.setItem(INST_KEY, n); };
-const clearPhone   = () => { localStorage.removeItem(PHONE_KEY); localStorage.removeItem(INST_KEY); };
+const EXPIRY_KEY  = 'sw_expiry';
+const getStoredExpiry   = () => (typeof window !== 'undefined' ? localStorage.getItem(EXPIRY_KEY) || '' : '');
+const saveExpiry        = () => { localStorage.setItem(EXPIRY_KEY, String(Date.now() + 24 * 3600 * 1000)); };
+const clearPhone        = () => { localStorage.removeItem(PHONE_KEY); localStorage.removeItem(INST_KEY); localStorage.removeItem(EXPIRY_KEY); };
 
 export default function DashboardPage() {
   // ═══ State ═══
@@ -44,7 +47,16 @@ export default function DashboardPage() {
     const validateSession = async () => {
       const storedPhone = getStoredPhone();
       const storedInst  = getStoredInstance();
+              // FIX P3: check session expiry (24h) — before everything
+              const expiry = getStoredExpiry();
+              if (expiry && Date.now() > parseInt(expiry)) {
+                          console.log('[dashboard] session expired, clearing localStorage');
+                          clearPhone();
+                          setSessionValidated(true);
+                          return;
+              }
       if (!storedPhone || !storedInst) {
+                
         setSessionValidated(true);
         return;
       }
@@ -67,6 +79,7 @@ export default function DashboardPage() {
           setUserPhone(storedPhone);
           setInstanceName(storedInst);
           setConnStatus('connected');
+                          saveExpiry(); // FIX P3: refresh 24h expiry on valid connection
           fetchMessagesForPhone(storedPhone);
         } else {
           // Stale session (connecting state but no owner) — clear it
@@ -74,13 +87,8 @@ export default function DashboardPage() {
         }
       } catch (e) {
         console.log('[dashboard] session validation error:', e);
-        // On network error keep the session
-        const storedPhoneAgain = getStoredPhone();
-        if (storedPhoneAgain) {
-          setUserPhone(storedPhoneAgain);
-          setInstanceName(storedInst);
-          setConnStatus('connected');
-        }
+                // FIX P3: on network error do NOT fake connected — stay disconnected
+                // (avoids ghost sessions for new users loading the same URL)
       }
       setSessionValidated(true);
     };
@@ -162,6 +170,7 @@ export default function DashboardPage() {
           console.log('[dashboard] poll status:', JSON.stringify(s));
           if (s.status === 'open') {
             clearInterval(refreshTimer.current);
+                            saveExpiry(); // FIX P3: save 24h expiry on new connection
             setConnStatus('connected');
             setQrCode(null);
             setPairingCode(null);
