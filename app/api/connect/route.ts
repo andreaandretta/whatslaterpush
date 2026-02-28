@@ -66,7 +66,7 @@ async function setWebhook(name: string): Promise<void> {
           url: webhookUrl,
           webhook_by_events: false,
           webhook_base64: false,
-          events: ['MESSAGES_UPSERT'],
+                        events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'], // FIX P2: add CONNECTION_UPDATE
         }
       }),
     });
@@ -142,13 +142,12 @@ export async function POST(req: NextRequest) {
       const createBody = {
         instanceName,
         number: cleanPhone,
-        qrcode: true,
-        integration: 'WHATSAPP-BAILEYS',
+        qrcode: false, // FIX P1: false = pairing code mode; QR retrieved separately via /instance/connect GET
         webhook: {
           url: webhookCreateUrl,
           webhook_by_events: false,
           webhook_base64: false,
-          events: ['MESSAGES_UPSERT'],
+                      events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'], // FIX P2
         },
       };
       console.log('[connect] creating instance:', JSON.stringify(createBody));
@@ -205,7 +204,7 @@ export async function POST(req: NextRequest) {
     if (!pairingCode) {
       // Approach 1: POST /instance/connect/{name} with number
       console.log('[connect] trying POST /instance/connect for pairing...');
-      await new Promise(r => setTimeout(r, 1000));
+              await new Promise(r => setTimeout(r, 3000)); // FIX P1: need 3s for Baileys init with qrcode:false
       try {
         const pairRes1 = await fetch(`${EVO_URL}/instance/connect/${instanceName}`, {
           method: 'POST',
@@ -216,7 +215,7 @@ export async function POST(req: NextRequest) {
         const logP1 = {...pairData1};
         if (logP1.base64) logP1.base64 = '(OMITTED)';
         console.log('[connect] POST connect result:', JSON.stringify(logP1).substring(0, 500));
-        pairingCode = pairData1?.pairingCode || pairData1?.code || null;
+                pairingCode = pairData1?.pairingCode || pairData1?.pairing_code || pairData1?.code || null; // FIX P1
       } catch (e) {
         console.log('[connect] POST connect error:', e);
       }
