@@ -7,7 +7,7 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://l8o400sowgw800swg8gcg
 
 function validatePhone(raw: string): string | null {
   const clean = raw.replace(/\D/g, '');
-  if (clean.length < 10 || clean.length > 15) return null;
+  if (clean.length < 10 || clean.length > 15) return null;h
   return clean;
 }
 
@@ -142,7 +142,8 @@ export async function POST(req: NextRequest) {
       const createBody = {
         instanceName,
         number: cleanPhone,
-        qrcode: false, // FIX P1: false = pairing code mode; QR retrieved separately via /instance/connect GET
+        hqrcode: false,
+        integration: 'WHATSAPP-BAILEYS',
         webhook: {
           url: webhookCreateUrl,
           webhook_by_events: false,
