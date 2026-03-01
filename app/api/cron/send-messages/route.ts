@@ -92,7 +92,8 @@ export async function GET(req: Request) {
       const { data: users } = await supabase
             .from('user_instances')
             .select('id, phone_number, instance_name, trial_ends_at, subscription_status')
-            .or('subscription_status.eq.active,trial_ends_at.gte.' + new Date().toISOString());
+  // BUG1 FIX: removed trial filter to include all users
+  // .or('subscription_status.eq.active,trial_ends_at.gte.' + new Date().toISOString());
 
       let sent = 0, failed = 0, skipped = 0, rateLimited = 0;
 
