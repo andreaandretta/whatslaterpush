@@ -25,6 +25,15 @@ const getStoredExpiry   = () => (typeof window !== 'undefined' ? localStorage.ge
 const saveExpiry        = () => { localStorage.setItem(EXPIRY_KEY, String(Date.now() + 24 * 3600 * 1000)); };
 const clearPhone        = () => { localStorage.removeItem(PHONE_KEY); localStorage.removeItem(INST_KEY); localStorage.removeItem(EXPIRY_KEY); };
 
+// BUG3 FIX: normalize Italian phone numbers for display
+function normalizeITPhone(raw: string): string {
+  if (!raw) return raw;
+  let n = raw.replace(/\D/g, '');
+  if (n.startsWith('0')) n = '39' + n.substring(1);
+  else if (n.startsWith('3') && !n.startsWith('39')) n = '39' + n;
+  return n;
+}
+
 export default function DashboardPage() {
   // ═══ State ═══
   const [connStatus, setConnStatus]     = useState<'disconnected'|'connecting'|'connected'>('disconnected');
@@ -76,7 +85,7 @@ export default function DashboardPage() {
           return;
         }
         if (r.status === 'open') {
-          setUserPhone(storedPhone);
+          setUserPhone(normalizeITPhone(storedPhone));
           setInstanceName(storedInst);
           setConnStatus('connected');
                           saveExpiry(); // FIX P3: refresh 24h expiry on valid connection
@@ -176,7 +185,7 @@ export default function DashboardPage() {
             setPairingCode(null);
             const phone = s.owner || rawPhone.replace(/\\D/g, '');
             savePhone(phone);
-            setUserPhone(phone);
+            setUserPhone(normalizeITPhone(phone));
             // Set webhook
             await fetch('/api/connect', {
               method: 'POST',
