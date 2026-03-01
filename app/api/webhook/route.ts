@@ -376,12 +376,12 @@ export async function POST(req: Request) {
                                         console.log('WEBHOOK: Will send to:', recName, recNum);
 
                         const trialEnd = user.trial_ends_at ? new Date(user.trial_ends_at) : null;
-                                        if (user.subscription_status !== 'active' && !(trialEnd && trialEnd > new Date())) {
-                                                                        await notifyOwner(instanceName, ownerPhone, '❌ Trial scaduto. Abbonati su whatslater.com per continuare.');
-                                                                        return NextResponse.json({ ok:true });
-                                        }
-
-                        const daysLeft = trialEnd ? Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / 86400000)) : 0;
+  // BUG1 FIX: trial check disabled
+  // if (user.subscription_status !== 'active' && !(trialEnd && trialEnd > new Date())) {
+  //   await notifyOwner(instanceName, ownerPhone, '❌ Trial scaduto. Abbonati su whatslater.com per continuare.');
+  //   return NextResponse.json({ ok:true });
+  // }
+  const daysLeft = trialEnd ? Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / 86400000)) : 0;
                                         const { error: insErr } = await supabase.from('scheduled_messages').insert({
                                                                         user_instance_id: user.id,
                                                                         instance_phone: ownerPhone,
