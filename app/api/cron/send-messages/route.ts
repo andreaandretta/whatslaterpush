@@ -128,9 +128,7 @@ export async function GET(req: Request) {
                       if (!check.allowed) {
                                   console.log('RATE LIMITED:', ownerPhone, check.reason);
                                   rateLimited++;
-                                  await supabase.from('scheduled_messages')
-                                    .update({ scheduled_at: new Date(Date.now() + 120000).toISOString() })
-                                    .eq('id', msg.id);
+// BUG5 FIX: do not shift scheduled_at on rate-limit, just skip this cron tick
                                   continue;
                       }
 
