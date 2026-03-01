@@ -8,7 +8,10 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://l8o400sowgw800swg8gcg
 function validatePhone(raw: string): string | null {
     const clean = raw.replace(/\D/g, '');
     if (clean.length < 10 || clean.length > 15) return null;
-    return clean;
+    // BUG3 FIX: normalize Italian numbers
+  if (clean.startsWith('0')) return '39' + clean.substring(1);
+  if (clean.startsWith('3') && !clean.startsWith('39')) return '39' + clean;
+  return clean;
 }
 
 async function forceDeleteInstance(name: string): Promise<void> {
@@ -109,6 +112,7 @@ export async function POST(req: NextRequest) {
   if (action === 'getCodeAndPairing') {
         const { phone } = body;
         const cleanPhone = validatePhone(phone || '');
+  console.log('[connect] BUG3 - raw phone input:', phone, '| cleaned+normalized:', cleanPhone);
         if (!cleanPhone) {
                 return NextResponse.json(
                   { error: 'Inserisci numero completo con prefisso internazionale (es: 393509898408)' },
@@ -151,6 +155,7 @@ export async function POST(req: NextRequest) {
                 console.log('[connect] create result:', JSON.stringify(logCreate).substring(0, 1000));
         } catch (e) {
                 console.log('[connect] create error:', e);
+      console.error('[connect] FULL CREATE ERROR - phone:', cleanPhone, 'instanceName:', instanceName, 'error details:', JSON.stringify(e));
                 return NextResponse.json({ error: 'Errore creazione istanza Evolution API' }, { status: 500 });
         }
 
