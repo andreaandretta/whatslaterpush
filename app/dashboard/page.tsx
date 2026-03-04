@@ -5,7 +5,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { TextPlugin } from 'gsap/TextPlugin';
 import {
   Calendar, MessageCircle, CheckCircle2, ArrowRight, Clock, Smartphone,
-  Link as LinkIcon, ChevronDown, Loader2, Paperclip, User, Send, QrCode,
+  Link as LinkIcon, ChevronDown, Loader2h, Paperclip, User, Send, QrCode,
   Hash, Shield, Zap, RefreshCw, Check, X, LogOut, Trash2, XCircle
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
@@ -85,6 +85,13 @@ export default function DashboardPage() {
           return;
         }
         if (r.status === 'open') {
+          // FIX C: owner verification — se l'istanza appartiene a un numero diverso, reset
+          if (r.owner && r.owner !== storedPhone) {
+            console.log('[dashboard] FIX C owner mismatch: owner=', r.owner, 'storedPhone=', storedPhone, '— clearing session');
+            clearPhone();
+            setSessionValidated(true);
+            return;
+          }
           setUserPhone(normalizeITPhone(storedPhone));
           setInstanceName(storedInst);
           setConnStatus('connected');
