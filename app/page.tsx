@@ -805,7 +805,7 @@ function ConnectionZone() {
                       <p className="text-sm font-medium text-gray-700 mb-3">Scansiona il QR Code con WhatsApp:</p>
                       <div className="flex justify-center">
                         <img
-                          src={`data:image/png;base64,${qrCode}`}
+                          src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
                           alt="QR Code WhatsApp"
                           className="w-52 h-52 border border-gray-200 rounded-xl"
                         />
