@@ -719,7 +719,7 @@ function ConnectionZone() {
       const res = await fetch('/api/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'getCodeAndPairing', phoneNumber: phone }),
+        body: JSON.stringify({ action: 'getCodeAndPairing', phone: phone }),
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
