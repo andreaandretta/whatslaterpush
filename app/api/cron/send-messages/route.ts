@@ -105,7 +105,16 @@ export async function GET(req: Request) {
 
             let sent = 0, failed = 0, skipped = 0, rateLimited = 0;
 
-            for (const user of users || []) {
+            // ROUTING FIX: Deduplicate - skip if we already processed this instance_name
+    const processedInstances = new Set<string>();
+
+    for (const user of users || []) {
+      // Skip duplicate user_instances rows (same instance_name processed twice)
+      if (processedInstances.has(user.instance_name)) {
+        console.log('CRON: Skipping duplicate instance:', user.instance_name, 'phone:', user.phone_number);
+        continue;
+      }
+      processedInstances.add(user.instance_name);
                             const instanceName = user.instance_name || 'SchedWhats-Primary';
                             const ownerPhone = user.phone_number;
 
@@ -169,7 +178,7 @@ export async function GET(req: Request) {
                                                                             await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
                                                                                                             method: 'POST',
                                                                                                             headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-                                                                                                            body: JSON.stringify({ number: ownerPhone, text: '✅ Inviato a ' + (msg.recipient_name || msg.recipient_number) + '!' })
+                                                                                                            body: JSON.stringify({ number: msg.instance_phone || ownerPhone, text: '✅ Inviato a ' + (msg.recipient_name || msg.recipient_number) + '!' })
                                                                                 });
                                                 } catch (notifyErr) {}
 
@@ -188,7 +197,7 @@ export async function GET(req: Request) {
                                                                                                             await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
                                                                                                                                                 method: 'POST',
                                                                                                                                                 headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-                                                                                                                                                body: JSON.stringify({ number: ownerPhone, text: '❌ Impossibile inviare a ' + (msg.recipient_name || msg.recipient_number) + ' dopo 3 tentativi.' })
+                                                                                                                                                body: JSON.stringify({ number: msg.instance_phone || ownerPhone, text: '❌ Impossibile inviare a ' + (msg.recipient_name || msg.recipient_number) + ' dopo 3 tentativi.' })
                                                                                                                 });
                                                                                 } catch (e) {}
                                                                             failed++;
