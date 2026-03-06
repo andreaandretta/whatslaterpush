@@ -690,11 +690,11 @@ function ConnectionZone() {
         const res = await fetch('/api/connect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'getStatus' }),
+          body: JSON.stringify({ action: 'status' }),
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.status === 'connected' || data.state === 'open') {
+          if (data.status === 'connected' || data.status === 'open' || data.state === 'open') {
             setStatus('connected');
             setQrCode(null);
             setPairingCode(null);
