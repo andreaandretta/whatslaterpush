@@ -38,7 +38,9 @@ async function forceDeleteInstance(name: string): Promise<void> {
           });
     } catch (e) { console.log('[connect] delete error (ignored):', e); }
     await new Promise(r => setTimeout(r, 500));
-    console.log('[connect] forceDelete done:', name);
+    // Wait extra time for Evolution API to fully clean up
+  await new Promise(r => setTimeout(r, 1000));
+  console.log('[connect] forceDelete done:', name);
 }
 
 async function getOwnerPhone(name: string): Promise<string | null> {
@@ -88,7 +90,7 @@ export async function POST(req: NextRequest) {
     console.log('[connect] action:', action, 'body:', JSON.stringify(body));
 
   // ── STATUS ────────────────────────────────────────────────────────────────
-  if (action === 'status') {
+  if (action === 'status' || action === 'getStatus') {
         const { instanceName } = body;
         if (!instanceName) return NextResponse.json({ status: 'not_found' });
         try {
@@ -215,7 +217,7 @@ export async function POST(req: NextRequest) {
       // If no QR from create, call /instance/connect to get it
       if (!qrCode) {
               console.log('[connect] no QR from create, calling /instance/connect...');
-              await new Promise(r => setTimeout(r, 2000));
+              await new Promise(r => setTimeout(r, 1000));
               try {
                         const qrRes = await fetch(`${EVO_URL}/instance/connect/${instanceName}`, {
                                     method: 'GET',
@@ -235,7 +237,7 @@ export async function POST(req: NextRequest) {
       // If still no pairingCode, try POST /instance/connect with number (v2 pairing code endpoint)
       if (!pairingCode) {
               console.log('[connect] trying POST /instance/connect for pairing...');
-              await new Promise(r => setTimeout(r, 3000));
+              await new Promise(r => setTimeout(r, 1500));
               try {
                         const pairRes1 = await fetch(`${EVO_URL}/instance/connect/${instanceName}`, {
                                     method: 'POST',
