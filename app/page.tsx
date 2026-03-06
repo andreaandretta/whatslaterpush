@@ -663,172 +663,161 @@ function HowItWorksSection() {
 }
 
 function ConnectionZone() {
-  const [method, setMethod] = useState<'qr' | 'pairing'>('qr');
-  const [phone, setPhone] = useState('');
-  const [status, setStatus] = useState<'idle' | 'loading' | 'waiting' | 'connected'>('idle');
-  const [qrCode, setQrCode] = useState<string | null>(null);
-  const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [phoneNumber, setPhoneNumber] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+  const [qrCode, setQrCode] = React.useState<string | null>(null);
+  const [pairingCode, setPairingCode] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [status, setStatus] = React.useState<string>('disconnected');
+  const pollRef = React.useRef<NodeJS.Timeout | null>(null);
 
-  const handleConnect = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!phone) return;
-    
-    setStatus('loading');
-    
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  const pollStatus = () => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch('/api/connect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'getStatus' }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'connected' || data.state === 'open') {
+            setStatus('connected');
+            setQrCode(null);
+            setPairingCode(null);
+            stopPolling();
+          }
+        }
+      } catch {}
+    }, 3000);
+  };
+
+  const handleGetCode = async () => {
+    setLoading(true);
+    setError(null);
+    setQrCode(null);
+    setPairingCode(null);
     try {
       const res = await fetch('/api/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: method === 'pairing' ? 'getPairingCode' : 'getCode', phoneNumber: method === 'pairing' ? phone.replace(/\D/g, '') : null })
+        body: JSON.stringify({ action: 'getCodeAndPairing', phoneNumber: phoneNumber.trim() }),
       });
-
       if (!res.ok) {
-        throw new Error('Servizio temporaneamente offline');
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Errore durante la connessione');
       }
-
       const data = await res.json();
-      
-      if (method === 'qr') {
-        setQrCode(data.data?.qrCode);
-      } else {
-        setPairingCode(data.data?.pairingCode);
-      }
-      
-      setStatus('waiting');
-      
-      // In a real app, you would use Supabase real-time subscriptions here
-      // to listen for the webhook confirmation.
-      // For demonstration, we simulate the success after 5 seconds.
-      setTimeout(() => {
-        setStatus('connected');
-      }, 5000);
-      
-    } catch (error) {
-      console.error(error);
-      alert('Servizio temporaneamente offline. Riprova più tardi.');
-      setStatus('idle');
+      if (data.qrCode) setQrCode(data.qrCode);
+      if (data.pairingCode) setPairingCode(data.pairingCode);
+      setStatus('connecting');
+      pollStatus();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Errore sconosciuto');
+    } finally {
+      setLoading(false);
     }
   };
 
+  React.useEffect(() => {
+    return () => stopPolling();
+  }, []);
+
   return (
-    <section id="connetti" className="py-24 bg-gradient-to-b from-background to-[#e8f5e9]">
-      <div className="max-w-3xl mx-auto px-6">
-        <div className="text-center mb-12">
-          <h2 className="text-4xl font-bold text-text-primary mb-4">Inizia Subito</h2>
-          <p className="text-text-secondary">Connetti il tuo WhatsApp in pochi secondi. Nessuna carta di credito richiesta per provare.</p>
-        </div>
+    <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md mx-auto">
+      <h2 className="text-2xl font-bold text-gray-800 mb-2 text-center">Connetti WhatsApp</h2>
+      <p className="text-gray-500 text-sm text-center mb-6">
+        Inserisci il tuo numero di telefono per ottenere il codice di connessione
+      </p>
 
-        <div className="bg-white rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.05)] overflow-hidden transition-all duration-500">
-          {status === 'connected' ? (
-            <div className="p-12 text-center flex flex-col items-center">
-              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6">
-                <CheckCircle2 className="w-10 h-10 text-primary" />
-              </div>
-              <h3 className="text-2xl font-bold mb-2">WhatsApp Connesso!</h3>
-              <p className="text-text-secondary mb-8">Sei pronto per programmare il tuo primo messaggio.</p>
-              
-              <div className="w-full bg-background rounded-2xl p-6 text-left mb-8">
-                <h4 className="font-bold mb-4">Come iniziare:</h4>
-                <ol className="space-y-3 text-sm">
-                  <li className="flex gap-3"><span className="bg-white w-6 h-6 rounded-full flex items-center justify-center font-bold shadow-sm shrink-0">1</span> Apri WhatsApp e cerca la chat "Te Stesso"</li>
-                  <li className="flex gap-3"><span className="bg-white w-6 h-6 rounded-full flex items-center justify-center font-bold shadow-sm shrink-0">2</span> Tocca la graffetta 📎 e seleziona "Contatto"</li>
-                  <li className="flex gap-3"><span className="bg-white w-6 h-6 rounded-full flex items-center justify-center font-bold shadow-sm shrink-0">3</span> Invia il contatto e scrivi il messaggio!</li>
-                </ol>
-              </div>
-              
-              <a href="/dashboard" className="bg-primary text-white px-8 py-3 rounded-full font-semibold hover:scale-105 transition-transform w-full md:w-auto inline-block">
-                Vai alla Dashboard
-              </a>
+      {status === 'connected' ? (
+        <div className="text-center">
+          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <p className="text-green-600 font-semibold text-lg">WhatsApp Connesso!</p>
+          <p className="text-gray-500 text-sm mt-2">Il tuo dispositivo è stato collegato con successo.</p>
+          <a href="/dashboard" className="mt-6 inline-block bg-green-500 text-white px-6 py-3 rounded-xl font-semibold hover:bg-green-600 transition-colors">
+            Vai alla Dashboard
+          </a>
+        </div>
+      ) : (
+        <>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Numero di telefono (con prefisso internazionale)
+            </label>
+            <input
+              type="tel"
+              value={phoneNumber}
+              onChange={(e) => setPhoneNumber(e.target.value)}
+              placeholder="Es: 393401234567"
+              className="w-full border border-gray-300 rounded-xl px-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-400"
+              disabled={loading || status === 'connecting'}
+            />
+            <p className="text-xs text-gray-400 mt-1">Inserisci il numero senza +, es: 393401234567</p>
+          </div>
+
+          <button
+            onClick={handleGetCode}
+            disabled={loading || !phoneNumber.trim() || status === 'connecting'}
+            className="w-full bg-green-500 text-white py-3 rounded-xl font-semibold hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Connessione in corso...' : status === 'connecting' ? 'In attesa di connessione...' : 'Connetti WhatsApp'}
+          </button>
+
+          {error && (
+            <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
+              {error}
             </div>
-          ) : (
-            <>
-              <div className="flex border-b border-gray-100">
-                <button 
-                  className={cn("flex-1 py-4 font-semibold text-sm flex items-center justify-center gap-2 transition-colors", method === 'qr' ? "text-primary border-b-2 border-primary bg-primary/5" : "text-gray-500 hover:bg-gray-50")}
-                  onClick={() => { setMethod('qr'); setStatus('idle'); }}
-                >
-                  <QrCode className="w-4 h-4" /> Scansiona QR Code
-                </button>
-                <button 
-                  className={cn("flex-1 py-4 font-semibold text-sm flex items-center justify-center gap-2 transition-colors", method === 'pairing' ? "text-accent border-b-2 border-accent bg-accent/5" : "text-gray-500 hover:bg-gray-50")}
-                  onClick={() => { setMethod('pairing'); setStatus('idle'); }}
-                >
-                  <Hash className="w-4 h-4" /> Inserisci Codice
-                </button>
-              </div>
-
-              <div className="p-8 md:p-12">
-                {status === 'idle' || status === 'loading' ? (
-                  <form onSubmit={handleConnect} className="max-w-sm mx-auto flex flex-col gap-6">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Numero di telefono WhatsApp</label>
-                      <div className="relative">
-                        <input 
-                          type="tel" 
-                          placeholder="+39 333 123 4567" 
-                          className="w-full bg-background border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-shadow"
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
-                          required
-                        />
-                      </div>
-                      <p className="text-xs text-gray-500 mt-2">
-                        {method === 'qr' ? "Inserisci il tuo numero per generare un QR Code. Nessun dato viene condiviso." : "Riceverai un codice a 8 cifre da inserire su WhatsApp."}
-                      </p>
-                    </div>
-                    <button 
-                      type="submit" 
-                      disabled={status === 'loading'}
-                      className={cn("text-white px-6 py-3 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all", 
-                        method === 'qr' ? "bg-primary hover:bg-primary/90" : "bg-accent hover:bg-accent/90",
-                        status === 'loading' && "opacity-70 cursor-not-allowed"
-                      )}
-                    >
-                      {status === 'loading' ? <Loader2 className="w-5 h-5 animate-spin" /> : (method === 'qr' ? "Ottieni QR Code" : "Ottieni Codice")}
-                    </button>
-                  </form>
-                ) : (
-                  <div className="flex flex-col items-center animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    {method === 'qr' ? (
-                      <div className="w-64 h-64 bg-white border-4 border-primary/20 rounded-3xl p-4 shadow-lg mb-8 relative flex items-center justify-center overflow-hidden">
-                        {qrCode ? (
-                          <img src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`} alt="QR Code" className="w-full h-full object-contain relative z-10" />
-                        ) : (
-                          <QrCode className="w-full h-full text-text-primary opacity-80" />
-                        )}
-                        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-primary/10 to-transparent h-1/2 animate-[scan_2s_ease-in-out_infinite] z-20 pointer-events-none"></div>
-                      </div>
-                    ) : (
-                      <div className="mb-8 text-center">
-                        <div className="text-5xl md:text-6xl font-mono font-bold tracking-widest text-text-primary bg-background py-6 px-8 rounded-3xl border border-gray-200 shadow-inner">
-                          {pairingCode?.slice(0,4)} - {pairingCode?.slice(4)}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="flex items-center gap-2 text-primary font-medium mb-8 bg-primary/10 px-4 py-2 rounded-full">
-                      <Loader2 className="w-4 h-4 animate-spin" /> In attesa di connessione...
-                    </div>
-
-                    <div className="w-full max-w-sm bg-background rounded-2xl p-6">
-                      <ol className="space-y-4 text-sm font-medium text-text-secondary">
-                        <li className="flex items-center gap-3"><Smartphone className="w-5 h-5 text-text-primary" /> 1. Apri WhatsApp sul telefono</li>
-                        <li className="flex items-center gap-3"><Shield className="w-5 h-5 text-text-primary" /> 2. Vai su Impostazioni → Dispositivi collegati</li>
-                        <li className="flex items-center gap-3"><LinkIcon className="w-5 h-5 text-text-primary" /> 3. Tocca "Collega un dispositivo"</li>
-                        <li className="flex items-center gap-3">
-                          {method === 'qr' ? <QrCode className="w-5 h-5 text-text-primary" /> : <Hash className="w-5 h-5 text-text-primary" />} 
-                          4. {method === 'qr' ? "Scansiona il QR Code qui sopra" : "Inserisci il codice qui sopra"}
-                        </li>
-                      </ol>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </>
           )}
-        </div>
-      </div>
-    </section>
+
+          {(qrCode || pairingCode) && (
+            <div className="mt-6 space-y-4">
+              {qrCode && (
+                <div className="text-center">
+                  <p className="text-sm font-medium text-gray-700 mb-3">Scansiona il QR Code con WhatsApp:</p>
+                  <div className="flex justify-center">
+                    <img
+                      src={`data:image/png;base64,${qrCode}`}
+                      alt="QR Code WhatsApp"
+                      className="w-48 h-48 border border-gray-200 rounded-xl"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {pairingCode && (
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
+                  <p className="text-sm font-medium text-gray-700 mb-2">Oppure usa il codice di abbinamento:</p>
+                  <p className="text-3xl font-bold text-blue-600 tracking-widest">{pairingCode}</p>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Su WhatsApp → Impostazioni → Dispositivi collegati → Collega un dispositivo → Inserisci il codice
+                  </p>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>Scansiona il QR o inserisci il codice entro 60 secondi</span>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
