@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/send-messages?secret=sk_cron_schedwhats_2024_secure",
+      "schedule": "* * * * *"
+    }
+  ]
+}
