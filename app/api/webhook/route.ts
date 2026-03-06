@@ -66,7 +66,8 @@ function parseCommand(text: string): { date: Date; cmdStart: number; cmdEnd: num
 }
 const SCHED_KW = /\b(manda|mandami|scrivi|scrivimi|dici|avvisa|avvisami|invia|inviami|ricordami|promemoria|reminder)\b/gi;
 function extractContent(raw: string, cmdStart: number, cmdEnd: number): string {
-                let t = normalizeNumbers(raw.replace(SCHED_KW, '').toLowerCase());
+                // FIX: strip keywords from raw first, THEN lowercase+normalize
+  let t = normalizeNumbers(raw.replace(SCHED_KW, '').toLowerCase()).trim();
                 const dateM = /il\s+\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\s*(?:alle?\s+\d{1,2}(?::\d{2})?)?/i.exec(t);
                 if (dateM) {
                                         t = t.slice(0, dateM.index) + t.slice(dateM.index + dateM[0].length);
@@ -86,7 +87,7 @@ function extractContent(raw: string, cmdStart: number, cmdEnd: number): string {
                                                                                 }
                                         }
                 }
-                return t.replace(/^[\s,.:;!?-]+|[\s,.:;!?-]+$/g,'').replace(/\s{2,}/g,' ').trim() || raw;
+                return t.replace(/^[\s,.:;!?-]+|[\s,.:;!?-]+$/g,'').replace(/\s{2,}/g,' ').trim() || raw.replace(SCHED_KW, '').trim() || raw;
 }
 function formatRome(d: Date): string {
                 return d.toLocaleString('it-IT',{ day:'numeric', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Rome' });
