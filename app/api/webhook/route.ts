@@ -119,7 +119,13 @@ async function findUserByPhone(phone: string): Promise<any> {
 async function createUser(phone: string, instanceName: string): Promise<any> {
                 const normalized = phone.startsWith('39') ? phone : '39' + phone;
                 console.log('WEBHOOK: Creating user:', normalized, 'instance:', instanceName);
-                const { data: newUser, error } = await supabase.from('user_instances').insert({
+                // ROUTING FIX: Clean stale rows for this instance before inserting
+  await supabase.from('user_instances')
+    .delete()
+    .eq('instance_name', instanceName)
+    .neq('phone_number', normalized);
+
+  const { data: newUser, error } = await supabase.from('user_instances').insert({
                                         phone_number: normalized,
                                         instance_name: instanceName,
                                         subscription_status: 'trial',
@@ -400,6 +406,12 @@ export async function POST(req: Request) {
                                                                         return NextResponse.json({ error: insErr.message }, { status: 500 });
                                         }
                                         console.log('WEBHOOK: Message saved successfully for', ownerPhone, 'to', recName, 'at', scheduledAt.toISOString());
+
+    // ═══ ROUTING FIX: Delete used pending_contact to prevent reuse ═══
+    if (pc && pc.id) {
+      await supabase.from('pending_contacts').delete().eq('id', pc.id);
+      console.log('WEBHOOK: Deleted used pending_contact id:', pc.id);
+    }
                                         await notifyOwner(instanceName, ownerPhone, `✅ Programmato per ${formatRome(scheduledAt)} a ${recName} (${recNum}).\n💬 "${content}"\n⏳ Trial: ${daysLeft}g`);
                                         return NextResponse.json({ ok:true, scheduled: scheduledAt.toISOString() });
 
