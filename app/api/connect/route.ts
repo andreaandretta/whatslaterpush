@@ -1,5 +1,13 @@
 // @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+
+function getSupabase() {
+  return createClient(
+    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+}
 
 const EVO_URL = process.env.EVOLUTION_API_URL || 'http://evo-pkso00o0ccoc8ccgos0ks4cw.161.35.212.68.sslip.io';
 const EVO_KEY = process.env.EVOLUTION_API_KEY || 'SCHEDWHATS_GOD_MODE_SECRET_KEY_2024';
@@ -120,6 +128,31 @@ export async function POST(req: NextRequest) {
                         );
         }
         const instanceName = `SchedWhats-${cleanPhone}`;
+
+    // ═══ ROUTING FIX: Clean up duplicate user_instances ═══
+    // Delete all rows with this instance_name but different phone_number
+    // Then upsert the correct row
+    try {
+      const supa = getSupabase();
+      // Delete stale rows: same instance_name but wrong phone
+      await supa.from('user_instances')
+        .delete()
+        .eq('instance_name', instanceName)
+        .neq('phone_number', cleanPhone);
+      // Upsert the correct row (create or update)
+      await supa.from('user_instances').upsert(
+        {
+          phone_number: cleanPhone,
+          instance_name: instanceName,
+          subscription_status: 'trial',
+          trial_ends_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+        },
+        { onConflict: 'phone_number' }
+      );
+      console.log('[connect] user_instances cleaned for', instanceName, cleanPhone);
+    } catch (e: any) {
+      console.error('[connect] user_instances cleanup error:', e.message);
+    }
         console.log('[connect] getCodeAndPairing for:', instanceName);
 
       // Force delete any existing instance
