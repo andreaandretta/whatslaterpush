@@ -1,6 +1,25 @@
 // @ts-nocheck
 import { createClient } from '@supabase/supabase-js';
-import { NextResponse } from 'next/server';
+im
+
+    // FAIL-SAFE: Reject without instance identifier
+    if (!evoInstance) {
+      console.error('WEBHOOK: REJECTED - no instance identifier in payload');
+      return NextResponse.json({ error: 'Missing instance identifier' }, { status: 400 });
+    }
+
+    // Route CONNECTION_UPDATE events
+    const eventUpper = eventType.toUpperCase();
+    if (eventUpper.includes('CONNECTION') || eventUpper === 'CONNECTION_UPDATE') {
+      return await handleConnectionUpdate(payload);
+    }
+
+    // Skip QRCODE events
+    if (eventUpper.includes('QRCODE') || eventUpper.includes('QR_CODE')) {
+      console.log('WEBHOOK: QR event, skipping. instance=' + evoInstance);
+      return NextResponse.json({ ok: true });
+    }
+port { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -108,31 +127,65 @@ async function notifyOwner(instanceName, phone, msg) {
   } catch(e) { console.error('notify err:', e.message); }
 }
 
-async function findUserByPhone(phone) {
-  const variants = new Set();
-  variants.add(phone);
-  if (phone.startsWith('39') && phone.length > 9) variants.add(phone.substring(2));
-  else variants.add('39' + phone);
+function phoneVariants(phone: string): string[] {
+  const variants = [phone];
+  if (phone.startsWith('39') && phone.length > 9) variants.push(phone.substring(2));
+  else variants.push('39' + phone);
+  return [...new Set(variants)];
+}
+
+async function findUserStrict(instanceName: string, phone: string): Promise<any> {
+  const variants = phoneVariants(phone);
   for (const v of variants) {
-    const { data } = await supabase.from('user_instances').select('id, phone_number, subscription_status, trial_ends_at, instance_name').eq('phone_number', v).maybeSingle();
+    const { data } = await supabase
+      .from('user_instances')
+      .select('id, phone_number, subscription_status, trial_ends_at, instance_name')
+      .eq('instance_name', instanceName)
+      .eq('phone_number', v)
+      .maybeSingle();
+    if (data) {
+      console.log(`WEBHOOK: STRICT MATCH found - instance=${instanceName} phone=${v} id=${data.id}`);
+      return data;
+    }
+  }
+  console.log(`WEBHOOK: STRICT MATCH failed - no row for instance=${instanceName} phone=[${variants.join(',')}]`);
+  return null;
+}
+
+async function findUserByPhoneOnly(phone: string): Promise<any> {
+  const variants = phoneVariants(phone);
+  for (const v of variants) {
+    const { data } = await supabase
+      .from('user_instances')
+      .select('id, phone_number, subscription_status, trial_ends_at, instance_name')
+      .eq('phone_number', v)
+      .maybeSingle();
     if (data) return data;
   }
   return null;
 }
+// createUser REMOVED: Users created via /api/connect only
 
-async function createUser(phone, instanceName) {
-  const normalized = phone.startsWith('39') ? phone : '39' + phone;
-  await supabase.from('user_instances').delete().eq('instance_name', instanceName).neq('phone_number', normalized);
-  const { data: newUser, error } = await supabase.from('user_instances').insert({
-    phone_number: normalized, instance_name: instanceName, subscription_status: 'trial',
-    trial_ends_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-  }).select().single();
-  if (error) {
-    console.error('WEBHOOK: create user err:', error.message);
-    if (error.message.includes('duplicate') || error.message.includes('unique')) return await findUserByPhone(normalized);
-    return null;
-  }
-  return newUser;
+
+async function handleConnectionUpdate(payload: any): Promise<NextResponse> {
+  const instanceName = payload?.instance || '';
+  const data = payload?.data;
+  const state = data?.state || data?.status || data?.action || '';
+  console.log(`WEBHOOK: CONNECTION_UPDATE instance=${instanceName} state=${state}`);
+  if (!instanceName) return NextResponse.json({ ok: true });
+  let connectionStatus: string;
+  if (state === 'open' || state === 'connected') connectionStatus = 'open';
+  else if (state === 'close' || state === 'disconnected' || state === 'logged_out') connectionStatus = 'close';
+  else if (state === 'connecting' || state === 'qr') connectionStatus = 'connecting';
+  else connectionStatus = state || 'unknown';
+  const { data: updated, error } = await supabase
+    .from('user_instances')
+    .update({ connection_status: connectionStatus, last_connection_update: new Date().toISOString() })
+    .eq('instance_name', instanceName)
+    .select('id, phone_number');
+  if (error) console.error(`WEBHOOK: CONNECTION_UPDATE DB error: ${error.message}`);
+  else console.log(`WEBHOOK: CONNECTION_UPDATE saved - instance=${instanceName} status=${connectionStatus} rows=${updated?.length || 0}`);
+  return NextResponse.json({ ok: true });
 }
 
 function extractMessageItem(payload) {
@@ -154,7 +207,7 @@ export async function POST(req) {
     console.log('WEBHOOK incoming:', rawBody);
 
     const eventType = payload?.event || payload?.type || 'unknown';
-    const evoInstance = payload?.instance || 'SchedWhats-Primary';
+    const evoInstance = payload?.instance || '';
     console.log('WEBHOOK event=' + eventType + ' instance=' + evoInstance);
 
     // ══ Handle CONNECTION_UPDATE — update instance_name in DB when phone connects ══
@@ -209,24 +262,52 @@ export async function POST(req) {
 
     console.log('WEBHOOK: Processing sender=' + senderRaw + ' evoInstance=' + evoInstance);
 
-    let user = await findUserByPhone(senderRaw);
+    // STRICT IDENTITY RESOLUTION
+    let user = await findUserStrict(evoInstance, senderRaw);
+
     if (!user) {
-      console.log('WEBHOOK: User not found for ' + senderRaw + ', creating...');
-      user = await createUser(senderRaw, evoInstance);
+      const existingUser = await findUserByPhoneOnly(senderRaw);
+      if (existingUser) {
+        console.log(`WEBHOOK: Phone ${senderRaw} found under instance=${existingUser.instance_name} but webhook from ${evoInstance}`);
+        let oldInstanceDead = false;
+        try {
+          const checkRes = await fetch(
+            `${process.env.EVOLUTION_API_URL}/instance/connectionState/${existingUser.instance_name}`,
+            { headers: { 'apikey': process.env.EVOLUTION_API_KEY! } }
+          );
+          if (!checkRes.ok) { oldInstanceDead = true; }
+          else {
+            const checkData = await checkRes.json();
+            const oldState = checkData?.instance?.state || checkData?.state || 'close';
+            oldInstanceDead = (oldState !== 'open');
+          }
+        } catch (e) { oldInstanceDead = true; }
+
+        if (oldInstanceDead) {
+          console.log(`WEBHOOK: Old instance ${existingUser.instance_name} dead. Reassigning to ${evoInstance}`);
+          await supabase.from('user_instances')
+            .update({ instance_name: evoInstance, connection_status: 'open', last_connection_update: new Date().toISOString() })
+            .eq('id', existingUser.id);
+          existingUser.instance_name = evoInstance;
+          user = existingUser;
+        } else {
+          console.error(`WEBHOOK: CONFLICT - phone ${senderRaw} has LIVE instance ${existingUser.instance_name} but msg from ${evoInstance}. REJECTING.`);
+          return NextResponse.json({ error: 'Instance conflict' }, { status: 409 });
+        }
+      } else {
+        console.error(`WEBHOOK: REJECTED - phone ${senderRaw} instance ${evoInstance} not in DB.`);
+        return NextResponse.json({ error: 'User not found' }, { status: 404 });
+      }
     }
-    if (!user) {
-      console.error('WEBHOOK: Cannot create user for:', senderRaw);
-      return NextResponse.json({ error: 'Cannot create user' }, { status: 500 });
-    }
+
     if (user.instance_name !== evoInstance) {
-      console.log('WEBHOOK: Updating instance_name from', user.instance_name, 'to', evoInstance);
-      await supabase.from('user_instances').update({ instance_name: evoInstance }).eq('id', user.id);
-      user.instance_name = evoInstance;
+      console.error(`WEBHOOK: FATAL MISMATCH - user.instance=${user.instance_name} !== evo=${evoInstance}`);
+      return NextResponse.json({ error: 'Instance mismatch' }, { status: 409 });
     }
 
     const ownerPhone = user.phone_number;
-    const instanceName = user.instance_name || evoInstance;
-    console.log('WEBHOOK: Owner=' + ownerPhone + ' Instance=' + instanceName);
+    const instanceName = user.instance_name;
+    console.log(`WEBHOOK: IDENTITY CONFIRMED - owner=${ownerPhone} instance=${instanceName} user_id=${user.id}`);
 
     // ══ vCard handling ══
     if (msgContent?.contactMessage) {
@@ -263,7 +344,7 @@ export async function POST(req) {
 
     // ══ COMMAND: lista ══
     if (/^(lista|list|pending|programmati)$/i.test(rawLower)) {
-      const { data: pending } = await supabase.from('scheduled_messages').select('id, recipient_name, recipient_number, parsed_message, scheduled_at').eq('instance_phone', ownerPhone).eq('status', 'pending').order('scheduled_at', { ascending: true }).limit(10);
+      const { data: pending } = await supabase.from('scheduled_messages').select('id, recipient_name, recipient_number, parsed_message, scheduled_at').eq('user_instance_id', user.id).eq('status', 'pending').order('scheduled_at', { ascending: true }).limit(10);
       if (!pending || pending.length === 0) { await notifyOwner(instanceName, ownerPhone, 'Nessun messaggio in coda.'); return NextResponse.json({ ok: true }); }
       const listText = pending.map((m, i) => { const name = m.recipient_name || m.recipient_number || '?'; const time = formatRome(new Date(m.scheduled_at)); const preview = (m.parsed_message || '').substring(0, 30); return (i+1) + '. ' + name + ' - ' + time + '\n   "' + preview + (preview.length >= 30 ? '...' : '') + '"'; }).join('\n\n');
       await notifyOwner(instanceName, ownerPhone, 'Messaggi programmati (' + pending.length + '):\n\n' + listText + '\n\nScrivi "cancella 1" per annullare.');
@@ -272,7 +353,7 @@ export async function POST(req) {
 
     // ══ COMMAND: annulla / cancella (LIFO) ══
     if (/^(annulla|cancella|delete|stop|undo)$/i.test(rawLower)) {
-      const { data: lastPending } = await supabase.from('scheduled_messages').select('id, recipient_name, recipient_number, parsed_message, scheduled_at').eq('instance_phone', ownerPhone).eq('status', 'pending').order('created_at', { ascending: false }).limit(1).maybeSingle();
+      const { data: lastPending } = await supabase.from('scheduled_messages').select('id, recipient_name, recipient_number, parsed_message, scheduled_at').eq('user_instance_id', user.id).eq('status', 'pending').order('created_at', { ascending: false }).limit(1).maybeSingle();
       if (!lastPending) { await notifyOwner(instanceName, ownerPhone, 'Nessun messaggio da annullare.'); return NextResponse.json({ ok: true }); }
       await supabase.from('scheduled_messages').update({ status: 'cancelled' }).eq('id', lastPending.id);
       await notifyOwner(instanceName, ownerPhone, 'Annullato! A: ' + (lastPending.recipient_name || lastPending.recipient_number || '?') + ' Era per: ' + formatRome(new Date(lastPending.scheduled_at)));
@@ -283,7 +364,7 @@ export async function POST(req) {
     const cancelNumMatch = /^(annulla|cancella|delete|cancel|stop)\s+(\d+)$/i.exec(rawLower);
     if (cancelNumMatch) {
       const idx = parseInt(cancelNumMatch[2]) - 1;
-      const { data: pending } = await supabase.from('scheduled_messages').select('id, recipient_name, recipient_number, parsed_message, scheduled_at').eq('instance_phone', ownerPhone).eq('status', 'pending').order('scheduled_at', { ascending: true }).limit(10);
+      const { data: pending } = await supabase.from('scheduled_messages').select('id, recipient_name, recipient_number, parsed_message, scheduled_at').eq('user_instance_id', user.id).eq('status', 'pending').order('scheduled_at', { ascending: true }).limit(10);
       if (!pending || pending.length === 0) { await notifyOwner(instanceName, ownerPhone, 'Nessun messaggio da annullare.'); return NextResponse.json({ ok: true }); }
       if (idx < 0 || idx >= pending.length) { await notifyOwner(instanceName, ownerPhone, 'Numero non valido. Hai ' + pending.length + ' messaggi. Scrivi "lista" per vederli.'); return NextResponse.json({ ok: true }); }
       const target = pending[idx];
@@ -297,7 +378,7 @@ export async function POST(req) {
     if (cancelNameMatch && !/\d/.test(cancelNameMatch[2])) {
       const searchName = cancelNameMatch[2].trim();
       if (!/\b(fra|domani|alle|il|minuti|ore|giorni)\b/i.test(searchName)) {
-        const { data: matching } = await supabase.from('scheduled_messages').select('id, recipient_name, recipient_number, parsed_message, scheduled_at').eq('instance_phone', ownerPhone).eq('status', 'pending').ilike('recipient_name', '%' + searchName + '%').order('created_at', { ascending: false }).limit(1).maybeSingle();
+        const { data: matching } = await supabase.from('scheduled_messages').select('id, recipient_name, recipient_number, parsed_message, scheduled_at').eq('user_instance_id', user.id).eq('status', 'pending').ilike('recipient_name', '%' + searchName + '%').order('created_at', { ascending: false }).limit(1).maybeSingle();
         if (matching) {
           await supabase.from('scheduled_messages').update({ status: 'cancelled' }).eq('id', matching.id);
           await notifyOwner(instanceName, ownerPhone, 'Annullato messaggio a ' + (matching.recipient_name || '?') + '! Era per: ' + formatRome(new Date(matching.scheduled_at)));
