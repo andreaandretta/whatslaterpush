@@ -671,6 +671,7 @@ function ConnectionZone() {
   const [pairingCode, setPairingCode] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [status, setStatus] = React.useState<string>('disconnected');
+  const [instanceName, setInstanceName] = React.useState<string | null>(null);
   const pollRef = React.useRef<NodeJS.Timeout | null>(null);
 
   // Normalize phone: strip +, spaces, dashes — send raw digits to API (server handles prefix logic)
@@ -690,7 +691,7 @@ function ConnectionZone() {
         const res = await fetch('/api/connect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'status' }),
+          body: JSON.stringify({ action: 'status', instanceName }),
         });
         if (res.ok) {
           const data = await res.json();
@@ -728,6 +729,7 @@ function ConnectionZone() {
       const data = await res.json();
       if (data.qrCode) setQrCode(data.qrCode);
       if (data.pairingCode) setPairingCode(data.pairingCode);
+      if (data.instanceName) setInstanceName(data.instanceName);
       setStatus('connecting');
       pollStatus();
     } catch (err: unknown) {
