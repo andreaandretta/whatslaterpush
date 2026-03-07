@@ -700,6 +700,7 @@ function ConnectionZone() {
             setQrCode(null);
             setPairingCode(null);
             stopPolling();
+                            if (typeof window !== 'undefined') { const p = data.owner || phoneInput.replace(/\D/g,''); if (p && instanceName) { localStorage.setItem('sw_phone',p); localStorage.setItem('sw_instance',instanceName); localStorage.setItem('sw_expiry',String(Date.now()+86400000)); } }
           }
         }
       } catch {}
