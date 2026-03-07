@@ -29,65 +29,107 @@ function normalizeNumbers(s: string): string {
                 return s;
 }
 function parseCommand(text: string): { date: Date; cmdStart: number; cmdEnd: number }|null {
-                const norm = normalizeNumbers(text.toLowerCase());
-                const nowR = nowRome();
-                const dateM = /il\s+(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\s*(?:alle?\s+(\d{1,2})(?::(\d{2}))?)?/.exec(norm);
-                if (dateM) {
-                                        const d = new Date(nowR);
-                                        d.setDate(parseInt(dateM[1]));
-                                        d.setMonth(parseInt(dateM[2]) - 1);
-                                        if (dateM[3]) { const yr = dateM[3].length === 2 ? '20'+dateM[3] : dateM[3]; d.setFullYear(parseInt(yr)); }
-                                        d.setHours(dateM[4] ? parseInt(dateM[4]) : 9, dateM[5] ? parseInt(dateM[5]) : 0, 0, 0);
-                                        return { date: romeToUtc(d), cmdStart: dateM.index, cmdEnd: dateM.index + dateM[0].length };
-                }
-                const fraM = /fra\s+(\d+)\s*(minuto|minuti|ora|ore|giorno|giorni)/.exec(norm);
-                if (fraM) {
-                                        const n=parseInt(fraM[1]), u=fraM[2], d=new Date(nowR);
-                                        if (u.startsWith('minut')) d.setMinutes(d.getMinutes()+n);
-                                        else if (u.startsWith('or')) d.setHours(d.getHours()+n);
-                                        else d.setDate(d.getDate()+n);
-                                        return { date: romeToUtc(d), cmdStart: fraM.index, cmdEnd: fraM.index+fraM[0].length };
-                }
-                const domM = /domani(?:\s+alle?\s+(\d{1,2})(?::(\d{2}))?)?/.exec(norm);
-                if (domM) {
-                                        const d=new Date(nowR);
-                                        d.setDate(d.getDate()+1);
-                                        d.setHours(domM[1]?parseInt(domM[1]):9, domM[2]?parseInt(domM[2]):0, 0, 0);
-                                        return { date: romeToUtc(d), cmdStart: domM.index, cmdEnd: domM.index+domM[0].length };
-                }
-                const alleM = /alle?\s+(\d{1,2})(?::(\d{2}))?/.exec(norm);
-                if (alleM) {
-                                        const d=new Date(nowR);
-                                        d.setHours(parseInt(alleM[1]), alleM[2]?parseInt(alleM[2]):0, 0, 0);
-                                        if (d<=nowR) d.setDate(d.getDate()+1);
-                                        return { date: romeToUtc(d), cmdStart: alleM.index, cmdEnd: alleM.index+alleM[0].length };
-                }
-                return null;
+  const norm = normalizeNumbers(text.toLowerCase());
+  const nowR = nowRome();
+
+  // Date format: il DD/MM[/YYYY] [alle HH[:MM]]
+  const dateM = /il\s+(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\s*(?:alle?\s+(\d{1,2})(?::(\d{2}))?)?/.exec(norm);
+  if (dateM) {
+    const d = new Date(nowR);
+    d.setDate(parseInt(dateM[1]));
+    d.setMonth(parseInt(dateM[2]) - 1);
+    if (dateM[3]) { const yr = dateM[3].length === 2 ? '20'+dateM[3] : dateM[3]; d.setFullYear(parseInt(yr)); }
+    d.setHours(dateM[4] ? parseInt(dateM[4]) : 9, dateM[5] ? parseInt(dateM[5]) : 0, 0, 0);
+    return { date: romeToUtc(d), cmdStart: dateM.index, cmdEnd: dateM.index + dateM[0].length };
+  }
+
+  // "fra/tra N minuti/ore/giorni"
+  const fraM = /(?:fra|tra)\s+(\d+)\s*(minuto|minuti|ora|ore|giorno|giorni)/.exec(norm);
+  if (fraM) {
+    const n=parseInt(fraM[1]), u=fraM[2], d=new Date(nowR);
+    if (u.startsWith('minut')) d.setMinutes(d.getMinutes()+n);
+    else if (u.startsWith('or')) d.setHours(d.getHours()+n);
+    else d.setDate(d.getDate()+n);
+    return { date: romeToUtc(d), cmdStart: fraM.index, cmdEnd: fraM.index+fraM[0].length };
+  }
+
+  // "domani [mattina|pomeriggio|sera] [alle HH[:MM]]"
+  const domM = /domani(?:\s+(?:mattina|pomeriggio|sera))?(?:\s+alle?\s+(\d{1,2})(?::(\d{2}))?)?/.exec(norm);
+  if (domM) {
+    const d=new Date(nowR); d.setDate(d.getDate()+1);
+    if (domM[1]) {
+      d.setHours(parseInt(domM[1]), domM[2]?parseInt(domM[2]):0, 0, 0);
+    } else if (/pomeriggio/.test(domM[0])) {
+      d.setHours(14, 0, 0, 0);
+    } else if (/sera/.test(domM[0])) {
+      d.setHours(20, 0, 0, 0);
+    } else {
+      d.setHours(9, 0, 0, 0);
+    }
+    return { date: romeToUtc(d), cmdStart: domM.index, cmdEnd: domM.index+domM[0].length };
+  }
+
+  // "stasera [alle HH[:MM]]"
+  const staM = /(?:stasera|stamattina|stanotte)(?:\s+alle?\s+(\d{1,2})(?::(\d{2}))?)?/.exec(norm);
+  if (staM) {
+    const d=new Date(nowR);
+    const keyword = staM[0].split(/\s/)[0];
+    if (staM[1]) {
+      d.setHours(parseInt(staM[1]), staM[2]?parseInt(staM[2]):0, 0, 0);
+    } else if (keyword === 'stamattina') {
+      d.setHours(8, 0, 0, 0);
+    } else if (keyword === 'stasera') {
+      d.setHours(20, 0, 0, 0);
+    } else {
+      d.setHours(23, 0, 0, 0);
+    }
+    if (d<=nowR) d.setDate(d.getDate()+1);
+    return { date: romeToUtc(d), cmdStart: staM.index, cmdEnd: staM.index+staM[0].length };
+  }
+
+  // "alle HH[:MM]"
+  const alleM = /alle?\s+(\d{1,2})(?::(\d{2}))?/.exec(norm);
+  if (alleM) {
+    const d=new Date(nowR);
+    d.setHours(parseInt(alleM[1]), alleM[2]?parseInt(alleM[2]):0, 0, 0);
+    if (d<=nowR) d.setDate(d.getDate()+1);
+    return { date: romeToUtc(d), cmdStart: alleM.index, cmdEnd: alleM.index+alleM[0].length };
+  }
+
+  return null;
 }
-const SCHED_KW = /\b(manda|mandami|scrivi|scrivimi|dici|avvisa|avvisami|invia|inviami|ricordami|promemoria|reminder)\b/gi;
+const SCHED_KW = /\b(manda|mandami|mandagli|mandale|scrivi|scrivimi|scrivigli|scrivile|dici|digli|dille|avvisa|avvisami|invia|inviami|ricordami|ricorda|promemoria|reminder|comunica)\b/gi;
 function extractContent(raw: string, cmdStart: number, cmdEnd: number): string {
-                // FIX: strip keywords from raw first, THEN lowercase+normalize
-  let t = normalizeNumbers(raw.replace(SCHED_KW, '').toLowerCase()).trim();
-                const dateM = /il\s+\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\s*(?:alle?\s+\d{1,2}(?::\d{2})?)?/i.exec(t);
-                if (dateM) {
-                                        t = t.slice(0, dateM.index) + t.slice(dateM.index + dateM[0].length);
-                } else {
-                                        const fraM = /fra\s+\d+\s*(minuto|minuti|ora|ore|giorno|giorni)/i.exec(t);
-                                        if (fraM) {
-                                                                        t = t.slice(0, fraM.index) + t.slice(fraM.index + fraM[0].length);
-                                        } else {
-                                                                        const domM = /domani(?:\s+alle?\s+\d{1,2}(?::\d{2})?)?/i.exec(t);
-                                                                        if (domM) {
-                                                                                                                t = t.slice(0, domM.index) + t.slice(domM.index + domM[0].length);
-                                                                                } else {
-                                                                                                                const alleM = /alle?\s+\d{1,2}(?::\d{2})?/i.exec(t);
-                                                                                                                if (alleM) {
-                                                                                                                                                                t = t.slice(0, alleM.index) + t.slice(alleM.index + alleM[0].length);
-                                                                                                                        }
-                                                                                }
-                                        }
-                }
-                return t.replace(/^[\s,.:;!?-]+|[\s,.:;!?-]+$/g,'').replace(/\s{2,}/g,' ').trim() || raw.replace(SCHED_KW, '').trim() || raw;
+  // Work on original text (NOT normalized) to preserve message content
+  // 1. Strip scheduling keywords (manda, scrivi, etc.)
+  let t = raw.replace(SCHED_KW, '');
+  
+  // 2. Strip time expressions from original text using case-insensitive patterns
+  // These patterns match the ORIGINAL Italian text (before normalizeNumbers)
+  const timePatterns = [
+    /il\s+\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\s*(?:alle?\s+\d{1,2}(?::\d{2})?)?/gi,
+    /fra\s+(?:\d+|un[oa]?|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici|quindici|venti|trenta|quaranta|cinquanta|sessanta)\s*(?:minuto|minuti|ora|ore|giorno|giorni)/gi,
+    /domani(?:\s+(?:mattina|pomeriggio|sera|alle?\s+\d{1,2}(?::\d{2})?))?/gi,
+    /(?:stasera|stamattina|stanotte)(?:\s+alle?\s+\d{1,2}(?::\d{2})?)?/gi,
+    /alle?\s+\d{1,2}(?::\d{2})?/gi,
+    /tra\s+(?:\d+|un[oa]?|due|tre|quattro|cinque|sei|sette|otto|nove|dieci)\s*(?:minuto|minuti|ora|ore|giorno|giorni)/gi,
+  ];
+  
+  for (const pattern of timePatterns) {
+    t = t.replace(pattern, ' ');
+  }
+  
+  // 3. Clean up whitespace and punctuation at edges
+  t = t.replace(/^[\s,.:;!?\-]+|[\s,.:;!?\-]+$/g, '').replace(/\s{2,}/g, ' ').trim();
+  
+  // 4. If nothing meaningful remains, return original minus keywords and time
+  if (!t || t.length < 2) {
+    // Try just stripping keywords from raw
+    const fallback = raw.replace(SCHED_KW, '').replace(/^[\s,.:;!?\-]+|[\s,.:;!?\-]+$/g, '').replace(/\s{2,}/g, ' ').trim();
+    return fallback || raw;
+  }
+  
+  return t;
 }
 function formatRome(d: Date): string {
                 return d.toLocaleString('it-IT',{ day:'numeric', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Rome' });
