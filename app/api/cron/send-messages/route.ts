@@ -4,213 +4,119 @@ import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-// ═══ ISSUE #2: IN-MEMORY RATE LIMITER ═══
-interface RateState {
-        minuteCount: number;
-        minuteReset: number;
-        dailyCount: number;
-        dailyReset: number;
-        blocked: boolean;
-        blockReason?: string;
+function normalizePhoneForEvolution(phone) {
+  let n = (phone || '').replace(/\D/g, '');
+  if (n.startsWith('3') && !n.startsWith('39') && n.length === 10) n = '39' + n;
+  if (n.startsWith('0')) n = '39' + n.substring(1);
+  return n;
 }
 
-const rateLimits: Map<string, RateState> = new Map();
+const rateLimits = new Map();
+const LIMITS = { PER_USER_PER_MINUTE: 15, PER_USER_PER_DAY: 100, PER_INSTANCE_PER_MINUTE: 18, SPAM_THRESHOLD: 50 };
 
-const LIMITS = {
-        PER_USER_PER_MINUTE: 15,
-        PER_USER_PER_DAY: 100,
-        PER_INSTANCE_PER_MINUTE: 18,
-        SPAM_THRESHOLD: 50,
-};
-
-function getRateState(key: string): RateState {
-        const now = Date.now();
-        let state = rateLimits.get(key);
-        if (!state) {
-                    state = { minuteCount: 0, minuteReset: now + 60000, dailyCount: 0, dailyReset: now + 86400000, blocked: false };
-                    rateLimits.set(key, state);
-                    return state;
-        }
-        if (now >= state.minuteReset) {
-                    state.minuteCount = 0;
-                    state.minuteReset = now + 60000;
-        }
-        if (now >= state.dailyReset) {
-                    state.dailyCount = 0;
-                    state.dailyReset = now + 86400000;
-                    state.blocked = false;
-                    state.blockReason = undefined;
-        }
-        return state;
+function getRateState(key) {
+  const now = Date.now();
+  let state = rateLimits.get(key);
+  if (!state) { state = { minuteCount: 0, minuteReset: now + 60000, dailyCount: 0, dailyReset: now + 86400000, blocked: false }; rateLimits.set(key, state); return state; }
+  if (now >= state.minuteReset) { state.minuteCount = 0; state.minuteReset = now + 60000; }
+  if (now >= state.dailyReset) { state.dailyCount = 0; state.dailyReset = now + 86400000; state.blocked = false; state.blockReason = undefined; }
+  return state;
 }
 
-function canSend(userPhone: string, instanceName: string): { allowed: boolean; reason?: string } {
-        const userState = getRateState(`user:${userPhone}`);
-        const instState = getRateState(`inst:${instanceName}`);
-        if (userState.blocked) return { allowed: false, reason: `Blocked: ${userState.blockReason}` };
-        if (userState.dailyCount >= LIMITS.PER_USER_PER_DAY) return { allowed: false, reason: 'Daily limit reached' };
-        if (userState.minuteCount >= LIMITS.PER_USER_PER_MINUTE) return { allowed: false, reason: 'Minute limit reached' };
-        if (instState.minuteCount >= LIMITS.PER_INSTANCE_PER_MINUTE) return { allowed: false, reason: 'Instance limit reached' };
-        return { allowed: true };
+function canSend(userPhone, instanceName) {
+  const u = getRateState('user:' + userPhone), i = getRateState('inst:' + instanceName);
+  if (u.blocked) return { allowed: false, reason: 'Blocked: ' + u.blockReason };
+  if (u.dailyCount >= LIMITS.PER_USER_PER_DAY) return { allowed: false, reason: 'Daily limit' };
+  if (u.minuteCount >= LIMITS.PER_USER_PER_MINUTE) return { allowed: false, reason: 'Minute limit' };
+  if (i.minuteCount >= LIMITS.PER_INSTANCE_PER_MINUTE) return { allowed: false, reason: 'Instance limit' };
+  return { allowed: true };
 }
 
-function recordSend(userPhone: string, instanceName: string) {
-        const userState = getRateState(`user:${userPhone}`);
-        const instState = getRateState(`inst:${instanceName}`);
-        userState.minuteCount++;
-        userState.dailyCount++;
-        instState.minuteCount++;
-        if (userState.dailyCount >= LIMITS.SPAM_THRESHOLD) {
-                    userState.blocked = true;
-                    userState.blockReason = `Too many messages (${userState.dailyCount}/day)`;
-                    console.warn('RATE: User blocked:', userPhone);
-        }
+function recordSend(userPhone, instanceName) {
+  const u = getRateState('user:' + userPhone), i = getRateState('inst:' + instanceName);
+  u.minuteCount++; u.dailyCount++; i.minuteCount++;
+  if (u.dailyCount >= LIMITS.SPAM_THRESHOLD) { u.blocked = true; u.blockReason = u.dailyCount + '/day'; }
 }
 
-async function checkFailures(supabase: any, userPhone: string): Promise<boolean> {
-        const { count } = await supabase
-            .from('scheduled_messages')
-            .select('id', { count: 'exact', head: true })
-            .eq('instance_phone', userPhone)
-            .eq('status', 'failed')
-            .gte('created_at', new Date(Date.now() - 86400000).toISOString());
-        if ((count || 0) >= 5) {
-                    const userState = getRateState(`user:${userPhone}`);
-                    userState.blocked = true;
-                    userState.blockReason = `${count} failed messages in 24h`;
-                    return true;
-        }
-        return false;
+async function checkFailures(supabase, userPhone) {
+  const { count } = await supabase.from('scheduled_messages').select('id', { count: 'exact', head: true }).eq('instance_phone', userPhone).eq('status', 'failed').gte('created_at', new Date(Date.now() - 86400000).toISOString());
+  if ((count || 0) >= 5) { const s = getRateState('user:' + userPhone); s.blocked = true; s.blockReason = count + ' failed in 24h'; return true; }
+  return false;
 }
 
-export async function GET(req: Request) {
-        const supabase = createClient(
-                    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                    process.env.SUPABASE_SERVICE_ROLE_KEY!
-                );
+async function sendEvolutionText(instanceName, toPhone, text) {
+  const evoUrl = process.env.EVOLUTION_API_URL;
+  const evoKey = process.env.EVOLUTION_API_KEY;
+  const normalizedTo = normalizePhoneForEvolution(toPhone);
+  console.log('CRON: sendText inst=' + instanceName + ' to=' + normalizedTo + ' (raw=' + toPhone + ')');
+  const res = await fetch(evoUrl + '/message/sendText/' + instanceName, {
+    method: 'POST',
+    headers: { 'apikey': evoKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ number: normalizedTo, text }),
+  });
+  const body = await res.text();
+  console.log('CRON: Evolution status=' + res.status + ' body=' + body.substring(0, 400));
+  return { ok: res.ok, status: res.status, body };
+}
 
-    const startTime = Date.now();
-        try {
-                    const { searchParams } = new URL(req.url);
-                    const secret = searchParams.get('secret');
-                    if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) {
-                                    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-                    }
+export async function GET(req) {
+  const supabase = createClient(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const startTime = Date.now();
+  try {
+    const { searchParams } = new URL(req.url);
+    const secret = searchParams.get('secret');
+    if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-            const { data: users } = await supabase
-                        .from('user_instances')
-                        .select('id, phone_number, instance_name, trial_ends_at, subscription_status')
-                        // BUG1 FIX: removed trial filter to include all users
-                // .or('subscription_status.eq.active,trial_ends_at.gte.' + new Date().toISOString());
+    const { data: users, error: usersErr } = await supabase.from('user_instances').select('id, phone_number, instance_name, trial_ends_at, subscription_status');
+    if (usersErr) { console.error('CRON: users error:', usersErr.message); return NextResponse.json({ error: usersErr.message }, { status: 500 }); }
+    console.log('CRON: ' + (users || []).length + ' users to process');
 
-            let sent = 0, failed = 0, skipped = 0, rateLimited = 0;
-
-            // ROUTING FIX: Deduplicate - skip if we already processed this instance_name
-    const processedInstances = new Set<string>();
+    let sent = 0, failed = 0, skipped = 0, rateLimited = 0;
+    const processedInstances = new Set();
 
     for (const user of users || []) {
-      // Skip duplicate user_instances rows (same instance_name processed twice)
-      if (processedInstances.has(user.instance_name)) {
-        console.log('CRON: Skipping duplicate instance:', user.instance_name, 'phone:', user.phone_number);
-        continue;
-      }
+      if (processedInstances.has(user.instance_name)) { console.log('CRON: skip dup:', user.instance_name); continue; }
       processedInstances.add(user.instance_name);
-                            const instanceName = user.instance_name || 'SchedWhats-Primary';
-                            const ownerPhone = user.phone_number;
+      const instanceName = user.instance_name || 'SchedWhats-Primary';
+      const ownerPhone = user.phone_number;
 
-                        const isBlocked = await checkFailures(supabase, ownerPhone);
-                            if (isBlocked) {
-                                                try {
-                                                                        await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
-                                                                                                    method: 'POST',
-                                                                                                    headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-                                                                                                    body: JSON.stringify({ number: ownerPhone, text: '⚠️ Messaggi sospesi temporaneamente. Troppi invii falliti. Riprova domani.' })
-                                                                        });
-                                                } catch (e) {}
-                                                skipped++;
-                                                continue;
-                            }
+      if (await checkFailures(supabase, ownerPhone)) {
+        try { await sendEvolutionText(instanceName, ownerPhone, 'Messaggi sospesi. Troppi fallimenti. Riprova domani.'); } catch (e) {}
+        skipped++; continue;
+      }
 
-                        const { data: messages } = await supabase
-                                .from('scheduled_messages')
-                                .select('*')
-                                .eq('user_instance_id', user.id)
-                                .eq('status', 'pending')
-                                .lte('scheduled_at', new Date().toISOString())
-                                .order('scheduled_at', { ascending: true })
-                                .limit(10);
+      const { data: messages, error: msgErr } = await supabase.from('scheduled_messages').select('*').eq('user_instance_id', user.id).eq('status', 'pending').lte('scheduled_at', new Date().toISOString()).order('scheduled_at', { ascending: true }).limit(10);
+      if (msgErr) { console.error('CRON: msg error for ' + ownerPhone + ':', msgErr.message); continue; }
+      console.log('CRON: ' + (messages || []).length + ' pending for ' + ownerPhone + ' inst=' + instanceName);
 
-                        for (const msg of messages || []) {
-                                            const check = canSend(ownerPhone, instanceName);
-                                            if (!check.allowed) {
-                                                                    console.log('RATE LIMITED:', ownerPhone, check.reason);
-                                                                    rateLimited++;
-                                                                    // BUG5 FIX: do not shift scheduled_at on rate-limit, just skip this cron tick
-                                                continue;
-                                            }
-
-                                try {
-                                                        // Anti-burst jitter: 2-4s random delay
-                                                const jitter = 2000 + Math.random() * 2000;
-                                                        await new Promise(r => setTimeout(r, jitter));
-
-                                                const res = await fetch(
-                                                                            process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName,
-                                                    {
-                                                                                    method: 'POST',
-                                                                                    headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-                                                                                    body: JSON.stringify({ number: msg.recipient_number, text: msg.parsed_message })
-                                                    }
-                                                                        );
-
-                                                if (!res.ok) {
-                                                                            const errText = await res.text();
-                                                                            throw new Error(`HTTP ${res.status}: ${errText}`);
-                                                }
-
-                                                recordSend(ownerPhone, instanceName);
-
-                                                await supabase.from('scheduled_messages')
-                                                            .update({ status: 'sent', sent_at: new Date().toISOString(), user_notified: true })
-                                                            .eq('id', msg.id);
-
-                                                try {
-                                                                            await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
-                                                                                                            method: 'POST',
-                                                                                                            headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-                                                                                                            body: JSON.stringify({ number: msg.instance_phone || ownerPhone, text: '✅ Inviato a ' + (msg.recipient_name || msg.recipient_number) + '!' })
-                                                                                });
-                                                } catch (notifyErr) {}
-
-                                                sent++;
-                                } catch (err: any) {
-                                                        const newRetry = (msg.retry_count || 0) + 1;
-                                                        await supabase.from('scheduled_messages').update({
-                                                                                    status: newRetry >= 3 ? 'failed' : 'pending',
-                                                                                    retry_count: newRetry,
-                                                                                    error_message: err.message,
-                                                                                    scheduled_at: newRetry < 3 ? new Date(Date.now() + (newRetry * 5 * 60 * 1000)).toISOString() : msg.scheduled_at
-                                                        }).eq('id', msg.id);
-
-                                                if (newRetry >= 3) {
-                                                                            try {
-                                                                                                            await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
-                                                                                                                                                method: 'POST',
-                                                                                                                                                headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-                                                                                                                                                body: JSON.stringify({ number: msg.instance_phone || ownerPhone, text: '❌ Impossibile inviare a ' + (msg.recipient_name || msg.recipient_number) + ' dopo 3 tentativi.' })
-                                                                                                                });
-                                                                                } catch (e) {}
-                                                                            failed++;
-                                                }
-                                }
-                        }
-            }
-
-            const duration = Date.now() - startTime;
-                    console.log(`CRON: sent=${sent} failed=${failed} skipped=${skipped} rateLimited=${rateLimited} duration=${duration}ms`);
-                    return NextResponse.json({ sent, failed, skipped, rateLimited, duration: `${duration}ms`, timestamp: new Date().toISOString() });
-        } catch (err: any) {
-                    console.error('CRON ERROR:', err.message);
-                    return NextResponse.json({ error: err.message }, { status: 500 });
+      for (const msg of messages || []) {
+        const check = canSend(ownerPhone, instanceName);
+        if (!check.allowed) { console.log('CRON: rate limit ' + ownerPhone + ': ' + check.reason); rateLimited++; continue; }
+        try {
+          await new Promise(r => setTimeout(r, 1000 + Math.random() * 2000));
+          console.log('CRON: send id=' + msg.id + ' to=' + msg.recipient_number + ' norm=' + normalizePhoneForEvolution(msg.recipient_number));
+          const res = await sendEvolutionText(instanceName, msg.recipient_number, msg.parsed_message);
+          if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + res.body.substring(0, 200));
+          let rd = {}; try { rd = JSON.parse(res.body); } catch (e) {}
+          console.log('CRON: sent OK id=' + msg.id + ' evo_key=' + JSON.stringify(rd?.key));
+          recordSend(ownerPhone, instanceName);
+          await supabase.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString(), user_notified: true }).eq('id', msg.id);
+          try { await sendEvolutionText(instanceName, ownerPhone, 'Inviato a ' + (msg.recipient_name || msg.recipient_number) + '!\n"' + (msg.parsed_message || '').substring(0, 80) + '"'); } catch (e) {}
+          sent++;
+        } catch (err) {
+          console.error('CRON: FAILED id=' + msg.id + ':', err.message);
+          const nr = (msg.retry_count || 0) + 1;
+          await supabase.from('scheduled_messages').update({ status: nr >= 3 ? 'failed' : 'pending', retry_count: nr, error_message: err.message, scheduled_at: nr < 3 ? new Date(Date.now() + nr * 5 * 60 * 1000).toISOString() : msg.scheduled_at }).eq('id', msg.id);
+          if (nr >= 3) { try { await sendEvolutionText(instanceName, ownerPhone, 'Impossibile inviare a ' + (msg.recipient_name || msg.recipient_number) + ' dopo 3 tentativi.\nErrore: ' + err.message.substring(0, 150)); } catch (e) {} failed++; }
         }
+      }
+    }
+
+    const dur = Date.now() - startTime;
+    console.log('CRON DONE sent=' + sent + ' failed=' + failed + ' skip=' + skipped + ' rl=' + rateLimited + ' ms=' + dur);
+    return NextResponse.json({ sent, failed, skipped, rateLimited, duration: dur + 'ms', timestamp: new Date().toISOString() });
+  } catch (err) {
+    console.error('CRON ERROR:', err.message);
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
 }
