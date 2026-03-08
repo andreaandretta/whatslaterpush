@@ -384,9 +384,13 @@ export async function POST(req) {
     const { data: pc } = await supabase.from('pending_contacts').select('*').eq('owner_phone', ownerPhone).gte('created_at', new Date(Date.now() - 1800000).toISOString()).order('created_at', { ascending: false }).limit(1).maybeSingle();
     console.log('WEBHOOK: pending_contact:', pc ? pc.recipient_name + ' ' + pc.recipient_number : 'none');
 
-    let recNum, recName;
-    if (pc) { recNum = pc.recipient_number; recName = pc.recipient_name; }
-    else { recNum = ownerPhone; recName = 'Me Stesso'; }
+    if (!pc) {
+      console.error('WEBHOOK: No pending_contact found for owner — cannot schedule without explicit recipient');
+      await notifyOwner(instanceName, ownerPhone, 'Nessun destinatario trovato. Invia prima una vCard del contatto a cui vuoi inviare il messaggio.');
+      return NextResponse.json({ ok: false, error: 'no_recipient' });
+    }
+    const recNum = pc.recipient_number;
+    const recName = pc.recipient_name;
 
     const trialEnd = user.trial_ends_at ? new Date(user.trial_ends_at) : null;
     const daysLeft = trialEnd ? Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / 86400000)) : 0;
