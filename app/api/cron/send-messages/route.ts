@@ -67,50 +67,105 @@ export async function GET(req) {
     const secret = searchParams.get('secret');
     if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data: users, error: usersErr } = await supabase.from('user_instances').select('id, phone_number, instance_name, trial_ends_at, subscription_status');
-    if (usersErr) { console.error('CRON: users error:', usersErr.message); return NextResponse.json({ error: usersErr.message }, { status: 500 }); }
-    console.log('CRON: ' + (users || []).length + ' users to process');
+    // P0 FIX: Single JOIN query - each row carries its own instance_name
+    // No per-user loop, no global state, no instance confusion possible
+    const { data: pendingMessages, error: queryErr } = await supabase
+      .from('scheduled_messages')
+      .select('*, user_instances!inner(id, phone_number, instance_name, trial_ends_at, subscription_status)')
+      .eq('status', 'pending')
+      .lte('scheduled_at', new Date().toISOString())
+      .order('scheduled_at', { ascending: true })
+      .limit(50);
+
+    if (queryErr) {
+      console.error('CRON: Query error:', queryErr.message);
+      return NextResponse.json({ error: queryErr.message }, { status: 500 });
+    }
+    console.log('CRON: ' + (pendingMessages || []).length + ' pending messages found');
 
     let sent = 0, failed = 0, skipped = 0, rateLimited = 0;
-    const processedInstances = new Set();
 
-    for (const user of users || []) {
-      if (processedInstances.has(user.instance_name)) { console.log('CRON: skip dup:', user.instance_name); continue; }
-      processedInstances.add(user.instance_name);
-      const instanceName = user.instance_name || 'SchedWhats-Primary';
-      const ownerPhone = user.phone_number;
-
-      if (await checkFailures(supabase, ownerPhone)) {
-        try { await sendEvolutionText(instanceName, ownerPhone, 'Messaggi sospesi. Troppi fallimenti. Riprova domani.'); } catch (e) {}
-        skipped++; continue;
+    for (const msg of pendingMessages || []) {
+      const userInst = msg.user_instances;
+      if (!userInst || !userInst.instance_name) {
+        console.error('CRON: Message ' + msg.id + ' has no linked user_instance. Skipping.');
+        skipped++;
+        continue;
       }
 
-      const { data: messages, error: msgErr } = await supabase.from('scheduled_messages').select('*').eq('user_instance_id', user.id).eq('status', 'pending').lte('scheduled_at', new Date().toISOString()).order('scheduled_at', { ascending: true }).limit(10);
-      if (msgErr) { console.error('CRON: msg error for ' + ownerPhone + ':', msgErr.message); continue; }
-      console.log('CRON: ' + (messages || []).length + ' pending for ' + ownerPhone + ' inst=' + instanceName);
+      const instanceName = userInst.instance_name;
+      const ownerPhone = userInst.phone_number;
 
-      for (const msg of messages || []) {
-        const check = canSend(ownerPhone, instanceName);
-        if (!check.allowed) { console.log('CRON: rate limit ' + ownerPhone + ': ' + check.reason); rateLimited++; continue; }
+      const isBlocked = await checkFailures(supabase, ownerPhone);
+      if (isBlocked) {
         try {
-          await new Promise(r => setTimeout(r, 1000 + Math.random() * 2000));
-          console.log('CRON: send id=' + msg.id + ' to=' + msg.recipient_number + ' norm=' + normalizePhoneForEvolution(msg.recipient_number));
-          const res = await sendEvolutionText(instanceName, msg.recipient_number, msg.parsed_message);
-          if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + res.body.substring(0, 200));
-          let rd = {}; try { rd = JSON.parse(res.body); } catch (e) {}
-          console.log('CRON: sent OK id=' + msg.id + ' evo_key=' + JSON.stringify(rd?.key));
-          recordSend(ownerPhone, instanceName);
-          await supabase.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString(), user_notified: true }).eq('id', msg.id);
-          try { await sendEvolutionText(instanceName, ownerPhone, 'Inviato a ' + (msg.recipient_name || msg.recipient_number) + '!\n"' + (msg.parsed_message || '').substring(0, 80) + '"'); } catch (e) {}
-          sent++;
-        } catch (err) {
-          console.error('CRON: FAILED id=' + msg.id + ':', err.message);
-          const nr = (msg.retry_count || 0) + 1;
-          await supabase.from('scheduled_messages').update({ status: nr >= 3 ? 'failed' : 'pending', retry_count: nr, error_message: err.message, scheduled_at: nr < 3 ? new Date(Date.now() + nr * 5 * 60 * 1000).toISOString() : msg.scheduled_at }).eq('id', msg.id);
-          if (nr >= 3) { try { await sendEvolutionText(instanceName, ownerPhone, 'Impossibile inviare a ' + (msg.recipient_name || msg.recipient_number) + ' dopo 3 tentativi.\nErrore: ' + err.message.substring(0, 150)); } catch (e) {} failed++; }
+          await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
+            method: 'POST',
+            headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ number: ownerPhone, text: '\u26a0\ufe0f Messaggi sospesi temporaneamente. Troppi invii falliti.' })
+          });
+        } catch (e) {}
+        skipped++;
+        continue;
+      }
+
+      const check = canSend(ownerPhone, instanceName);
+      if (!check.allowed) {
+        console.log('CRON: RATE LIMITED:', ownerPhone, check.reason);
+        rateLimited++;
+        continue;
+      }
+
+      try {
+        const jitter = 2000 + Math.random() * 2000;
+        await new Promise(r => setTimeout(r, jitter));
+        console.log('CRON: Sending msg ' + msg.id + ' via instance=' + instanceName + ' to=' + msg.recipient_number);
+        const res = await fetch(
+          process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName,
+          {
+            method: 'POST',
+            headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ number: msg.recipient_number, text: msg.parsed_message })
+          }
+        );
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error('HTTP ' + res.status + ': ' + errText);
+        }
+        recordSend(ownerPhone, instanceName);
+        await supabase.from('scheduled_messages')
+          .update({ status: 'sent', sent_at: new Date().toISOString(), user_notified: true })
+          .eq('id', msg.id);
+        try {
+          await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
+            method: 'POST',
+            headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ number: ownerPhone, text: '\u2705 Inviato a ' + (msg.recipient_name || msg.recipient_number) + '!' })
+          });
+        } catch (notifyErr) {}
+        sent++;
+      } catch (err: any) {
+        const newRetry = (msg.retry_count || 0) + 1;
+        await supabase.from('scheduled_messages').update({
+          status: newRetry >= 3 ? 'failed' : 'pending',
+          retry_count: newRetry,
+          error_message: err.message,
+          scheduled_at: newRetry < 3 ? new Date(Date.now() + (newRetry * 5 * 60 * 1000)).toISOString() : msg.scheduled_at
+        }).eq('id', msg.id);
+        if (newRetry >= 3) {
+          try {
+            await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
+              method: 'POST',
+              headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ number: ownerPhone, text: '\u274c Impossibile inviare a ' + (msg.recipient_name || msg.recipient_number) + ' dopo 3 tentativi.' })
+            });
+          } catch (e) {}
+          failed++;
         }
       }
     }
+
+    
 
     const dur = Date.now() - startTime;
     console.log('CRON DONE sent=' + sent + ' failed=' + failed + ' skip=' + skipped + ' rl=' + rateLimited + ' ms=' + dur);
