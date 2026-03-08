@@ -10,10 +10,16 @@ import {
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { createClient } from '@supabase/supabase-js'
 function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }
 if (typeof window !== 'undefined') { gsap.registerPlugin(ScrollTrigger, TextPlugin); }
 
 // ═══ Storage helpers ═══
+
+const supabaseClient = typeof window !== 'undefined' ? createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+) : null;
 const PHONE_KEY = 'sw_phone';
 const INST_KEY  = 'sw_instance';
 const getStoredPhone    = () => (typeof window !== 'undefined' ? localStorage.getItem(PHONE_KEY) || '' : '');
@@ -141,6 +147,37 @@ export default function DashboardPage() {
     }
     return () => { if (msgTimer.current) clearInterval(msgTimer.current); };
   }, [connStatus, userPhone, fetchMessagesForPhone]);
+
+  // Supabase Realtime: instant UI update on connection_status change
+  useEffect(() => {
+    if (!supabaseClient || !instanceName) return;
+    const channel = supabaseClient
+      .channel('conn-status-' + instanceName)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'user_instances',
+          filter: `instance_name=eq.${instanceName}`
+        },
+        (payload: any) => {
+          const newStatus = payload.new?.connection_status;
+          if (newStatus === 'open' && connStatus !== 'connected') {
+            setConnStatus('connected');
+            setQrCode(null);
+            setPairingCode(null);
+            if (refreshTimer.current) { clearInterval(refreshTimer.current); refreshTimer.current = null; }
+            if (userPhone) fetchMessagesForPhone(userPhone);
+          } else if (newStatus === 'close' && connStatus !== 'disconnected') {
+            setConnStatus('disconnected');
+          }
+        }
+      )
+      .subscribe();
+
+    return () => { supabaseClient.removeChannel(channel); };
+  }, [instanceName, connStatus, userPhone]);
 
   // ═══ handleConnect — new unified flow ═══
   const handleConnect = async (rawPhone: string) => {
