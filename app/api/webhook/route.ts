@@ -1,26 +1,6 @@
 // @ts-nocheck
 import { createClient } from '@supabase/supabase-js';
-im
-
-    // FAIL-SAFE: Reject without instance identifier
-    if (!evoInstance) {
-      console.error('WEBHOOK: REJECTED - no instance identifier in payload');
-      return NextResponse.json({ error: 'Missing instance identifier' }, { status: 400 });
-    }
-
-    // Route CONNECTION_UPDATE events
-    const eventUpper = eventType.toUpperCase();
-    if (eventUpper.includes('CONNECTION') || eventUpper === 'CONNECTION_UPDATE') {
-      return await handleConnectionUpdate(payload);
-    }
-
-    // Skip QRCODE events
-    if (eventUpper.includes('QRCODE') || eventUpper.includes('QR_CODE')) {
-      console.log('WEBHOOK: QR event, skipping. instance=' + evoInstance);
-      return NextResponse.json({ ok: true });
-    }
-port { NextResponse } from 'next/server';
-
+import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 const supabase = createClient(
@@ -28,7 +8,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// ══ Rome timezone helpers ══
+// ââ Rome timezone helpers ââ
 function getRomeOffsetMs() {
   const now = new Date();
   const utcStr = now.toLocaleString('en-CA', { timeZone: 'UTC', hour12: false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
@@ -210,7 +190,7 @@ export async function POST(req) {
     const evoInstance = payload?.instance || '';
     console.log('WEBHOOK event=' + eventType + ' instance=' + evoInstance);
 
-    // ══ Handle CONNECTION_UPDATE — update instance_name in DB when phone connects ══
+    // ââ Handle CONNECTION_UPDATE â update instance_name in DB when phone connects ââ
     if (eventType === 'connection.update' || eventType === 'CONNECTION_UPDATE') {
       const connData = payload?.data;
       const state = connData?.state || connData?.connection || connData?.status;
@@ -235,7 +215,7 @@ export async function POST(req) {
       return NextResponse.json({ ok: true });
     }
 
-    // ══ Extract message ══
+    // ââ Extract message ââ
     const extracted = extractMessageItem(payload);
     if (!extracted) {
       console.log('WEBHOOK: No message found. event=' + eventType);
@@ -309,7 +289,7 @@ export async function POST(req) {
     const instanceName = user.instance_name;
     console.log(`WEBHOOK: IDENTITY CONFIRMED - owner=${ownerPhone} instance=${instanceName} user_id=${user.id}`);
 
-    // ══ vCard handling ══
+    // ââ vCard handling ââ
     if (msgContent?.contactMessage) {
       const c = msgContent.contactMessage;
       const vcard = c.vcard || '';
@@ -336,13 +316,13 @@ export async function POST(req) {
       return NextResponse.json({ ok:true });
     }
 
-    // ══ Text message parsing ══
+    // ââ Text message parsing ââ
     const raw = msgContent?.conversation || msgContent?.extendedTextMessage?.text || msgContent?.imageMessage?.caption || '';
     if (!raw) { console.log('WEBHOOK: Empty text, skipping'); return NextResponse.json({ ok:true }); }
     console.log('WEBHOOK: Text received:', raw);
     const rawLower = raw.trim().toLowerCase();
 
-    // ══ COMMAND: lista ══
+    // ââ COMMAND: lista ââ
     if (/^(lista|list|pending|programmati)$/i.test(rawLower)) {
       const { data: pending } = await supabase.from('scheduled_messages').select('id, recipient_name, recipient_number, parsed_message, scheduled_at').eq('user_instance_id', user.id).eq('status', 'pending').order('scheduled_at', { ascending: true }).limit(10);
       if (!pending || pending.length === 0) { await notifyOwner(instanceName, ownerPhone, 'Nessun messaggio in coda.'); return NextResponse.json({ ok: true }); }
@@ -351,7 +331,7 @@ export async function POST(req) {
       return NextResponse.json({ ok: true });
     }
 
-    // ══ COMMAND: annulla / cancella (LIFO) ══
+    // ââ COMMAND: annulla / cancella (LIFO) ââ
     if (/^(annulla|cancella|delete|stop|undo)$/i.test(rawLower)) {
       const { data: lastPending } = await supabase.from('scheduled_messages').select('id, recipient_name, recipient_number, parsed_message, scheduled_at').eq('user_instance_id', user.id).eq('status', 'pending').order('created_at', { ascending: false }).limit(1).maybeSingle();
       if (!lastPending) { await notifyOwner(instanceName, ownerPhone, 'Nessun messaggio da annullare.'); return NextResponse.json({ ok: true }); }
@@ -360,7 +340,7 @@ export async function POST(req) {
       return NextResponse.json({ ok: true });
     }
 
-    // ══ COMMAND: cancella N ══
+    // ââ COMMAND: cancella N ââ
     const cancelNumMatch = /^(annulla|cancella|delete|cancel|stop)\s+(\d+)$/i.exec(rawLower);
     if (cancelNumMatch) {
       const idx = parseInt(cancelNumMatch[2]) - 1;
@@ -373,7 +353,7 @@ export async function POST(req) {
       return NextResponse.json({ ok: true });
     }
 
-    // ══ COMMAND: cancella [nome] ══
+    // ââ COMMAND: cancella [nome] ââ
     const cancelNameMatch = /^(annulla|cancella|delete|cancel)\s+([a-z\u00e0\u00e8\u00e9\u00ec\u00f2\u00f9A-Z\u00c0\u00c8\u00c9\u00cc\u00d2\u00d9\s]{2,})$/i.exec(rawLower);
     if (cancelNameMatch && !/\d/.test(cancelNameMatch[2])) {
       const searchName = cancelNameMatch[2].trim();
@@ -387,13 +367,13 @@ export async function POST(req) {
       }
     }
 
-    // ══ COMMAND: help ══
+    // ââ COMMAND: help ââ
     if (/^(help|aiuto|comandi|\?)$/i.test(rawLower)) {
       await notifyOwner(instanceName, ownerPhone, 'Comandi SchedWhats:\n\nInvia vCard + "ciao fra 5 minuti" -> Schedula\n"lista" -> Messaggi in coda\n"annulla" -> Cancella l ultimo\n"cancella 2" -> Cancella il #2\n"cancella Marco" -> Cancella per nome\n"aiuto" -> Questo messaggio');
       return NextResponse.json({ ok: true });
     }
 
-    // ══ Scheduling logic ══
+    // ââ Scheduling logic ââ
     const parsed = parseCommand(raw);
     if (!parsed) { console.log('WEBHOOK: No scheduling command in:', raw); return NextResponse.json({ ok:true }); }
 
