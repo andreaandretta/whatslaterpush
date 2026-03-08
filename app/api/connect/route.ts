@@ -107,11 +107,24 @@ export async function POST(req: NextRequest) {
                 if (state === 'open') {
                           const owner = await getOwnerPhone(instanceName);
                           console.log('[connect] owner check:', owner);
-                          if (owner) return NextResponse.json({ status: 'open', owner });
+                          if (owner) {
+        // P0 FIX: Persist connection state to DB for dashboard sync
+        const supa = getSupabase();
+        await supa.from('user_instances')
+          .update({ connection_status: 'open', last_connection_update: new Date().toISOString() })
+          .eq('instance_name', instanceName);
+        return NextResponse.json({ status: 'open', owner });
+      }
                           return NextResponse.json({ status: 'open', owner: null });
                 }
                 if (state === 'connecting' || state === 'qr') return NextResponse.json({ status: 'connecting' });
-                return NextResponse.json({ status: 'close' });
+                {
+        const supa = getSupabase();
+        await supa.from('user_instances')
+          .update({ connection_status: 'close', last_connection_update: new Date().toISOString() })
+          .eq('instance_name', instanceName);
+        return NextResponse.json({ status: 'close' });
+      }
         } catch (e) {
                 console.log('[connect] status error:', e);
                 return NextResponse.json({ status: 'not_found' });
