@@ -14,7 +14,7 @@ import { createClient } from '@supabase/supabase-js'
 function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }
 if (typeof window !== 'undefined') { gsap.registerPlugin(ScrollTrigger, TextPlugin); }
 
-// ═══ Storage helpers ═══
+// âââ Storage helpers âââ
 
 const supabaseClient = typeof window !== 'undefined' ? createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -41,7 +41,7 @@ function normalizeITPhone(raw: string): string {
 }
 
 export default function DashboardPage() {
-  // ═══ State ═══
+  // âââ State âââ
   const [connStatus, setConnStatus]     = useState<'disconnected'|'connecting'|'connected'>('disconnected');
   const [qrCode,      setQrCode]        = useState<string|null>(null);
   const [pairingCode, setPairingCode]   = useState<string|null>(null);
@@ -57,12 +57,12 @@ export default function DashboardPage() {
   const refreshTimer = useRef<any>(null);
   const msgTimer     = useRef<any>(null);
 
-  // ═══ Session validation on mount ═══
+  // âââ Session validation on mount âââ
   useEffect(() => {
     const validateSession = async () => {
       const storedPhone = getStoredPhone();
       const storedInst  = getStoredInstance();
-              // FIX P3: check session expiry (24h) — before everything
+              // FIX P3: check session expiry (24h) â before everything
               const expiry = getStoredExpiry();
               if (expiry && Date.now() > parseInt(expiry)) {
                           console.log('[dashboard] session expired, clearing localStorage');
@@ -91,9 +91,9 @@ export default function DashboardPage() {
           return;
         }
         if (r.status === 'open') {
-          // FIX C: owner verification — se l'istanza appartiene a un numero diverso, reset
+          // FIX C: owner verification â se l'istanza appartiene a un numero diverso, reset
           if (r.owner && r.owner !== storedPhone) {
-            console.log('[dashboard] FIX C owner mismatch: owner=', r.owner, 'storedPhone=', storedPhone, '— clearing session');
+            console.log('[dashboard] FIX C owner mismatch: owner=', r.owner, 'storedPhone=', storedPhone, 'â clearing session');
             clearPhone();
             setSessionValidated(true);
             return;
@@ -104,12 +104,12 @@ export default function DashboardPage() {
                           saveExpiry(); // FIX P3: refresh 24h expiry on valid connection
           fetchMessagesForPhone(storedPhone);
         } else {
-          // Stale session (connecting state but no owner) — clear it
+          // Stale session (connecting state but no owner) â clear it
           clearPhone();
         }
       } catch (e) {
         console.log('[dashboard] session validation error:', e);
-                // FIX P3: on network error do NOT fake connected — stay disconnected
+                // FIX P3: on network error do NOT fake connected â stay disconnected
                 // (avoids ghost sessions for new users loading the same URL)
       }
       setSessionValidated(true);
@@ -179,7 +179,7 @@ export default function DashboardPage() {
     return () => { supabaseClient.removeChannel(channel); };
   }, [instanceName, connStatus, userPhone]);
 
-  // ═══ handleConnect — new unified flow ═══
+  // âââ handleConnect â new unified flow âââ
   const handleConnect = async (rawPhone: string) => {
     setIsLoading(true);
     setError(null);
@@ -327,7 +327,7 @@ export default function DashboardPage() {
     </div>
   );
 }
-// ═══ NAVBAR ═══
+// âââ NAVBAR âââ
 function Navbar({ connStatus, userPhone, onLogout }: any) {
   const navRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -370,7 +370,7 @@ function Navbar({ connStatus, userPhone, onLogout }: any) {
     </nav>
   );
 }
-// ═══ HERO SECTION ═══
+// âââ HERO SECTION âââ
 function HeroSection() {
   const containerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -465,7 +465,7 @@ function HeroSection() {
     </section>
   );
 }
-// ═══ FEATURES SECTION ═══
+// âââ FEATURES SECTION âââ
 function FeaturesSection() {
   const sectionRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -546,7 +546,7 @@ function FeaturesSection() {
   );
 }
 
-// ═══ PHILOSOPHY SECTION ═══
+// âââ PHILOSOPHY SECTION âââ
 function PhilosophySection() {
   const sectionRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -567,7 +567,7 @@ function PhilosophySection() {
   );
 }
 
-// ═══ HOW IT WORKS SECTION ═══
+// âââ HOW IT WORKS SECTION âââ
 function HowItWorksSection() {
   const containerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -642,10 +642,20 @@ function HowItWorksSection() {
     </section>
   );
 }
-// ═══ CONNECTION ZONE — Unified UX (no tabs) ═══
+// âââ CONNECTION ZONE â Unified UX (no tabs) âââ
 function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, userPhone, onConnect, onDisconnect }: any) {
   const [phone, setPhone] = useState('');
   const [phoneError, setPhoneError] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    if (pairingCode) {
+      navigator.clipboard.writeText(pairingCode).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -658,7 +668,7 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
     onConnect(clean);
   };
 
-  // ─── CONNECTED STATE ───
+  // âââ CONNECTED STATE âââ
   if (connStatus === 'connected') {
     return (
       <section id="connetti" className="py-24 bg-gradient-to-b from-background to-[#e8f5e9]">
@@ -689,7 +699,7 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
     );
   }
 
-  // ─── CONNECTING / DISCONNECTED STATE ───
+  // âââ CONNECTING / DISCONNECTED STATE âââ
   return (
     <section id="connetti" className="py-24 bg-gradient-to-b from-background to-[#e8f5e9]">
       <div className="max-w-3xl mx-auto px-6">
@@ -699,7 +709,7 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
         </div>
         <div className="bg-white rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.05)] overflow-hidden">
           <div className="p-8 md:p-12">
-            {/* Phone input — always visible, required before showing QR/code */}
+            {/* Phone input â always visible, required before showing QR/code */}
             <form onSubmit={handleSubmit} className="max-w-sm mx-auto flex flex-col gap-4 mb-8">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -735,7 +745,7 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
               )}
             </form>
 
-            {/* QR + Pairing Code — shown simultaneously once generated */}
+            {/* QR + Pairing Code â shown simultaneously once generated */}
             {(qrCode || pairingCode) && (
               <div className="flex flex-col items-center gap-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 {/* QR Code section */}
@@ -766,6 +776,14 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
                     <div className="text-4xl md:text-5xl font-mono font-bold tracking-widest text-text-primary bg-background py-5 px-8 rounded-3xl border border-gray-200 shadow-inner w-full text-center">
                       {pairingCode.length >= 8 ? pairingCode.slice(0,4) + '-' + pairingCode.slice(4,8) : pairingCode}
                     </div>
+                  <button
+                    onClick={handleCopy}
+                    className="mt-3 flex items-center gap-2 mx-auto px-4 py-2 rounded-lg bg-white/80 hover:bg-white text-green-700 text-sm font-medium transition-all shadow-sm border border-green-200 hover:border-green-400"
+                    title="Copia codice"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    {copied ? 'Copiato!' : 'Copia Codice'}
+                  </button>
                     <p className="text-xs text-gray-500 text-center">
                       Vai su WhatsApp &rarr; Menu &#8942; &rarr; Dispositivi connessi &rarr; Connetti con numero &rarr; Inserisci il codice qui sopra
                     </p>
@@ -791,7 +809,7 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
     </section>
   );
 }
-// ═══ MESSAGES SECTION ═══
+// âââ MESSAGES SECTION âââ
 function MessagesSection({ messages, messagesLoading, subscription, onDelete, fmt, statusColors }: any) {
   const trunc = (s: string, n: number) => (!s ? '' : s.length > n ? s.substring(0, n) + '...' : s);
   return (
@@ -836,7 +854,7 @@ function MessagesSection({ messages, messagesLoading, subscription, onDelete, fm
   );
 }
 
-// ═══ PRICING SECTION ═══
+// âââ PRICING SECTION âââ
 function PricingSection() {
   return (
     <section id="prezzi" className="py-24 bg-white">
@@ -863,14 +881,14 @@ function PricingSection() {
   );
 }
 
-// ═══ FAQ SECTION ═══
+// âââ FAQ SECTION âââ
 function FAQSection() {
   const faqs = [
-    { q: "Il mio WhatsApp è sicuro?", a: "Assolutamente sì. Usiamo lo stesso protocollo di WhatsApp Web. Non leggiamo i tuoi messaggi. I dati sono protetti con Row Level Security su database PostgreSQL." },
+    { q: "Il mio WhatsApp Ã¨ sicuro?", a: "Assolutamente sÃ¬. Usiamo lo stesso protocollo di WhatsApp Web. Non leggiamo i tuoi messaggi. I dati sono protetti con Row Level Security su database PostgreSQL." },
     { q: "Devo scansionare un QR Code?", a: "Puoi scegliere: scansiona un QR Code oppure inserisci un codice di abbinamento a 8 cifre direttamente su WhatsApp. Entrambi i metodi funzionano dal cellulare." },
-    { q: "Cosa succede se il mio telefono è spento?", a: "Il messaggio resta in coda. Quando torni online, viene inviato automaticamente. Ti avvisiamo se qualcosa non va." },
-    { q: "Posso annullare un messaggio programmato?", a: "Sì. Scrivi 'annulla' o 'cancella [nome]' nella chat con Te Stesso, oppure eliminalo dalla dashboard." },
-    { q: "Come funziona l'AI?", a: "Scrivi in linguaggio naturale — 'domani alle 9', 'fra 2 ore', 'lunedì mattina' — e la nostra AI (GPT-4o Mini) capisce esattamente quando inviare." }
+    { q: "Cosa succede se il mio telefono Ã¨ spento?", a: "Il messaggio resta in coda. Quando torni online, viene inviato automaticamente. Ti avvisiamo se qualcosa non va." },
+    { q: "Posso annullare un messaggio programmato?", a: "SÃ¬. Scrivi 'annulla' o 'cancella [nome]' nella chat con Te Stesso, oppure eliminalo dalla dashboard." },
+    { q: "Come funziona l'AI?", a: "Scrivi in linguaggio naturale â 'domani alle 9', 'fra 2 ore', 'lunedÃ¬ mattina' â e la nostra AI (GPT-4o Mini) capisce esattamente quando inviare." }
   ];
   const [openIndex, setOpenIndex] = useState<number | null>(0);
   return (
@@ -892,7 +910,7 @@ function FAQSection() {
   );
 }
 
-// ═══ FOOTER ═══
+// âââ FOOTER âââ
 function Footer() {
   return (
     <footer className="bg-text-primary text-white rounded-t-[4rem] pt-20 pb-10 px-6 mt-20">
