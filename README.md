@@ -165,3 +165,5 @@ MIT License - feel free to use for personal or commercial projects.
 ---
 
 Built with ❤️ using Modern Soft UI principles.
+
+<!-- cron: hourly via vercel.json -->
