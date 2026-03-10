@@ -108,7 +108,8 @@ function extractInlineMessage(text) {
 }
 
 async function findContactByName(ownerPhone, name) {
-  const { data } = await supabase
+  // 1. Search in pending_contacts first
+  const { data: pending } = await supabase
     .from('pending_contacts')
     .select('recipient_number, recipient_name, id')
     .eq('owner_phone', ownerPhone)
@@ -116,7 +117,18 @@ async function findContactByName(ownerPhone, name) {
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
-  return data;
+  if (pending) return pending;
+
+  // 2. Fallback: search in scheduled_messages history
+  const { data: historical } = await supabase
+    .from('scheduled_messages')
+    .select('recipient_number, recipient_name')
+    .eq('instance_phone', ownerPhone)
+    .ilike('recipient_name', `%${name}%`)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return historical || null;
 }
 
 async function notifyOwner(instanceName, phone, msg) {

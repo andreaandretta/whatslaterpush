@@ -168,7 +168,11 @@ export default function DashboardPage() {
             setQrCode(null);
             setPairingCode(null);
             if (refreshTimer.current) { clearInterval(refreshTimer.current); refreshTimer.current = null; }
-            if (userPhone) fetchMessagesForPhone(userPhone);
+            const phoneToUse = userPhone || getStoredPhone();
+            if (phoneToUse) {
+              setUserPhone(normalizeITPhone(phoneToUse));
+              fetchMessagesForPhone(phoneToUse);
+            }
           } else if (newStatus === 'close' && connStatus !== 'disconnected') {
             setConnStatus('disconnected');
           }
