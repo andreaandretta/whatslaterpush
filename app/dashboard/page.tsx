@@ -92,7 +92,7 @@ export default function DashboardPage() {
         }
         if (r.status === 'open') {
           // FIX C: owner verification â se l'istanza appartiene a un numero diverso, reset
-          if (r.owner && r.owner !== storedPhone) {
+          if (r.owner && normalizeITPhone(r.owner) !== normalizeITPhone(storedPhone)) {
             console.log('[dashboard] FIX C owner mismatch: owner=', r.owner, 'storedPhone=', storedPhone, 'â clearing session');
             clearPhone();
             setSessionValidated(true);
@@ -231,7 +231,7 @@ export default function DashboardPage() {
             setConnStatus('connected');
             setQrCode(null);
             setPairingCode(null);
-            const phone = s.owner || rawPhone.replace(/\\D/g, '');
+            const phone = normalizeITPhone(s.owner || rawPhone.replace(/\D/g, ''));
             savePhone(phone);
             setUserPhone(normalizeITPhone(phone));
             // Set webhook

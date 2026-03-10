@@ -238,10 +238,6 @@ export async function POST(req) {
           const { data: inst } = await supabase.from('user_instances')
             .select('phone_number').eq('instance_name', evoInstance).maybeSingle();
           if (inst?.phone_number) {
-            const { count } = await supabase.from('scheduled_messages')
-              .select('id', { count: 'exact', head: true })
-              .eq('instance_phone', inst.phone_number);
-            if ((count || 0) === 0) {
               await notifyOwner(evoInstance, inst.phone_number,
                 'Benvenuto su SchedWhats! 🎉\n' +
                 'Per programmare un messaggio:\n' +
@@ -249,7 +245,6 @@ export async function POST(req) {
                 '2️⃣ Poi scrivi: Invia a Marco domani alle 15: Ciao!\n' +
                 '📊 Torna su whatslaterpush.vercel.app per vedere i messaggi programmati.'
               );
-            }
           }
         } catch(e) { console.error('WEBHOOK: onboarding error:', e.message); }
       }
