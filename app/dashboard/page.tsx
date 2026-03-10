@@ -28,7 +28,7 @@ const savePhone    = (p: string) => { if (p) localStorage.setItem(PHONE_KEY, p);
 const saveInstance = (n: string) => { if (n) localStorage.setItem(INST_KEY, n); };
 const EXPIRY_KEY  = 'sw_expiry';
 const getStoredExpiry   = () => (typeof window !== 'undefined' ? localStorage.getItem(EXPIRY_KEY) || '' : '');
-const saveExpiry        = () => { localStorage.setItem(EXPIRY_KEY, String(Date.now() + 24 * 3600 * 1000)); };
+const saveExpiry        = () => { localStorage.setItem(EXPIRY_KEY, String(Date.now() + 30 * 24 * 3600 * 1000)); };
 const clearPhone        = () => { localStorage.removeItem(PHONE_KEY); localStorage.removeItem(INST_KEY); localStorage.removeItem(EXPIRY_KEY); };
 
 // BUG3 FIX: normalize Italian phone numbers for display
@@ -932,11 +932,11 @@ function PricingSection() {
 // âââ FAQ SECTION âââ
 function FAQSection() {
   const faqs = [
-    { q: "Il mio WhatsApp Ã¨ sicuro?", a: "Assolutamente sÃ¬. Usiamo lo stesso protocollo di WhatsApp Web. Non leggiamo i tuoi messaggi. I dati sono protetti con Row Level Security su database PostgreSQL." },
+    { q: "Il mio WhatsApp è sicuro?", a: "Assolutamente sì. Usiamo lo stesso protocollo di WhatsApp Web. Non leggiamo i tuoi messaggi. I dati sono protetti con Row Level Security su database PostgreSQL." },
     { q: "Devo scansionare un QR Code?", a: "Puoi scegliere: scansiona un QR Code oppure inserisci un codice di abbinamento a 8 cifre direttamente su WhatsApp. Entrambi i metodi funzionano dal cellulare." },
-    { q: "Cosa succede se il mio telefono Ã¨ spento?", a: "Il messaggio resta in coda. Quando torni online, viene inviato automaticamente. Ti avvisiamo se qualcosa non va." },
-    { q: "Posso annullare un messaggio programmato?", a: "SÃ¬. Scrivi 'annulla' o 'cancella [nome]' nella chat con Te Stesso, oppure eliminalo dalla dashboard." },
-    { q: "Come funziona l'AI?", a: "Scrivi in linguaggio naturale â 'domani alle 9', 'fra 2 ore', 'lunedÃ¬ mattina' â e la nostra AI (GPT-4o Mini) capisce esattamente quando inviare." }
+    { q: "Cosa succede se il mio telefono è spento?", a: "Il messaggio resta in coda. Quando torni online, viene inviato automaticamente. Ti avvisiamo se qualcosa non va." },
+    { q: "Posso annullare un messaggio programmato?", a: "Sì. Scrivi 'annulla' o 'cancella [nome]' nella chat con Te Stesso, oppure eliminalo dalla dashboard." },
+    { q: "Come funziona l'AI?", a: "Scrivi in linguaggio naturale â 'domani alle 9', 'fra 2 ore', 'lunedì mattina' â e la nostra AI (GPT-4o Mini) capisce esattamente quando inviare." }
   ];
   const [openIndex, setOpenIndex] = useState<number | null>(0);
   return (

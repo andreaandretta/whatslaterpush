@@ -9,9 +9,13 @@ function getSupabase() {
   );
 }
 
-const EVO_URL = process.env.EVOLUTION_API_URL || 'http://evo-pkso00o0ccoc8ccgos0ks4cw.161.35.212.68.sslip.io';
-const EVO_KEY = process.env.EVOLUTION_API_KEY || 'SCHEDWHATS_GOD_MODE_SECRET_KEY_2024';
+const EVO_URL = process.env.EVOLUTION_API_URL;
+const EVO_KEY = process.env.EVOLUTION_API_KEY;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app';
+
+if (!EVO_URL || !EVO_KEY) {
+  console.error('[connect] FATAL: EVOLUTION_API_URL or EVOLUTION_API_KEY not set');
+}
 
 function validatePhone(raw: string): string | null {
     const clean = raw.replace(/\D/g, '');

@@ -26,8 +26,8 @@ export async function POST(req: Request) {
                         quantity: 1
               }],
               mode: 'subscription',
-              success_url: 'http://l8o400sowgw800swg8gcg0kk.161.35.212.68.sslip.io/dashboard?payment=success',
-              cancel_url: 'http://l8o400sowgw800swg8gcg0kk.161.35.212.68.sslip.io/dashboard?payment=cancelled',
+              success_url: (process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app') + '/dashboard?payment=success',
+              cancel_url: (process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app') + '/dashboard?payment=cancelled',
               metadata: { phone }
       });
 
