@@ -1,6 +1,6 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { validatePhone } from '../../lib/phone';
 
 function getSupabase() {
   return createClient(
@@ -15,15 +15,6 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.verce
 
 if (!EVO_URL || !EVO_KEY) {
   console.error('[connect] FATAL: EVOLUTION_API_URL or EVOLUTION_API_KEY not set');
-}
-
-function validatePhone(raw: string): string | null {
-    const clean = raw.replace(/\D/g, '');
-    if (clean.length < 10 || clean.length > 15) return null;
-    // BUG3 FIX: normalize Italian numbers
-  if (clean.startsWith('0')) return '39' + clean.substring(1);
-  if (clean.startsWith('3') && !clean.startsWith('39')) return '39' + clean;
-  return clean;
 }
 
 async function forceDeleteInstance(name: string): Promise<void> {

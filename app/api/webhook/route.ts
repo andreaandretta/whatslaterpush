@@ -432,7 +432,7 @@ export async function POST(req) {
         return NextResponse.json({ ok: false, error: 'contact_not_found' });
       }
     } else {
-      const { data: pc } = await supabase.from('pending_contacts').select('*').eq('owner_phone', ownerPhone).gte('created_at', new Date(Date.now() - 1800000).toISOString()).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      const { data: pc } = await supabase.from('pending_contacts').select('*').eq('owner_phone', ownerPhone).order('created_at', { ascending: false }).limit(1).maybeSingle();
       console.log('WEBHOOK: pending_contact:', pc ? pc.recipient_name + ' ' + pc.recipient_number : 'none');
       if (!pc) {
         console.error('WEBHOOK: No pending_contact found for owner');

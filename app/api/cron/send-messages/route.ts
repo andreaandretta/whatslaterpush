@@ -1,20 +1,22 @@
-// @ts-nocheck
 import { createClient } from '@supabase/supabase-js';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { normalizeItalianPhone } from '../../../lib/phone';
 
 export const dynamic = 'force-dynamic';
 
-function normalizePhoneForEvolution(phone) {
-  let n = (phone || '').replace(/\D/g, '');
-  if (n.startsWith('3') && !n.startsWith('39') && n.length === 10) n = '39' + n;
-  if (n.startsWith('0')) n = '39' + n.substring(1);
-  return n;
+interface RateState {
+  minuteCount: number;
+  minuteReset: number;
+  dailyCount: number;
+  dailyReset: number;
+  blocked: boolean;
+  blockReason?: string;
 }
 
-const rateLimits = new Map();
+const rateLimits = new Map<string, RateState>();
 const LIMITS = { PER_USER_PER_MINUTE: 15, PER_USER_PER_DAY: 100, PER_INSTANCE_PER_MINUTE: 18, SPAM_THRESHOLD: 50 };
 
-function getRateState(key) {
+function getRateState(key: string): RateState {
   const now = Date.now();
   let state = rateLimits.get(key);
   if (!state) { state = { minuteCount: 0, minuteReset: now + 60000, dailyCount: 0, dailyReset: now + 86400000, blocked: false }; rateLimits.set(key, state); return state; }
@@ -23,7 +25,7 @@ function getRateState(key) {
   return state;
 }
 
-function canSend(userPhone, instanceName) {
+function canSend(userPhone: string, instanceName: string) {
   const u = getRateState('user:' + userPhone), i = getRateState('inst:' + instanceName);
   if (u.blocked) return { allowed: false, reason: 'Blocked: ' + u.blockReason };
   if (u.dailyCount >= LIMITS.PER_USER_PER_DAY) return { allowed: false, reason: 'Daily limit' };
@@ -32,22 +34,22 @@ function canSend(userPhone, instanceName) {
   return { allowed: true };
 }
 
-function recordSend(userPhone, instanceName) {
+function recordSend(userPhone: string, instanceName: string) {
   const u = getRateState('user:' + userPhone), i = getRateState('inst:' + instanceName);
   u.minuteCount++; u.dailyCount++; i.minuteCount++;
   if (u.dailyCount >= LIMITS.SPAM_THRESHOLD) { u.blocked = true; u.blockReason = u.dailyCount + '/day'; }
 }
 
-async function checkFailures(supabase, userPhone) {
+async function checkFailures(supabase: ReturnType<typeof createClient>, userPhone: string) {
   const { count } = await supabase.from('scheduled_messages').select('id', { count: 'exact', head: true }).eq('instance_phone', userPhone).eq('status', 'failed').gte('created_at', new Date(Date.now() - 86400000).toISOString());
   if ((count || 0) >= 5) { const s = getRateState('user:' + userPhone); s.blocked = true; s.blockReason = count + ' failed in 24h'; return true; }
   return false;
 }
 
-async function sendEvolutionText(instanceName, toPhone, text) {
+async function sendEvolutionText(instanceName: string, toPhone: string, text: string) {
   const evoUrl = process.env.EVOLUTION_API_URL;
   const evoKey = process.env.EVOLUTION_API_KEY;
-  const normalizedTo = normalizePhoneForEvolution(toPhone);
+  const normalizedTo = normalizeItalianPhone(toPhone);
   console.log('CRON: sendText inst=' + instanceName + ' to=' + normalizedTo + ' (raw=' + toPhone + ')');
   const res = await fetch(evoUrl + '/message/sendText/' + instanceName, {
     method: 'POST',
@@ -59,7 +61,7 @@ async function sendEvolutionText(instanceName, toPhone, text) {
   return { ok: res.ok, status: res.status, body };
 }
 
-export async function GET(req) {
+export async function GET(req: NextRequest) {
   const supabase = createClient(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
   const startTime = Date.now();
   try {
@@ -171,7 +173,7 @@ export async function GET(req) {
     console.log('CRON DONE sent=' + sent + ' failed=' + failed + ' skip=' + skipped + ' rl=' + rateLimited + ' ms=' + dur);
     return NextResponse.json({ sent, failed, skipped, rateLimited, duration: dur + 'ms', timestamp: new Date().toISOString() });
   } catch (err) {
-    console.error('CRON ERROR:', err.message);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    console.error('CRON ERROR:', (err as Error).message);
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
   }
 }
