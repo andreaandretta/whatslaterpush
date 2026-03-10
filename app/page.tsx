@@ -672,6 +672,9 @@ function ConnectionZone() {
   const [error, setError] = React.useState<string | null>(null);
   const [status, setStatus] = React.useState<string>('disconnected');
   const [instanceName, setInstanceName] = React.useState<string | null>(null);
+  const [showOnboarding, setShowOnboarding] = React.useState(false);
+  const [connectedPhone, setConnectedPhone] = React.useState<string>('');
+  const [copied, setCopied] = React.useState(false);
   const pollRef = React.useRef<NodeJS.Timeout | null>(null);
 
   // Normalize phone: strip +, spaces, dashes — send raw digits to API (server handles prefix logic)
@@ -696,11 +699,14 @@ function ConnectionZone() {
         if (res.ok) {
           const data = await res.json();
           if (data.status === 'connected' || data.status === 'open' || data.state === 'open') {
+            const ownerPhone = data.owner || phoneInput.replace(/\D/g,'');
             setStatus('connected');
             setQrCode(null);
             setPairingCode(null);
+            setConnectedPhone(ownerPhone);
+            setShowOnboarding(true);
             stopPolling();
-                            if (typeof window !== 'undefined') { const p = data.owner || phoneInput.replace(/\D/g,''); if (p && instanceName) { localStorage.setItem('sw_phone',p); localStorage.setItem('sw_instance',instanceName); localStorage.setItem('sw_expiry',String(Date.now()+86400000)); } }
+                            if (typeof window !== 'undefined') { const p = ownerPhone; if (p && instanceName) { localStorage.setItem('sw_phone',p); localStorage.setItem('sw_instance',instanceName); localStorage.setItem('sw_expiry',String(Date.now()+86400000)); } }
           }
         }
       } catch {}
@@ -744,7 +750,39 @@ function ConnectionZone() {
     return () => stopPolling();
   }, []);
 
+  const waUrl = `https://wa.me/+${connectedPhone}?text=Ciao!%20Per%20programmare%20un%20messaggio%2C%20inviami%20la%20vCard%20del%20destinatario%20e%20poi%20scrivi%3A%20Invia%20a%20%5BNome%5D%20domani%20alle%2015%3A%20Il%20tuo%20messaggio`;
+
   return (
+    <>
+      {showOnboarding && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 flex flex-col items-center text-center">
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
+              <CheckCircle2 className="w-8 h-8 text-green-500" />
+            </div>
+            <h2 className="text-2xl font-bold mb-3">Sei connesso! 🎉</h2>
+            <p className="text-gray-500 text-sm leading-relaxed mb-6">
+              Invia messaggi programmati direttamente da WhatsApp.<br />
+              Manda la vCard del destinatario, poi scrivi:<br />
+              <span className="font-mono font-medium text-gray-800">Invia a [Nome] domani alle 15: Il tuo messaggio</span>
+            </p>
+            <a
+              href={waUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full bg-green-500 text-white py-3 rounded-xl font-semibold hover:bg-green-600 transition-colors mb-3 text-center block"
+            >
+              Inizia a messaggiare
+            </a>
+            <button
+              onClick={() => setShowOnboarding(false)}
+              className="w-full py-3 rounded-xl border border-gray-200 text-gray-600 font-medium hover:bg-gray-50 transition-colors"
+            >
+              Chiudi
+            </button>
+          </div>
+        </div>
+      )}
     <div className="py-20 bg-white">
       <div className="max-w-lg mx-auto px-4">
         <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-8">
@@ -820,6 +858,12 @@ function ConnectionZone() {
                     <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
                       <p className="text-sm font-medium text-gray-700 mb-2">Oppure usa il codice di abbinamento:</p>
                       <p className="text-3xl font-bold text-blue-600 tracking-widest">{pairingCode}</p>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(pairingCode).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); }}
+                        className="mt-3 inline-flex items-center gap-2 px-4 py-1.5 rounded-lg bg-white text-green-700 text-sm font-medium border border-green-200 hover:border-green-400 transition-all shadow-sm"
+                      >
+                        {copied ? '✓ Copiato!' : 'Copia'}
+                      </button>
                       <p className="text-xs text-gray-500 mt-2">
                         WhatsApp → Impostazioni → Dispositivi collegati → Collega un dispositivo → Inserisci codice
                       </p>
@@ -839,6 +883,7 @@ function ConnectionZone() {
         </div>
       </div>
     </div>
+    </>
   );
 }
 

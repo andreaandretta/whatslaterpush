@@ -647,6 +647,16 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
   const [phone, setPhone] = useState('');
   const [phoneError, setPhoneError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const prevConnStatusRef = useRef<string>('disconnected');
+
+  // Show onboarding modal when connection transitions to 'connected'
+  useEffect(() => {
+    if (connStatus === 'connected' && prevConnStatusRef.current !== 'connected') {
+      setShowOnboarding(true);
+    }
+    prevConnStatusRef.current = connStatus;
+  }, [connStatus]);
 
   const handleCopy = () => {
     if (pairingCode) {
@@ -670,32 +680,64 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
 
   // âââ CONNECTED STATE âââ
   if (connStatus === 'connected') {
+    const waUrl = `https://wa.me/+${userPhone}?text=Ciao!%20Per%20programmare%20un%20messaggio%2C%20inviami%20la%20vCard%20del%20destinatario%20e%20poi%20scrivi%3A%20Invia%20a%20%5BNome%5D%20domani%20alle%2015%3A%20Il%20tuo%20messaggio`;
     return (
-      <section id="connetti" className="py-24 bg-gradient-to-b from-background to-[#e8f5e9]">
-        <div className="max-w-3xl mx-auto px-6">
-          <div className="bg-white rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.05)] overflow-hidden">
-            <div className="p-12 text-center flex flex-col items-center">
-              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6">
-                <CheckCircle2 className="w-10 h-10 text-primary" />
+      <>
+        {showOnboarding && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 flex flex-col items-center text-center">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
+                <CheckCircle2 className="w-8 h-8 text-primary" />
               </div>
-              <h3 className="text-2xl font-bold mb-2">WhatsApp Connesso!</h3>
-              {userPhone && <p className="text-text-secondary mb-2">Numero: +{userPhone}</p>}
-              <p className="text-text-secondary mb-8">Sei pronto per programmare il tuo primo messaggio.</p>
-              <div className="w-full bg-background rounded-2xl p-6 text-left mb-8">
-                <h4 className="font-bold mb-4">Come iniziare:</h4>
-                <ol className="space-y-3 text-sm">
-                  <li className="flex gap-3"><span className="bg-white w-6 h-6 rounded-full flex items-center justify-center font-bold shadow-sm shrink-0">1</span> Apri WhatsApp e cerca la chat &quot;Te Stesso&quot;</li>
-                  <li className="flex gap-3"><span className="bg-white w-6 h-6 rounded-full flex items-center justify-center font-bold shadow-sm shrink-0">2</span> Tocca la graffetta e seleziona &quot;Contatto&quot;</li>
-                  <li className="flex gap-3"><span className="bg-white w-6 h-6 rounded-full flex items-center justify-center font-bold shadow-sm shrink-0">3</span> Invia il contatto e scrivi il messaggio!</li>
-                </ol>
-              </div>
-              <button onClick={onDisconnect} className="px-6 py-2 text-sm border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors flex items-center gap-2">
-                <LogOut className="w-4 h-4" /> Disconnetti
+              <h2 className="text-2xl font-bold mb-3">Sei connesso! 🎉</h2>
+              <p className="text-text-secondary text-sm leading-relaxed mb-6">
+                Invia messaggi programmati direttamente da WhatsApp.<br />
+                Manda la vCard del destinatario, poi scrivi:<br />
+                <span className="font-mono font-medium text-text-primary">Invia a [Nome] domani alle 15: Il tuo messaggio</span>
+              </p>
+              <a
+                href={waUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full bg-primary text-white py-3 rounded-xl font-semibold hover:scale-[1.02] transition-transform shadow-lg shadow-primary/30 mb-3 text-center block"
+              >
+                Inizia a messaggiare
+              </a>
+              <button
+                onClick={() => setShowOnboarding(false)}
+                className="w-full py-3 rounded-xl border border-gray-200 text-gray-600 font-medium hover:bg-gray-50 transition-colors"
+              >
+                Chiudi
               </button>
             </div>
           </div>
-        </div>
-      </section>
+        )}
+        <section id="connetti" className="py-24 bg-gradient-to-b from-background to-[#e8f5e9]">
+          <div className="max-w-3xl mx-auto px-6">
+            <div className="bg-white rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.05)] overflow-hidden">
+              <div className="p-12 text-center flex flex-col items-center">
+                <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6">
+                  <CheckCircle2 className="w-10 h-10 text-primary" />
+                </div>
+                <h3 className="text-2xl font-bold mb-2">WhatsApp Connesso!</h3>
+                {userPhone && <p className="text-text-secondary mb-2">Numero: +{userPhone}</p>}
+                <p className="text-text-secondary mb-8">Sei pronto per programmare il tuo primo messaggio.</p>
+                <div className="w-full bg-background rounded-2xl p-6 text-left mb-8">
+                  <h4 className="font-bold mb-4">Come iniziare:</h4>
+                  <ol className="space-y-3 text-sm">
+                    <li className="flex gap-3"><span className="bg-white w-6 h-6 rounded-full flex items-center justify-center font-bold shadow-sm shrink-0">1</span> Apri WhatsApp e cerca la chat &quot;Te Stesso&quot;</li>
+                    <li className="flex gap-3"><span className="bg-white w-6 h-6 rounded-full flex items-center justify-center font-bold shadow-sm shrink-0">2</span> Tocca la graffetta e seleziona &quot;Contatto&quot;</li>
+                    <li className="flex gap-3"><span className="bg-white w-6 h-6 rounded-full flex items-center justify-center font-bold shadow-sm shrink-0">3</span> Invia il contatto e scrivi il messaggio!</li>
+                  </ol>
+                </div>
+                <button onClick={onDisconnect} className="px-6 py-2 text-sm border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors flex items-center gap-2">
+                  <LogOut className="w-4 h-4" /> Disconnetti
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </>
     );
   }
 
