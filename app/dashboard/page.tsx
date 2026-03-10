@@ -5,7 +5,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { TextPlugin } from 'gsap/TextPlugin';
 import {
   Calendar, MessageCircle, CheckCircle2, ArrowRight, Clock, Smartphone,
-  Link as LinkIcon, ChevronDown, Loader2h, Paperclip, User, Send, QrCode,
+  Link as LinkIcon, ChevronDown, Loader2, Paperclip, User, Send, QrCode,
   Hash, Shield, Zap, RefreshCw, Check, X, LogOut, Trash2, XCircle
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
