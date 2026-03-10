@@ -316,6 +316,10 @@ export async function POST(req: NextRequest) {
         const { instanceName } = body;
         if (!instanceName) return NextResponse.json({ error: 'instanceName required' }, { status: 400 });
         await forceDeleteInstance(instanceName);
+        const supa = getSupabase();
+        await supa.from('user_instances')
+          .update({ connection_status: 'close', last_connection_update: new Date().toISOString() })
+          .eq('instance_name', instanceName);
         return NextResponse.json({ success: true });
   }
 

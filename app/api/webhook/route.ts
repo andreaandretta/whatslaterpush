@@ -239,11 +239,11 @@ export async function POST(req) {
             .select('phone_number').eq('instance_name', evoInstance).maybeSingle();
           if (inst?.phone_number) {
               await notifyOwner(evoInstance, inst.phone_number,
-                'Benvenuto su SchedWhats! 🎉\n' +
+                'Benvenuto su WhatsLater! 🎉\n' +
                 'Per programmare un messaggio:\n' +
-                '1️⃣ Inviami la vCard del destinatario (solo la prima volta)\n' +
+                '1️⃣ Allégami il contatto del destinatario (solo la prima volta)\n' +
                 '2️⃣ Poi scrivi: Invia a Marco domani alle 15: Ciao!\n' +
-                '📊 Torna su whatslaterpush.vercel.app per vedere i messaggi programmati.'
+                '📊 Torna su whatslaterpush.vercel.app per vedere i tuoi messaggi programmati.'
               );
           }
         } catch(e) { console.error('WEBHOOK: onboarding error:', e.message); }

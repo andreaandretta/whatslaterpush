@@ -673,9 +673,11 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = phone.replace(/\D/g, '');
+    let clean = phone.replace(/\D/g, '');
+    if (clean.startsWith('0039')) clean = clean.substring(4);
+    else if (clean.startsWith('39') && clean.length > 12) clean = clean.substring(2);
     if (clean.length < 10) {
-      setPhoneError('Inserisci numero completo con prefisso internazionale (es: 393509898408)');
+      setPhoneError('Inserisci il tuo numero di telefono (es: 3401234567)');
       return;
     }
     setPhoneError('');
@@ -759,17 +761,17 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
             <form onSubmit={handleSubmit} className="max-w-sm mx-auto flex flex-col gap-4 mb-8">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Numero di telefono WhatsApp
+                  Il tuo numero di telefono
                 </label>
                 <input
                   type="tel"
-                  placeholder="Es: 393509898408"
+                  placeholder="Es: 3401234567"
                   className="w-full bg-background border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-shadow text-base"
                   value={phone}
                   onChange={(e) => { setPhone(e.target.value); setPhoneError(''); }}
                   disabled={connStatus === 'connecting'}
                 />
-                <p className="text-xs text-gray-500 mt-1">Inserisci il numero con prefisso internazionale senza + o spazi</p>
+                <p className="text-xs text-gray-500 mt-1">Inserisci il tuo numero di telefono</p>
               </div>
               {(phoneError || error) && (
                 <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center text-sm text-red-600">
