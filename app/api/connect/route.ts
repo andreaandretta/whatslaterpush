@@ -11,7 +11,7 @@ function getSupabase() {
 
 const EVO_URL = process.env.EVOLUTION_API_URL || 'http://evo-pkso00o0ccoc8ccgos0ks4cw.161.35.212.68.sslip.io';
 const EVO_KEY = process.env.EVOLUTION_API_KEY || 'SCHEDWHATS_GOD_MODE_SECRET_KEY_2024';
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://l8o400sowgw800swg8gcg0kk.161.35.212.68.sslip.io';
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app';
 
 function validatePhone(raw: string): string | null {
     const clean = raw.replace(/\D/g, '');
@@ -54,7 +54,7 @@ async function getOwnerPhone(name: string): Promise<string | null> {
           const arr = Array.isArray(data) ? data : [data];
           const inst = arr.find((i: any) => i.instance?.instanceName === name || i.name === name);
           if (!inst) return null;
-          const owner = inst.instance?.owner || inst.owner || null;
+          const owner = inst.instance?.ownerJid || inst.ownerJid || inst.instance?.owner || inst.owner || null;
           if (!owner) return null;
           return owner.split('@')[0];
     } catch (e) {
@@ -103,19 +103,16 @@ export async function POST(req: NextRequest) {
                 }
                 const data = await res.json();
                 console.log('[connect] connectionState:', JSON.stringify(data));
-                const state = data?.instance?.state || data?.state || 'close';
+                const state = data?.instance?.state || data?.instance?.connectionStatus || data?.state || data?.connectionStatus || 'close';
                 if (state === 'open') {
                           const owner = await getOwnerPhone(instanceName);
                           console.log('[connect] owner check:', owner);
-                          if (owner) {
-        // P0 FIX: Persist connection state to DB for dashboard sync
-        const supa = getSupabase();
-        await supa.from('user_instances')
-          .update({ connection_status: 'open', last_connection_update: new Date().toISOString() })
-          .eq('instance_name', instanceName);
-        return NextResponse.json({ status: 'open', owner });
-      }
-                          return NextResponse.json({ status: 'open', owner: null });
+                          // Always persist open status to DB regardless of owner
+                          const supa = getSupabase();
+                          await supa.from('user_instances')
+                            .update({ connection_status: 'open', last_connection_update: new Date().toISOString() })
+                            .eq('instance_name', instanceName);
+                          return NextResponse.json({ status: 'open', owner: owner || null });
                 }
                 if (state === 'connecting' || state === 'qr') return NextResponse.json({ status: 'connecting' });
                 {

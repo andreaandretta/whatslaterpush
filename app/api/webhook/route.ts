@@ -225,27 +225,33 @@ export async function POST(req) {
     const evoInstance = payload?.instance || '';
     console.log('WEBHOOK event=' + eventType + ' instance=' + evoInstance);
 
-    // ââ Handle CONNECTION_UPDATE â update instance_name in DB when phone connects ââ
+    // Handle CONNECTION_UPDATE - update DB status via handleConnectionUpdate
     if (eventType === 'connection.update' || eventType === 'CONNECTION_UPDATE') {
       const connData = payload?.data;
       const state = connData?.state || connData?.connection || connData?.status;
-      const phoneFromJid = connData?.wuid || connData?.me?.id || connData?.phoneNumber;
-      console.log('WEBHOOK: CONNECTION_UPDATE state=' + state + ' phone=' + phoneFromJid + ' instance=' + evoInstance);
+      console.log('WEBHOOK: CONNECTION_UPDATE state=' + state + ' instance=' + evoInstance);
 
-      if ((state === 'open' || state === 'connected') && phoneFromJid) {
-        const cleanPhone = phoneFromJid.replace('@s.whatsapp.net', '').replace(/\D/g, '');
-        const normalized = cleanPhone.startsWith('39') ? cleanPhone : (cleanPhone.startsWith('3') && cleanPhone.length === 10 ? '39' + cleanPhone : cleanPhone);
-        // Update or create user_instances row
-        const existing = await findUserByPhone(normalized);
-        if (existing) {
-          if (existing.instance_name !== evoInstance) {
-            await supabase.from('user_instances').update({ instance_name: evoInstance }).eq('id', existing.id);
-            console.log('WEBHOOK: Updated instance_name for', normalized, 'to', evoInstance);
+      await handleConnectionUpdate(payload);
+
+      if (state === 'open' || state === 'connected') {
+        try {
+          const { data: inst } = await supabase.from('user_instances')
+            .select('phone_number').eq('instance_name', evoInstance).maybeSingle();
+          if (inst?.phone_number) {
+            const { count } = await supabase.from('scheduled_messages')
+              .select('id', { count: 'exact', head: true })
+              .eq('instance_phone', inst.phone_number);
+            if ((count || 0) === 0) {
+              await notifyOwner(evoInstance, inst.phone_number,
+                'Benvenuto su SchedWhats! 🎉\n' +
+                'Per programmare un messaggio:\n' +
+                '1️⃣ Inviami la vCard del destinatario (solo la prima volta)\n' +
+                '2️⃣ Poi scrivi: Invia a Marco domani alle 15: Ciao!\n' +
+                '📊 Torna su whatslaterpush.vercel.app per vedere i messaggi programmati.'
+              );
+            }
           }
-        } else {
-          await createUser(normalized, evoInstance);
-          console.log('WEBHOOK: Created user on CONNECTION_UPDATE:', normalized, evoInstance);
-        }
+        } catch(e) { console.error('WEBHOOK: onboarding error:', e.message); }
       }
       return NextResponse.json({ ok: true });
     }
