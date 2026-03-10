@@ -96,6 +96,29 @@ function formatRome(d) {
   return d.toLocaleString('it-IT',{ day:'numeric', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Rome' });
 }
 
+function extractInlineRecipient(text) {
+  const m = /\b(?:manda|mandami|mandagli|mandale|scrivi|scrivimi|scrivigli|scrivile|invia|inviami|avvisa|avvisami|dici|digli|dille|ricordami|promemoria|reminder|comunica)\s+a\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,25}?)(?=\s+(?:domani|fra|tra|stasera|stamattina|stanotte|all[ae]?\s+\d|il\s+\d|\d{1,2}[\/\-]\d))/i.exec(text);
+  return m ? m[1].trim() : null;
+}
+
+function extractInlineMessage(text) {
+  const idx = text.indexOf(': ');
+  if (idx > -1 && idx < text.length - 2) return text.substring(idx + 2).trim();
+  return null;
+}
+
+async function findContactByName(ownerPhone, name) {
+  const { data } = await supabase
+    .from('pending_contacts')
+    .select('recipient_number, recipient_name, id')
+    .eq('owner_phone', ownerPhone)
+    .ilike('recipient_name', `%${name}%`)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data;
+}
+
 async function notifyOwner(instanceName, phone, msg) {
   if (!phone || !instanceName) return;
   try {
@@ -378,19 +401,40 @@ export async function POST(req) {
     if (!parsed) { console.log('WEBHOOK: No scheduling command in:', raw); return NextResponse.json({ ok:true }); }
 
     const scheduledAt = parsed.date;
-    const content = extractContent(raw, parsed.cmdStart, parsed.cmdEnd);
-    console.log('WEBHOOK: Scheduling at:', scheduledAt.toISOString(), 'content:', content);
 
-    const { data: pc } = await supabase.from('pending_contacts').select('*').eq('owner_phone', ownerPhone).gte('created_at', new Date(Date.now() - 1800000).toISOString()).order('created_at', { ascending: false }).limit(1).maybeSingle();
-    console.log('WEBHOOK: pending_contact:', pc ? pc.recipient_name + ' ' + pc.recipient_number : 'none');
+    // Recipient resolution: inline text ("Invia a Marco...") first, then pending vCard
+    let recNum: string, recName: string, usedPcId: string | null = null;
 
-    if (!pc) {
-      console.error('WEBHOOK: No pending_contact found for owner — cannot schedule without explicit recipient');
-      await notifyOwner(instanceName, ownerPhone, 'Nessun destinatario trovato. Invia prima una vCard del contatto a cui vuoi inviare il messaggio.');
-      return NextResponse.json({ ok: false, error: 'no_recipient' });
+    const inlineName = extractInlineRecipient(raw);
+    if (inlineName) {
+      console.log('WEBHOOK: Inline recipient detected:', inlineName);
+      const contact = await findContactByName(ownerPhone, inlineName);
+      if (contact) {
+        recNum = contact.recipient_number;
+        recName = contact.recipient_name;
+        console.log('WEBHOOK: Inline recipient resolved:', recName, recNum);
+      } else {
+        console.log('WEBHOOK: Inline recipient not found in contacts:', inlineName);
+        await notifyOwner(instanceName, ownerPhone, `Non trovo "${inlineName}" in rubrica.\nInvia prima la vCard di ${inlineName}, poi ripeti il comando.`);
+        return NextResponse.json({ ok: false, error: 'contact_not_found' });
+      }
+    } else {
+      const { data: pc } = await supabase.from('pending_contacts').select('*').eq('owner_phone', ownerPhone).gte('created_at', new Date(Date.now() - 1800000).toISOString()).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      console.log('WEBHOOK: pending_contact:', pc ? pc.recipient_name + ' ' + pc.recipient_number : 'none');
+      if (!pc) {
+        console.error('WEBHOOK: No pending_contact found for owner');
+        await notifyOwner(instanceName, ownerPhone, 'Nessun destinatario trovato.\nInvia prima una vCard oppure scrivi:\n"Invia a [Nome] domani alle 15: testo"');
+        return NextResponse.json({ ok: false, error: 'no_recipient' });
+      }
+      recNum = pc.recipient_number;
+      recName = pc.recipient_name;
+      usedPcId = pc.id;
     }
-    const recNum = pc.recipient_number;
-    const recName = pc.recipient_name;
+
+    const content = inlineName
+      ? (extractInlineMessage(raw) || extractContent(raw, parsed.cmdStart, parsed.cmdEnd))
+      : extractContent(raw, parsed.cmdStart, parsed.cmdEnd);
+    console.log('WEBHOOK: Scheduling at:', scheduledAt.toISOString(), 'content:', content, 'to:', recName, recNum);
 
     const trialEnd = user.trial_ends_at ? new Date(user.trial_ends_at) : null;
     const daysLeft = trialEnd ? Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / 86400000)) : 0;
@@ -408,9 +452,9 @@ export async function POST(req) {
       return NextResponse.json({ error: insErr.message }, { status: 500 });
     }
 
-    if (pc && pc.id) {
-      await supabase.from('pending_contacts').delete().eq('id', pc.id);
-      console.log('WEBHOOK: Deleted used pending_contact id:', pc.id);
+    if (usedPcId) {
+      await supabase.from('pending_contacts').delete().eq('id', usedPcId);
+      console.log('WEBHOOK: Deleted used pending_contact id:', usedPcId);
     }
 
     await notifyOwner(instanceName, ownerPhone, 'Programmato per ' + formatRome(scheduledAt) + ' a ' + recName + ' (' + recNum + ').\n"' + content + '"\nTrial: ' + daysLeft + 'g rimasti');
