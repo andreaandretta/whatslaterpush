@@ -425,7 +425,7 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
 
   // Connected state
   if (connStatus === 'connected') {
-    const waUrl = `https://wa.me/+${userPhone}?text=Ciao!%20Per%20programmare%20un%20messaggio%2C%20inviami%20la%20vCard%20del%20destinatario%20e%20poi%20scrivi%3A%20Invia%20a%20%5BNome%5D%20domani%20alle%2015%3A%20Il%20tuo%20messaggio`;
+    const waUrl = `https://wa.me/+${userPhone}`;
     return (
       <>
         {showOnboarding && (

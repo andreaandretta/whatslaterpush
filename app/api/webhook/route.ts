@@ -261,7 +261,10 @@ export async function POST(req) {
                 '1️⃣ Allega il contatto del destinatario (premi 📎 → Contatto)\n' +
                 '2️⃣ Poi scrivi: "Invia a [Nome] domani alle 15: Testo del messaggio"\n\n' +
                 'Esempio: "Invia a Marco domani alle 15: Ricordati la riunione!"\n\n' +
-                'Hai bisogno di aiuto? Scrivi AIUTO e ti spiego tutto 🙂'
+                'Hai bisogno di aiuto? Scrivi AIUTO e ti spiego tutto 🙂\n\n' +
+                '📊 Vedi i tuoi messaggi programmati:\n' +
+                '- Dashboard: https://whatslaterpush.vercel.app/dashboard\n' +
+                '- Oppure scrivi LISTA qui in chat'
               );
           }
         } catch(e) { console.error('WEBHOOK: onboarding error:', e.message); }
@@ -381,19 +384,34 @@ export async function POST(req) {
     const raw = msgContent?.conversation || msgContent?.extendedTextMessage?.text || msgContent?.imageMessage?.caption || '';
     if (!raw) { console.log('WEBHOOK: Empty text, skipping'); return NextResponse.json({ ok:true }); }
     console.log('WEBHOOK: Text received:', raw);
+
+    // FIX 3: Ignore messages that look like the bot's own instructions (e.g. from wa.me pre-filled text)
+    if (raw.includes('Per programmare un messaggio') || raw.includes('Benvenuto su WhatsLater') || raw.includes('[Nome]')) {
+      console.log('WEBHOOK: Ignoring bot instruction text — not a real command');
+      return NextResponse.json({ ok: true });
+    }
+
     const rawLower = raw.trim().toLowerCase();
 
     // ── COMMAND: OK (confirm pending message) ──
     if (/^(ok|sì|si|conferma|confermo|yes)$/i.test(rawLower)) {
-      const { data: awaiting } = await supabase.from('scheduled_messages')
+      console.log('WEBHOOK: OK received from', ownerPhone, '- looking for awaiting_confirm...');
+      const { data: awaiting, error: awErr } = await supabase.from('scheduled_messages')
         .select('id, recipient_name, recipient_number, parsed_message, scheduled_at')
         .eq('instance_phone', ownerPhone).eq('status', 'awaiting_confirm')
         .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (awErr) console.error('WEBHOOK: awaiting_confirm query error:', awErr.message);
       if (!awaiting) {
-        console.log('WEBHOOK: OK received but no awaiting_confirm message');
+        console.log('WEBHOOK: OK received but no awaiting_confirm message for phone=' + ownerPhone);
         return NextResponse.json({ ok: true });
       }
-      await supabase.from('scheduled_messages').update({ status: 'pending' }).eq('id', awaiting.id);
+      console.log('WEBHOOK: Confirming message id=' + awaiting.id + ' to=' + awaiting.recipient_name);
+      const { error: updErr } = await supabase.from('scheduled_messages').update({ status: 'pending' }).eq('id', awaiting.id);
+      if (updErr) {
+        console.error('WEBHOOK: CONFIRM UPDATE FAILED:', updErr.message);
+        await notifyOwner(instanceName, ownerPhone, 'Errore conferma: ' + updErr.message);
+        return NextResponse.json({ error: updErr.message }, { status: 500 });
+      }
       await notifyOwner(instanceName, ownerPhone,
         '✅ Confermato! Messaggio a ' + (awaiting.recipient_name || awaiting.recipient_number) +
         ' programmato per ' + formatRome(new Date(awaiting.scheduled_at)) + '.\n' +
