@@ -97,7 +97,7 @@ function formatRome(d) {
 }
 
 function extractInlineRecipient(text) {
-  const m = /\b(?:manda|mandami|mandagli|mandale|scrivi|scrivimi|scrivigli|scrivile|invia|inviami|avvisa|avvisami|dici|digli|dille|ricordami|promemoria|reminder|comunica)\s+a\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,25}?)(?=\s+(?:domani|fra|tra|stasera|stamattina|stanotte|all[ae]?\s+\d|il\s+\d|\d{1,2}[\/\-]\d))/i.exec(text);
+  const m = /\b(?:manda|mandami|mandagli|mandale|scrivi|scrivimi|scrivigli|scrivile|invia|inviami|avvisa|avvisami|dici|digli|dille|ricordami|promemoria|reminder|comunica)\s+ad?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,25}?)(?=\s+(?:domani|fra|tra|stasera|stamattina|stanotte|all[ae]?\s+\d|il\s+\d|\d{1,2}[\/\-]\d))/i.exec(text);
   return m ? m[1].trim() : null;
 }
 
@@ -214,6 +214,23 @@ function extractMessageItem(payload) {
   return null;
 }
 
+// ── BUG 1 FIX: Message deduplication ──
+// Evolution API sends MESSAGES_UPSERT multiple times (send + delivery status).
+// Track processed message IDs to prevent duplicate scheduling.
+const processedMsgIds = new Map<string, number>();
+const DEDUP_TTL_MS = 120_000; // 2 minutes
+
+function isDuplicate(msgId: string): boolean {
+  // Cleanup old entries
+  const now = Date.now();
+  for (const [key, ts] of processedMsgIds) {
+    if (now - ts > DEDUP_TTL_MS) processedMsgIds.delete(key);
+  }
+  if (processedMsgIds.has(msgId)) return true;
+  processedMsgIds.set(msgId, now);
+  return false;
+}
+
 export async function POST(req) {
   let rawBody = '';
   try {
@@ -263,6 +280,13 @@ export async function POST(req) {
     if (!msgContent || !msgKey) {
       console.log('WEBHOOK: No message or key. event=' + eventType);
       return NextResponse.json({ ok:true });
+    }
+
+    // BUG 1 FIX: Deduplicate by message ID
+    const msgId = msgKey?.id;
+    if (msgId && isDuplicate(msgId)) {
+      console.log('WEBHOOK: DUPLICATE msgId=' + msgId + ' — skipping');
+      return NextResponse.json({ ok: true, deduplicated: true });
     }
 
     const senderRaw = (msgKey?.remoteJid || '').split('@')[0];
