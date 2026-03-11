@@ -237,8 +237,20 @@ function isDuplicateInMemory(msgId: string): boolean {
   return false;
 }
 
+// ── Get pending partial context (awaiting_time or awaiting_recipient) ──
+async function getPendingContext(ownerPhone: string): Promise<any> {
+  const { data } = await supabase.from('scheduled_messages')
+    .select('id, recipient_name, recipient_number, parsed_message, status, caption')
+    .eq('instance_phone', ownerPhone)
+    .in('status', ['awaiting_time', 'awaiting_recipient'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data;
+}
+
 // ── OpenAI AI Assistant ──
-async function askAI(userMessage: string, contactList: string): Promise<any> {
+async function askAI(userMessage: string, contactList: string, pendingContext: any): Promise<any> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     console.log('WEBHOOK: OpenAI key not set, falling back to regex');
@@ -251,32 +263,72 @@ async function askAI(userMessage: string, contactList: string): Promise<any> {
     hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome'
   });
 
-  const systemPrompt = `Sei l'assistente di WhatsLater, un bot WhatsApp per programmare messaggi.
+  let contextBlock = '';
+  if (pendingContext) {
+    if (pendingContext.status === 'awaiting_time') {
+      contextBlock = `\n\nCONTESTO PENDENTE: L'utente sta completando un messaggio già iniziato.
+Destinatario: ${pendingContext.recipient_name} (${pendingContext.recipient_number})
+Testo da inviare: "${pendingContext.parsed_message}"
+Manca solo l'orario. Se il messaggio dell'utente contiene un orario/data, usa action='schedule' con i dati completi.`;
+    } else if (pendingContext.status === 'awaiting_recipient') {
+      contextBlock = `\n\nCONTESTO PENDENTE: L'utente sta completando un messaggio già iniziato.
+Testo da inviare: "${pendingContext.parsed_message}"
+Manca il destinatario. Se il messaggio contiene un nome, usa action='schedule'.`;
+    }
+  }
+
+  const systemPrompt = `Sei un assistente intelligente per WhatsLater, un'app per programmare messaggi WhatsApp.
+Il tuo compito è interpretare cosa vuole fare l'utente dal suo messaggio in italiano, anche se scritto in modo informale, con errori, o in dialetto.
+
 Data e ora corrente (Roma): ${currentDateTime}
 
 Contatti salvati dell'utente:
-${contactList || 'Nessun contatto salvato. L\'utente deve prima inviare un contatto (📎 → Contatto).'}
-
-Analizza il messaggio dell'utente e determina cosa vuole fare.
+${contactList || 'Nessun contatto salvato. L\'utente deve prima inviare un contatto (📎 → Contatto).'}${contextBlock}
 
 REGOLE IMPORTANTI:
-- Se vuole schedulare un messaggio: estrai destinatario, data/ora (come ISO 8601 in timezone Europe/Rome), e il testo da inviare
-- Il destinatario DEVE essere presente nella lista contatti sopra. Se non c'è, action='chat' e chiedi di inviare prima il contatto
-- Se vuole vedere i messaggi programmati: action='list'
-- Se vuole annullare un messaggio: action='cancel', con cancel_target (numero o nome)
-- Se vuole sapere lo stato: action='status'
-- Se vuole aiuto: action='help'
-- Se è una domanda generica o conversazione: action='chat' e rispondi in modo utile in italiano
-- Se non capisci: action='chat' e chiedi gentilmente cosa vuole fare
+1. Se l'utente vuole mandare un messaggio a qualcuno, estrai:
+   - Chi è il destinatario (anche da contesto: 'suocera', 'mia moglie', 'il capo')
+   - Cosa vuole dire (il testo del messaggio)
+   - Quando (se non specificato, chiedi tu l'orario)
+
+2. Se l'orario NON è specificato chiaramente, NON inventarlo. Invece usa action='ask_time' e in reply chiedi:
+   'A che ora vuoi inviarlo? (es. oggi alle 18, domani mattina, fra 2 ore)'
+
+3. Se il destinatario non è chiaro o non è nella lista contatti, usa action='ask_recipient' e chiedi.
+   Se il nome sembra un contatto non ancora salvato, chiedi di inviare prima il contatto con 📎.
+
+4. Il testo del messaggio da inviare (message_text) è SOLO la parte che deve ricevere il destinatario — NON includere istruzioni, contesto dell'utente, o metadati.
+   Esempio: "scrivi alla suocera di ricordare ad Andrea il vino" → message_text: "Ricorda ad Andrea di portare il vino"
+
+5. Sii conversazionale e naturale in italiano. Se l'utente scrive in modo confuso, aiutalo a chiarire.
+
+6. Se vuole vedere messaggi programmati: action='list'
+7. Se vuole annullare: action='cancel', con cancel_target
+8. Se vuole lo stato: action='status'
+9. Se vuole aiuto: action='help'
+10. Se è conversazione generica: action='chat'
+
+ESEMPI:
+- "scrivi alla suocera di ricordare ad Andrea di portare il vino domani sera"
+  → action: schedule, recipient_name: "Suocera", datetime_iso: "domani 20:00", message_text: "Ricorda ad Andrea di portare il vino"
+
+- "di a Marco che arrivo in ritardo"
+  → action: ask_time (manca orario), recipient_name: "Marco", message_text: "Arrivo in ritardo"
+
+- "manda un promemoria fra 2 ore che abbiamo la cena"
+  → action: ask_recipient (manca destinatario), message_text: "Abbiamo la cena stasera!"
+
+- "alle 19"  (con contesto pendente di messaggio a Marco)
+  → action: schedule, datetime_iso con le 19:00 di oggi
 
 Rispondi SOLO con JSON valido, nient'altro:
 {
-  "action": "schedule" | "list" | "cancel" | "status" | "help" | "chat",
+  "action": "schedule" | "ask_time" | "ask_recipient" | "list" | "cancel" | "status" | "help" | "chat",
   "recipient_name": "nome del destinatario" | null,
-  "datetime": "2026-03-12T15:00:00" | null,
-  "message_text": "testo da inviare al destinatario" | null,
+  "datetime_iso": "2026-03-12T15:00:00" | null,
+  "message_text": "testo SOLO per il destinatario" | null,
   "cancel_target": "numero o nome" | null,
-  "reply": "risposta da mostrare all'utente"
+  "reply": "messaggio in italiano da mostrare all'utente"
 }`;
 
   try {
@@ -304,7 +356,6 @@ Rispondi SOLO con JSON valido, nient'altro:
     const content = data.choices?.[0]?.message?.content?.trim();
     if (!content) return null;
 
-    // Parse JSON — handle markdown code blocks
     const jsonStr = content.replace(/^```json?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
     const parsed = JSON.parse(jsonStr);
     console.log('WEBHOOK: AI response:', JSON.stringify(parsed));
@@ -559,7 +610,9 @@ export async function POST(req) {
 
     // ── AI-powered message understanding ──
     const contactList = await getContactList(ownerPhone);
-    const aiResult = await askAI(raw, contactList);
+    const pendingCtx = await getPendingContext(ownerPhone);
+    if (pendingCtx) console.log('WEBHOOK: Pending context:', pendingCtx.status, pendingCtx.recipient_name, pendingCtx.parsed_message?.substring(0, 40));
+    const aiResult = await askAI(raw, contactList, pendingCtx);
 
     if (aiResult) {
       console.log('WEBHOOK: AI action=' + aiResult.action);
@@ -636,24 +689,81 @@ export async function POST(req) {
         return NextResponse.json({ ok: true });
       }
 
+      // ── AI: ask_time (have recipient + message, need time) ──
+      if (aiResult.action === 'ask_time') {
+        const recipientName = aiResult.recipient_name || pendingCtx?.recipient_name;
+        const messageText = aiResult.message_text || pendingCtx?.parsed_message;
+        const contact = recipientName ? await findContactByName(ownerPhone, recipientName) : null;
+
+        if (contact && messageText) {
+          // Clean up any existing awaiting_time/awaiting_recipient for this user
+          await supabase.from('scheduled_messages').delete()
+            .eq('instance_phone', ownerPhone).in('status', ['awaiting_time', 'awaiting_recipient']);
+
+          await supabase.from('scheduled_messages').insert({
+            user_instance_id: user.id, instance_phone: ownerPhone,
+            recipient_number: contact.recipient_number, recipient_name: contact.recipient_name,
+            caption: raw, parsed_message: messageText,
+            scheduled_at: new Date('2099-01-01').toISOString(), status: 'awaiting_time',
+            retry_count: 0, max_retries: 3,
+          });
+        }
+        await notifyOwner(instanceName, ownerPhone,
+          aiResult.reply || 'A che ora vuoi inviarlo? (es. oggi alle 18, domani mattina, fra 2 ore)');
+        return NextResponse.json({ ok: true });
+      }
+
+      // ── AI: ask_recipient (have message + maybe time, need recipient) ──
+      if (aiResult.action === 'ask_recipient') {
+        const messageText = aiResult.message_text || pendingCtx?.parsed_message;
+        if (messageText) {
+          await supabase.from('scheduled_messages').delete()
+            .eq('instance_phone', ownerPhone).in('status', ['awaiting_time', 'awaiting_recipient']);
+
+          await supabase.from('scheduled_messages').insert({
+            user_instance_id: user.id, instance_phone: ownerPhone,
+            recipient_number: 'unknown', recipient_name: null,
+            caption: raw, parsed_message: messageText,
+            scheduled_at: aiResult.datetime_iso ? romeToUtc(new Date(aiResult.datetime_iso)).toISOString() : new Date('2099-01-01').toISOString(),
+            status: 'awaiting_recipient',
+            retry_count: 0, max_retries: 3,
+          });
+        }
+        await notifyOwner(instanceName, ownerPhone,
+          aiResult.reply || 'A chi vuoi inviarlo? Scrivi il nome del contatto.');
+        return NextResponse.json({ ok: true });
+      }
+
       // ── AI: schedule ──
-      if (aiResult.action === 'schedule' && aiResult.recipient_name && aiResult.datetime) {
-        const contact = await findContactByName(ownerPhone, aiResult.recipient_name);
+      if (aiResult.action === 'schedule') {
+        const recipientName = aiResult.recipient_name || pendingCtx?.recipient_name;
+        const messageText = aiResult.message_text || pendingCtx?.parsed_message;
+        const datetimeStr = aiResult.datetime_iso;
+
+        if (!recipientName) {
+          await notifyOwner(instanceName, ownerPhone, aiResult.reply || 'A chi vuoi inviarlo?');
+          return NextResponse.json({ ok: true });
+        }
+
+        const contact = await findContactByName(ownerPhone, recipientName);
         if (!contact) {
           await notifyOwner(instanceName, ownerPhone,
-            aiResult.reply || `Non trovo "${aiResult.recipient_name}" in rubrica.\nInvia prima il contatto (📎 → Contatto), poi ripeti il comando.`);
+            aiResult.reply || `Non trovo "${recipientName}" in rubrica.\nInvia prima il contatto (📎 → Contatto), poi ripeti il comando.`);
+          return NextResponse.json({ ok: true });
+        }
+
+        if (!datetimeStr) {
+          await notifyOwner(instanceName, ownerPhone, aiResult.reply || 'A che ora vuoi inviarlo? (es. domani alle 15, fra 2 ore)');
           return NextResponse.json({ ok: true });
         }
 
         // Parse datetime from AI (Rome timezone)
         let scheduledAt: Date;
         try {
-          const aiDate = new Date(aiResult.datetime);
+          const aiDate = new Date(datetimeStr);
           if (isNaN(aiDate.getTime())) throw new Error('Invalid date');
-          // AI returns Rome time, convert to UTC
           scheduledAt = romeToUtc(aiDate);
         } catch {
-          // Fallback to regex parser
           const parsed = parseCommand(raw);
           if (!parsed) {
             await notifyOwner(instanceName, ownerPhone, 'Non ho capito la data/ora. Puoi riprovare? Es: "domani alle 15" o "fra 30 minuti"');
@@ -662,28 +772,32 @@ export async function POST(req) {
           scheduledAt = parsed.date;
         }
 
-        const messageText = aiResult.message_text || extractContent(raw, 0, 0);
+        const finalMessage = messageText || extractContent(raw, 0, 0);
         const recNum = contact.recipient_number;
         const recName = contact.recipient_name;
 
+        // Clean up any pending partial context
+        if (pendingCtx) {
+          await supabase.from('scheduled_messages').delete().eq('id', pendingCtx.id);
+        }
+
         // DB-level dedup check before insert
         if (msgId && await isMessageProcessed(msgId)) {
-          console.log('WEBHOOK: DUPLICATE (DB) msgId=' + msgId + ' — skipping insert');
+          console.log('WEBHOOK: DUPLICATE (DB) msgId=' + msgId);
           return NextResponse.json({ ok: true, deduplicated: true });
         }
 
         const { error: insErr } = await supabase.from('scheduled_messages').insert({
           user_instance_id: user.id, instance_phone: ownerPhone,
           recipient_number: recNum, recipient_name: recName,
-          caption: raw, parsed_message: messageText,
+          caption: raw, parsed_message: finalMessage,
           scheduled_at: scheduledAt.toISOString(), status: 'awaiting_confirm',
           retry_count: 0, max_retries: 3,
           wa_message_id: msgId || null,
         });
 
         if (insErr) {
-          // If unique constraint violation on wa_message_id, it's a duplicate
-          if (insErr.message?.includes('idx_scheduled_messages_wa_msg_id') || insErr.message?.includes('wa_message_id')) {
+          if (insErr.message?.includes('wa_message_id')) {
             console.log('WEBHOOK: DUPLICATE (DB constraint) msgId=' + msgId);
             return NextResponse.json({ ok: true, deduplicated: true });
           }
@@ -693,14 +807,14 @@ export async function POST(req) {
         }
 
         await notifyOwner(instanceName, ownerPhone,
-          '✅ Invierò a ' + recName + ' (' + recNum + ') il ' + formatRome(scheduledAt) + ':\n' +
-          '"' + messageText + '"\n\n' +
+          '✅ Invierò a ' + recName + ' il ' + formatRome(scheduledAt) + ':\n' +
+          '"' + finalMessage + '"\n\n' +
           'Digita OK per confermare o ANNULLA per cancellare.');
         return NextResponse.json({ ok: true, scheduled: scheduledAt.toISOString() });
       }
 
       // ── AI: chat (conversational reply) ──
-      if (aiResult.action === 'chat' && aiResult.reply) {
+      if (aiResult.reply) {
         await notifyOwner(instanceName, ownerPhone, aiResult.reply);
         return NextResponse.json({ ok: true });
       }
@@ -812,7 +926,7 @@ export async function POST(req) {
     }
 
     await notifyOwner(instanceName, ownerPhone,
-      '✅ Invierò a ' + recName + ' (' + recNum + ') il ' + formatRome(scheduledAt) + ':\n' +
+      '✅ Invierò a ' + recName + ' il ' + formatRome(scheduledAt) + ':\n' +
       '"' + content_text + '"\n\n' +
       'Digita OK per confermare o ANNULLA per cancellare.');
     return NextResponse.json({ ok:true, scheduled: scheduledAt.toISOString() });
