@@ -237,12 +237,12 @@ function isDuplicateInMemory(msgId: string): boolean {
   return false;
 }
 
-// ── Get pending partial context (awaiting_time or awaiting_recipient) ──
+// ── Get pending partial context (awaiting_time, awaiting_recipient, or awaiting_confirm) ──
 async function getPendingContext(ownerPhone: string): Promise<any> {
   const { data } = await supabase.from('scheduled_messages')
-    .select('id, recipient_name, recipient_number, parsed_message, status, caption')
+    .select('id, recipient_name, recipient_number, parsed_message, scheduled_at, status, caption')
     .eq('instance_phone', ownerPhone)
-    .in('status', ['awaiting_time', 'awaiting_recipient'])
+    .in('status', ['awaiting_time', 'awaiting_recipient', 'awaiting_confirm'])
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -274,6 +274,18 @@ Manca solo l'orario. Se il messaggio dell'utente contiene un orario/data, usa ac
       contextBlock = `\n\nCONTESTO PENDENTE: L'utente sta completando un messaggio già iniziato.
 Testo da inviare: "${pendingContext.parsed_message}"
 Manca il destinatario. Se il messaggio contiene un nome, usa action='schedule'.`;
+    } else if (pendingContext.status === 'awaiting_confirm') {
+      const schedTime = pendingContext.scheduled_at ? formatRome(new Date(pendingContext.scheduled_at)) : 'non specificato';
+      contextBlock = `\n\nCONTESTO PENDENTE — MESSAGGIO IN ATTESA DI CONFERMA:
+Destinatario: ${pendingContext.recipient_name} (${pendingContext.recipient_number})
+Testo attuale: "${pendingContext.parsed_message}"
+Orario programmato: ${schedTime}
+
+L'utente ha già ricevuto la proposta di questo messaggio e sta rispondendo.
+- Se dice OK/sì/conferma/va bene → action='confirm'
+- Se dice no/annulla/cancella → action='cancel_confirm'
+- Se chiede una MODIFICA (cambia testo, cambia orario, riscrivi, ecc.) → action='modify', con i campi aggiornati
+  Mantieni i campi non menzionati invariati. Aggiorna solo quelli che l'utente vuole cambiare.`;
     }
   }
 
@@ -297,8 +309,20 @@ REGOLE IMPORTANTI:
 3. Se il destinatario non è chiaro o non è nella lista contatti, usa action='ask_recipient' e chiedi.
    Se il nome sembra un contatto non ancora salvato, chiedi di inviare prima il contatto con 📎.
 
-4. Il testo del messaggio da inviare (message_text) è SOLO la parte che deve ricevere il destinatario — NON includere istruzioni, contesto dell'utente, o metadati.
-   Esempio: "scrivi alla suocera di ricordare ad Andrea il vino" → message_text: "Ricorda ad Andrea di portare il vino"
+4. RISCRITTURA MESSAGGIO (FONDAMENTALE):
+   Il campo message_text deve essere il messaggio RISCRITTO in modo naturale e pulito che riceverà il destinatario.
+   NON copiare MAI il testo grezzo dell'utente. Riscrivilo come se tu fossi l'utente che manda un messaggio WhatsApp a quella persona.
+   - Usa un tono amichevole e naturale
+   - Puoi aggiungere emoji appropriati
+   - Rimuovi tutte le istruzioni/contesto che l'utente ha dato a TE (il bot)
+
+   Esempi:
+   - Input: "dici a suocera di ricordare ad Andrea che alle 10 deve andare a fare il vaccino"
+     → message_text: "Ciao! Ricorda ad Andrea che alle 10 deve andare a fare il vaccino 💉"
+   - Input: "scrivi alla suocera di ricordare ad Andrea il vino"
+     → message_text: "Ciao! Ricorda ad Andrea di portare il vino 🍷"
+   - Input: "manda a Marco che arrivo tardi scusa"
+     → message_text: "Ciao Marco, arrivo un po' in ritardo, scusa! 🙏"
 
 5. Sii conversazionale e naturale in italiano. Se l'utente scrive in modo confuso, aiutalo a chiarire.
 
@@ -308,25 +332,42 @@ REGOLE IMPORTANTI:
 9. Se vuole aiuto: action='help'
 10. Se è conversazione generica: action='chat'
 
+11. MODIFICA MESSAGGIO IN ATTESA:
+    Se c'è un contesto pendente awaiting_confirm e l'utente chiede modifiche:
+    - action='modify' con i campi aggiornati (solo quelli da cambiare)
+    - Riscrivi message_text se l'utente lo chiede ("scrivi più gentilmente", "cambia il testo", ecc.)
+    - Cambia datetime_iso se chiede di cambiare orario ("mettilo alle 9", "spostalo a domani")
+    - action='confirm' se dice OK/sì/va bene/perfetto
+    - action='cancel_confirm' se dice no/annulla/lascia stare
+
 ESEMPI:
 - "scrivi alla suocera di ricordare ad Andrea di portare il vino domani sera"
-  → action: schedule, recipient_name: "Suocera", datetime_iso: "domani 20:00", message_text: "Ricorda ad Andrea di portare il vino"
+  → action: schedule, recipient_name: "Suocera", datetime_iso: "domani 20:00", message_text: "Ciao! Ricorda ad Andrea di portare il vino 🍷"
+
+- "Dici a suocera di ricordare ad Andrea che alle 10 deve andare a fare il vaccino. Alla suocera invia il messaggio alle ore 8"
+  → action: schedule, recipient_name: "Suocera", datetime_iso: "oggi 08:00", message_text: "Ciao! Ricorda ad Andrea che alle 10 deve andare a fare il vaccino 💉"
 
 - "di a Marco che arrivo in ritardo"
-  → action: ask_time (manca orario), recipient_name: "Marco", message_text: "Arrivo in ritardo"
+  → action: ask_time, recipient_name: "Marco", message_text: "Ciao Marco, arrivo un po' in ritardo! 🙏"
 
 - "manda un promemoria fra 2 ore che abbiamo la cena"
-  → action: ask_recipient (manca destinatario), message_text: "Abbiamo la cena stasera!"
+  → action: ask_recipient, message_text: "Ricordati che stasera abbiamo la cena! 🍽️"
 
-- "alle 19"  (con contesto pendente di messaggio a Marco)
-  → action: schedule, datetime_iso con le 19:00 di oggi
+- "alle 19" (con contesto pendente)
+  → action: schedule, con datetime_iso alle 19:00 di oggi
+
+- "no cambia il testo, scrivi più gentilmente" (con awaiting_confirm pendente)
+  → action: modify, message_text: versione più gentile del messaggio
+
+- "mettilo alle 9 invece" (con awaiting_confirm pendente)
+  → action: modify, datetime_iso: oggi alle 09:00
 
 Rispondi SOLO con JSON valido, nient'altro:
 {
-  "action": "schedule" | "ask_time" | "ask_recipient" | "list" | "cancel" | "status" | "help" | "chat",
+  "action": "schedule" | "ask_time" | "ask_recipient" | "confirm" | "cancel_confirm" | "modify" | "list" | "cancel" | "status" | "help" | "chat",
   "recipient_name": "nome del destinatario" | null,
   "datetime_iso": "2026-03-12T15:00:00" | null,
-  "message_text": "testo SOLO per il destinatario" | null,
+  "message_text": "testo RISCRITTO naturale per il destinatario" | null,
   "cancel_target": "numero o nome" | null,
   "reply": "messaggio in italiano da mostrare all'utente"
 }`;
@@ -569,43 +610,41 @@ export async function POST(req) {
 
     const rawLower = raw.trim().toLowerCase();
 
-    // ── COMMAND: OK (confirm pending message) ──
-    if (/^(ok|sì|si|conferma|confermo|yes)$/i.test(rawLower)) {
-      console.log('WEBHOOK: OK received from', ownerPhone);
-      const { data: awaiting, error: awErr } = await supabase.from('scheduled_messages')
+    // ── FAST-PATH: OK confirms pending message without calling AI ──
+    if (/^(ok|sì|si|conferma|confermo|yes|va bene|perfetto)$/i.test(rawLower)) {
+      const { data: awaiting } = await supabase.from('scheduled_messages')
         .select('id, recipient_name, recipient_number, parsed_message, scheduled_at')
         .eq('instance_phone', ownerPhone).eq('status', 'awaiting_confirm')
         .order('created_at', { ascending: false }).limit(1).maybeSingle();
-      if (awErr) console.error('WEBHOOK: awaiting_confirm query error:', awErr.message);
-      if (!awaiting) {
-        console.log('WEBHOOK: OK received but no awaiting_confirm for phone=' + ownerPhone);
+      if (awaiting) {
+        console.log('WEBHOOK: Fast-path OK, confirming id=' + awaiting.id);
+        const { error: updErr } = await supabase.from('scheduled_messages').update({ status: 'pending' }).eq('id', awaiting.id);
+        if (updErr) {
+          console.error('WEBHOOK: CONFIRM UPDATE FAILED:', updErr.message);
+          await notifyOwner(instanceName, ownerPhone, 'Errore conferma: ' + updErr.message);
+          return NextResponse.json({ error: updErr.message }, { status: 500 });
+        }
+        await notifyOwner(instanceName, ownerPhone,
+          '✅ Confermato! Messaggio a ' + (awaiting.recipient_name || awaiting.recipient_number) +
+          ' programmato per ' + formatRome(new Date(awaiting.scheduled_at)) + '.\n' +
+          'Scrivi "lista" per vedere i messaggi in coda.');
         return NextResponse.json({ ok: true });
       }
-      console.log('WEBHOOK: Confirming message id=' + awaiting.id);
-      const { error: updErr } = await supabase.from('scheduled_messages').update({ status: 'pending' }).eq('id', awaiting.id);
-      if (updErr) {
-        console.error('WEBHOOK: CONFIRM UPDATE FAILED:', updErr.message);
-        await notifyOwner(instanceName, ownerPhone, 'Errore conferma: ' + updErr.message);
-        return NextResponse.json({ error: updErr.message }, { status: 500 });
-      }
-      await notifyOwner(instanceName, ownerPhone,
-        '✅ Confermato! Messaggio a ' + (awaiting.recipient_name || awaiting.recipient_number) +
-        ' programmato per ' + formatRome(new Date(awaiting.scheduled_at)) + '.\n' +
-        'Scrivi "lista" per vedere i messaggi in coda.');
-      return NextResponse.json({ ok: true });
+      // No awaiting_confirm — fall through to AI
     }
 
-    // ── COMMAND: ANNULLA confirmation ──
-    if (/^(no|annulla)$/i.test(rawLower)) {
+    // ── FAST-PATH: ANNULLA cancels pending message ──
+    if (/^(no|annulla|cancella)$/i.test(rawLower)) {
       const { data: awaiting } = await supabase.from('scheduled_messages')
         .select('id, recipient_name')
         .eq('instance_phone', ownerPhone).eq('status', 'awaiting_confirm')
         .order('created_at', { ascending: false }).limit(1).maybeSingle();
       if (awaiting) {
         await supabase.from('scheduled_messages').delete().eq('id', awaiting.id);
-        await notifyOwner(instanceName, ownerPhone, '❌ Messaggio annullato. Nessun messaggio verrà inviato.');
+        await notifyOwner(instanceName, ownerPhone, '❌ Messaggio annullato.');
         return NextResponse.json({ ok: true });
       }
+      // No awaiting_confirm — fall through to AI
     }
 
     // ── AI-powered message understanding ──
@@ -686,6 +725,64 @@ export async function POST(req) {
           '- LISTA — vedi messaggi programmati\n' +
           '- ANNULLA [numero] — cancella un messaggio\n' +
           '- STATO — controlla connessione');
+        return NextResponse.json({ ok: true });
+      }
+
+      // ── AI: confirm (user said OK via AI) ──
+      if (aiResult.action === 'confirm' && pendingCtx?.status === 'awaiting_confirm') {
+        console.log('WEBHOOK: AI confirm, id=' + pendingCtx.id);
+        const { error: updErr } = await supabase.from('scheduled_messages').update({ status: 'pending' }).eq('id', pendingCtx.id);
+        if (updErr) {
+          await notifyOwner(instanceName, ownerPhone, 'Errore conferma: ' + updErr.message);
+          return NextResponse.json({ error: updErr.message }, { status: 500 });
+        }
+        await notifyOwner(instanceName, ownerPhone,
+          '✅ Confermato! Messaggio a ' + (pendingCtx.recipient_name || pendingCtx.recipient_number) +
+          ' programmato per ' + formatRome(new Date(pendingCtx.scheduled_at)) + '.\n' +
+          'Scrivi "lista" per vedere i messaggi in coda.');
+        return NextResponse.json({ ok: true });
+      }
+
+      // ── AI: cancel_confirm (user cancelled via AI) ──
+      if (aiResult.action === 'cancel_confirm' && pendingCtx?.status === 'awaiting_confirm') {
+        await supabase.from('scheduled_messages').delete().eq('id', pendingCtx.id);
+        await notifyOwner(instanceName, ownerPhone, '❌ Messaggio annullato.');
+        return NextResponse.json({ ok: true });
+      }
+
+      // ── AI: modify (user wants to change pending message) ──
+      if (aiResult.action === 'modify' && pendingCtx?.status === 'awaiting_confirm') {
+        const updates: any = {};
+        if (aiResult.message_text) updates.parsed_message = aiResult.message_text;
+        if (aiResult.datetime_iso) {
+          try {
+            const newDate = new Date(aiResult.datetime_iso);
+            if (!isNaN(newDate.getTime())) updates.scheduled_at = romeToUtc(newDate).toISOString();
+          } catch {}
+        }
+        if (aiResult.recipient_name) {
+          const newContact = await findContactByName(ownerPhone, aiResult.recipient_name);
+          if (newContact) {
+            updates.recipient_name = newContact.recipient_name;
+            updates.recipient_number = newContact.recipient_number;
+          }
+        }
+
+        if (Object.keys(updates).length > 0) {
+          await supabase.from('scheduled_messages').update(updates).eq('id', pendingCtx.id);
+        }
+
+        // Fetch updated record to show confirmation
+        const { data: updated } = await supabase.from('scheduled_messages')
+          .select('recipient_name, recipient_number, parsed_message, scheduled_at')
+          .eq('id', pendingCtx.id).maybeSingle();
+
+        if (updated) {
+          await notifyOwner(instanceName, ownerPhone,
+            '✏️ Aggiornato! Invierò a ' + updated.recipient_name + ' il ' + formatRome(new Date(updated.scheduled_at)) + ':\n' +
+            '"' + updated.parsed_message + '"\n\n' +
+            'Va bene? Scrivi OK per confermare o dimmi come modificarlo.');
+        }
         return NextResponse.json({ ok: true });
       }
 
@@ -809,7 +906,7 @@ export async function POST(req) {
         await notifyOwner(instanceName, ownerPhone,
           '✅ Invierò a ' + recName + ' il ' + formatRome(scheduledAt) + ':\n' +
           '"' + finalMessage + '"\n\n' +
-          'Digita OK per confermare o ANNULLA per cancellare.');
+          'Va bene? Scrivi OK per confermare, ANNULLA per cancellare, o dimmi come modificarlo.');
         return NextResponse.json({ ok: true, scheduled: scheduledAt.toISOString() });
       }
 
@@ -928,7 +1025,7 @@ export async function POST(req) {
     await notifyOwner(instanceName, ownerPhone,
       '✅ Invierò a ' + recName + ' il ' + formatRome(scheduledAt) + ':\n' +
       '"' + content_text + '"\n\n' +
-      'Digita OK per confermare o ANNULLA per cancellare.');
+      'Va bene? Scrivi OK per confermare, ANNULLA per cancellare, o dimmi come modificarlo.');
     return NextResponse.json({ ok:true, scheduled: scheduledAt.toISOString() });
 
   } catch(e) {
