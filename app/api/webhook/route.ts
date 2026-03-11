@@ -239,11 +239,12 @@ export async function POST(req) {
             .select('phone_number').eq('instance_name', evoInstance).maybeSingle();
           if (inst?.phone_number) {
               await notifyOwner(evoInstance, inst.phone_number,
-                'Benvenuto su WhatsLater! 🎉\n' +
-                'Per programmare un messaggio:\n' +
-                '1️⃣ Allégami il contatto del destinatario (solo la prima volta)\n' +
-                '2️⃣ Poi scrivi: Invia a Marco domani alle 15: Ciao!\n' +
-                '📊 Torna su whatslaterpush.vercel.app per vedere i tuoi messaggi programmati.'
+                'Ciao! 👋 Benvenuto su WhatsLater!\n' +
+                'Per programmare un messaggio segui questi 2 step:\n\n' +
+                '1️⃣ Inviami il contatto del destinatario (premi 📎 → Contatto)\n' +
+                '2️⃣ Poi scrivi: "Invia a [Nome] domani alle 15: Testo del messaggio"\n\n' +
+                'Esempio: "Invia a Marco domani alle 15: Ricordati la riunione!"\n\n' +
+                'Hai bisogno di aiuto? Scrivi AIUTO e ti spiego tutto 🙂'
               );
           }
         } catch(e) { console.error('WEBHOOK: onboarding error:', e.message); }
@@ -358,6 +359,38 @@ export async function POST(req) {
     console.log('WEBHOOK: Text received:', raw);
     const rawLower = raw.trim().toLowerCase();
 
+    // ── COMMAND: OK (confirm pending message) ──
+    if (/^(ok|sì|si|conferma|confermo|yes)$/i.test(rawLower)) {
+      const { data: awaiting } = await supabase.from('scheduled_messages')
+        .select('id, recipient_name, recipient_number, parsed_message, scheduled_at')
+        .eq('instance_phone', ownerPhone).eq('status', 'awaiting_confirm')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (!awaiting) {
+        console.log('WEBHOOK: OK received but no awaiting_confirm message');
+        return NextResponse.json({ ok: true });
+      }
+      await supabase.from('scheduled_messages').update({ status: 'pending' }).eq('id', awaiting.id);
+      await notifyOwner(instanceName, ownerPhone,
+        '✅ Confermato! Messaggio a ' + (awaiting.recipient_name || awaiting.recipient_number) +
+        ' programmato per ' + formatRome(new Date(awaiting.scheduled_at)) + '.\n' +
+        'Scrivi "lista" per vedere i messaggi in coda.');
+      return NextResponse.json({ ok: true });
+    }
+
+    // ── COMMAND: ANNULLA confirmation ──
+    if (/^(no|annulla)$/i.test(rawLower)) {
+      const { data: awaiting } = await supabase.from('scheduled_messages')
+        .select('id, recipient_name')
+        .eq('instance_phone', ownerPhone).eq('status', 'awaiting_confirm')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (awaiting) {
+        await supabase.from('scheduled_messages').delete().eq('id', awaiting.id);
+        await notifyOwner(instanceName, ownerPhone, '❌ Messaggio annullato. Nessun messaggio verrà inviato.');
+        return NextResponse.json({ ok: true });
+      }
+      // If no awaiting_confirm, fall through to existing cancel logic below
+    }
+
     // ââ COMMAND: lista ââ
     if (/^(lista|list|pending|programmati)$/i.test(rawLower)) {
       const { data: pending } = await supabase.from('scheduled_messages').select('id, recipient_name, recipient_number, parsed_message, scheduled_at').eq('user_instance_id', user.id).eq('status', 'pending').order('scheduled_at', { ascending: true }).limit(10);
@@ -405,7 +438,15 @@ export async function POST(req) {
 
     // ââ COMMAND: help ââ
     if (/^(help|aiuto|comandi|\?)$/i.test(rawLower)) {
-      await notifyOwner(instanceName, ownerPhone, 'Comandi SchedWhats:\n\nInvia vCard + "ciao fra 5 minuti" -> Schedula\n"lista" -> Messaggi in coda\n"annulla" -> Cancella l ultimo\n"cancella 2" -> Cancella il #2\n"cancella Marco" -> Cancella per nome\n"aiuto" -> Questo messaggio');
+      await notifyOwner(instanceName, ownerPhone,
+        'Comandi WhatsLater:\n\n' +
+        '📎 Invia vCard + testo con data/ora \u2192 Programma messaggio\n' +
+        '✍️ "Invia a Marco domani alle 9: Ciao" \u2192 Programma inline\n' +
+        '📋 "lista" \u2192 Messaggi in coda\n' +
+        '❌ "annulla" \u2192 Cancella l\'ultimo\n' +
+        '❌ "cancella 2" \u2192 Cancella il #2\n' +
+        '❌ "cancella Marco" \u2192 Cancella per nome\n' +
+        '❓ "aiuto" \u2192 Questo messaggio');
       return NextResponse.json({ ok: true });
     }
 
@@ -432,10 +473,19 @@ export async function POST(req) {
         return NextResponse.json({ ok: false, error: 'contact_not_found' });
       }
     } else {
-      const { data: pc } = await supabase.from('pending_contacts').select('*').eq('owner_phone', ownerPhone).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      // Retry logic: vCard webhook may still be processing (race condition)
+      let pc = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { data } = await supabase.from('pending_contacts').select('*').eq('owner_phone', ownerPhone).order('created_at', { ascending: false }).limit(1).maybeSingle();
+        if (data) { pc = data; break; }
+        if (attempt < 2) {
+          console.log('WEBHOOK: pending_contact not found, retry ' + (attempt + 1) + '/3 in 1.5s...');
+          await new Promise(r => setTimeout(r, 1500));
+        }
+      }
       console.log('WEBHOOK: pending_contact:', pc ? pc.recipient_name + ' ' + pc.recipient_number : 'none');
       if (!pc) {
-        console.error('WEBHOOK: No pending_contact found for owner');
+        console.error('WEBHOOK: No pending_contact found after 3 retries');
         await notifyOwner(instanceName, ownerPhone, 'Nessun destinatario trovato.\nInvia prima una vCard oppure scrivi:\n"Invia a [Nome] domani alle 15: testo"');
         return NextResponse.json({ ok: false, error: 'no_recipient' });
       }
@@ -444,10 +494,10 @@ export async function POST(req) {
       usedPcId = pc.id;
     }
 
-    const content = inlineName
+    const content_text = inlineName
       ? (extractInlineMessage(raw) || extractContent(raw, parsed.cmdStart, parsed.cmdEnd))
       : extractContent(raw, parsed.cmdStart, parsed.cmdEnd);
-    console.log('WEBHOOK: Scheduling at:', scheduledAt.toISOString(), 'content:', content, 'to:', recName, recNum);
+    console.log('WEBHOOK: Scheduling at:', scheduledAt.toISOString(), 'content:', content_text, 'to:', recName, recNum);
 
     const trialEnd = user.trial_ends_at ? new Date(user.trial_ends_at) : null;
     const daysLeft = trialEnd ? Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / 86400000)) : 0;
@@ -455,8 +505,8 @@ export async function POST(req) {
     const { error: insErr } = await supabase.from('scheduled_messages').insert({
       user_instance_id: user.id, instance_phone: ownerPhone,
       recipient_number: recNum, recipient_name: recName,
-      caption: raw, parsed_message: content,
-      scheduled_at: scheduledAt.toISOString(), status: 'pending', retry_count: 0, max_retries: 3
+      caption: raw, parsed_message: content_text,
+      scheduled_at: scheduledAt.toISOString(), status: 'awaiting_confirm', retry_count: 0, max_retries: 3
     });
 
     if (insErr) {
@@ -465,12 +515,13 @@ export async function POST(req) {
       return NextResponse.json({ error: insErr.message }, { status: 500 });
     }
 
-    if (usedPcId) {
-      await supabase.from('pending_contacts').delete().eq('id', usedPcId);
-      console.log('WEBHOOK: Deleted used pending_contact id:', usedPcId);
-    }
+    // Contacts are now permanent — no longer deleted after use
 
-    await notifyOwner(instanceName, ownerPhone, 'Programmato per ' + formatRome(scheduledAt) + ' a ' + recName + ' (' + recNum + ').\n"' + content + '"\nTrial: ' + daysLeft + 'g rimasti');
+
+    await notifyOwner(instanceName, ownerPhone,
+      '✅ Invierò a ' + recName + ' (' + recNum + ') il ' + formatRome(scheduledAt) + ':\n' +
+      '"' + content_text + '"\n\n' +
+      'Digita OK per confermare o ANNULLA per cancellare.');
     return NextResponse.json({ ok:true, scheduled: scheduledAt.toISOString() });
 
   } catch(e) {
