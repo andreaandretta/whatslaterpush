@@ -320,20 +320,35 @@ REGOLE IMPORTANTI:
 3. Se il destinatario non è chiaro o non è nella lista contatti, usa action='ask_recipient' e chiedi.
    Se il nome sembra un contatto non ancora salvato, chiedi di inviare prima il contatto con 📎.
 
-4. RISCRITTURA MESSAGGIO (FONDAMENTALE):
-   Il campo message_text deve essere il messaggio RISCRITTO in modo naturale e pulito che riceverà il destinatario.
-   NON copiare MAI il testo grezzo dell'utente. Riscrivilo come se tu fossi l'utente che manda un messaggio WhatsApp a quella persona.
-   - Usa un tono amichevole e naturale
-   - Puoi aggiungere emoji appropriati
-   - Rimuovi tutte le istruzioni/contesto che l'utente ha dato a TE (il bot)
+4. REGOLA FONDAMENTALE — RISCRITTURA MESSAGGIO:
+   Il campo message_text è il messaggio che riceverà il destinatario.
+   Devi riscriverlo come se TU fossi l'utente che scrive direttamente al destinatario.
 
-   Esempi:
+   ESEMPIO CRITICO:
+   - Input: "di a suocera di ricordare ad Andrea che alle 10 ha il vaccino, mandaglielo alle 9"
+     SBAGLIATO: message_text = "di a suocera di ricordare ad Andrea che alle 10 ha il vaccino"
+     GIUSTO: message_text = "Ciao! Ricorda ad Andrea che oggi alle 10 ha il vaccino 💉"
+
+   - Input: "scrivi alla mia ragazza che stasera ho la partita e faccio tardi"
+     SBAGLIATO: message_text = "scrivi alla mia ragazza che stasera ho la partita e faccio tardi"
+     GIUSTO: message_text = "Amore, stasera ho la partita e faccio tardi! 🙏"
+
+   - Input: "manda a Marco che si ricordi la riunione delle 15"
+     SBAGLIATO: message_text = "manda a Marco che si ricordi la riunione delle 15"
+     GIUSTO: message_text = "Ciao Marco! Ricordati della riunione alle 15 👋"
+
    - Input: "dici a suocera di ricordare ad Andrea che alle 10 deve andare a fare il vaccino"
-     → message_text: "Ciao! Ricorda ad Andrea che alle 10 deve andare a fare il vaccino 💉"
+     SBAGLIATO: message_text = "dici a suocera di ricordare ad Andrea che alle 10 deve andare a fare il vaccino"
+     GIUSTO: message_text = "Ciao! Ricorda ad Andrea che alle 10 deve andare a fare il vaccino 💉"
+
    - Input: "scrivi alla suocera di ricordare ad Andrea il vino"
-     → message_text: "Ciao! Ricorda ad Andrea di portare il vino 🍷"
+     GIUSTO: message_text = "Ciao! Ricorda ad Andrea di portare il vino 🍷"
+
    - Input: "manda a Marco che arrivo tardi scusa"
-     → message_text: "Ciao Marco, arrivo un po' in ritardo, scusa! 🙏"
+     GIUSTO: message_text = "Ciao Marco, arrivo un po' in ritardo, scusa! 🙏"
+
+   REGOLA: Togli SEMPRE le istruzioni di invio (di a, scrivi a, manda a, dici a, alle ore X, mandaglielo alle) dal testo finale.
+   Il messaggio deve sembrare scritto direttamente dall'utente al destinatario, senza nessun riferimento al bot.
 
 5. Sii conversazionale e naturale in italiano. Se l'utente scrive in modo confuso, aiutalo a chiarire.
 
@@ -416,6 +431,60 @@ Rispondi SOLO con JSON valido, nient'altro:
     console.error('WEBHOOK: AI parse error:', e.message);
     return null;
   }
+}
+
+// ── Verify and fix message rewriting via second OpenAI call ──
+async function verifyAndFixMessage(messageText: string, recipientName: string): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return messageText;
+
+  try {
+    // First: check if the message looks like a direct message
+    const checkRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'Rispondi SOLO con SI o NO.' },
+          { role: 'user', content: 'Questo messaggio sembra scritto direttamente da una persona a un\'altra, senza istruzioni di invio come "di a", "scrivi a", "manda a"? \'' + messageText + '\'. Rispondi solo SI o NO.' }
+        ],
+        temperature: 0, max_tokens: 5,
+      }),
+    });
+
+    if (!checkRes.ok) return messageText;
+    const checkData = await checkRes.json();
+    const answer = (checkData.choices?.[0]?.message?.content || '').trim().toUpperCase();
+    console.log('WEBHOOK: Message verify check=' + answer + ' text="' + messageText + '"');
+
+    if (answer === 'SI') return messageText; // Message is fine
+
+    // Second: rewrite the message properly
+    const fixRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'Riscrivi questo messaggio come se lo stessi inviando direttamente a ' + recipientName + ' su WhatsApp. Rimuovi tutte le istruzioni di invio (di a, scrivi a, manda a, mandaglielo). Usa un tono amichevole e naturale, aggiungi emoji. Rispondi SOLO con il messaggio riscritto, nient\'altro.' },
+          { role: 'user', content: messageText }
+        ],
+        temperature: 0.3, max_tokens: 200,
+      }),
+    });
+
+    if (!fixRes.ok) return messageText;
+    const fixData = await fixRes.json();
+    const fixed = (fixData.choices?.[0]?.message?.content || '').trim();
+    if (fixed && fixed.length > 3) {
+      console.log('WEBHOOK: Message rewritten from "' + messageText + '" to "' + fixed + '"');
+      return fixed;
+    }
+  } catch (e: any) {
+    console.error('WEBHOOK: verifyAndFixMessage error:', e.message);
+  }
+  return messageText;
 }
 
 async function getContactList(ownerPhone: string): Promise<string> {
@@ -764,7 +833,9 @@ export async function POST(req) {
       // ── AI: modify (user wants to change pending message) ──
       if (aiResult.action === 'modify' && pendingCtx?.status === 'awaiting_confirm') {
         const updates: any = {};
-        if (aiResult.message_text) updates.parsed_message = aiResult.message_text;
+        if (aiResult.message_text) {
+          updates.parsed_message = await verifyAndFixMessage(aiResult.message_text, pendingCtx.recipient_name || 'il destinatario');
+        }
         if (aiResult.datetime_iso) {
           try {
             const newDate = new Date(aiResult.datetime_iso);
@@ -804,6 +875,9 @@ export async function POST(req) {
         const contact = recipientName ? await findContactByName(ownerPhone, recipientName) : null;
 
         if (contact && messageText) {
+          // Verify and fix message rewriting
+          const verifiedMessage = await verifyAndFixMessage(messageText, contact.recipient_name);
+
           // Clean up any existing awaiting_time/awaiting_recipient for this user
           await supabase.from('scheduled_messages').delete()
             .eq('instance_phone', ownerPhone).in('status', ['awaiting_time', 'awaiting_recipient']);
@@ -811,7 +885,7 @@ export async function POST(req) {
           await supabase.from('scheduled_messages').insert({
             user_instance_id: user.id, instance_phone: ownerPhone,
             recipient_number: contact.recipient_number, recipient_name: contact.recipient_name,
-            caption: raw, parsed_message: messageText,
+            caption: raw, parsed_message: verifiedMessage,
             scheduled_at: new Date('2099-01-01').toISOString(), status: 'awaiting_time',
             retry_count: 0, max_retries: 3,
           });
@@ -880,7 +954,8 @@ export async function POST(req) {
           scheduledAt = parsed.date;
         }
 
-        const finalMessage = messageText || extractContent(raw, 0, 0);
+        const rawMessage = messageText || extractContent(raw, 0, 0);
+        const finalMessage = await verifyAndFixMessage(rawMessage, contact.recipient_name);
         const recNum = contact.recipient_number;
         const recName = contact.recipient_name;
 
