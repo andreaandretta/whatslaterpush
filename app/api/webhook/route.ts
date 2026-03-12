@@ -238,11 +238,22 @@ function isDuplicateInMemory(msgId: string): boolean {
 }
 
 // ── Get pending partial context (awaiting_time, awaiting_recipient, or awaiting_confirm) ──
+// Auto-expires records older than 1 hour to prevent stale context from blocking new messages
 async function getPendingContext(ownerPhone: string): Promise<any> {
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+  // First, cancel any stale awaiting_* records older than 1 hour
+  await supabase.from('scheduled_messages')
+    .update({ status: 'cancelled' })
+    .eq('instance_phone', ownerPhone)
+    .in('status', ['awaiting_time', 'awaiting_recipient', 'awaiting_confirm'])
+    .lt('created_at', oneHourAgo);
+
   const { data } = await supabase.from('scheduled_messages')
     .select('id, recipient_name, recipient_number, parsed_message, scheduled_at, status, caption')
     .eq('instance_phone', ownerPhone)
     .in('status', ['awaiting_time', 'awaiting_recipient', 'awaiting_confirm'])
+    .gte('created_at', oneHourAgo)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();

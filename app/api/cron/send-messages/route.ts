@@ -69,6 +69,17 @@ export async function GET(req: NextRequest) {
     const secret = searchParams.get('secret');
     if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+    // Clean up stale awaiting_* records older than 1 hour
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { data: staleCleanup } = await supabase.from('scheduled_messages')
+      .update({ status: 'cancelled' })
+      .in('status', ['awaiting_time', 'awaiting_recipient', 'awaiting_confirm'])
+      .lt('created_at', oneHourAgo)
+      .select('id');
+    if (staleCleanup?.length) {
+      console.log('CRON: Cleaned up ' + staleCleanup.length + ' stale awaiting records');
+    }
+
     // P0 FIX: Single JOIN query - each row carries its own instance_name
     // No per-user loop, no global state, no instance confusion possible
     const { data: pendingMessages, error: queryErr } = await supabase
