@@ -8,6 +8,14 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// ── DB Logger (temporary — writes to webhook_logs table for debugging) ──
+async function dbLog(tag: string, data: any) {
+  try {
+    const text = typeof data === 'string' ? data : JSON.stringify(data);
+    await supabase.from('webhook_logs').insert({ tag, data: text.substring(0, 2000) });
+  } catch {}
+}
+
 // ── Rome timezone helpers ──
 function getRomeOffsetMs() {
   const now = new Date();
@@ -170,6 +178,7 @@ async function findContactByName(ownerPhone, name) {
   }
 
   console.log('WEBHOOK: Contact NOT found: "' + cleanName + '"');
+  await dbLog('CONTACT_NOT_FOUND', { searched: cleanName, allContacts: allContacts?.map(c => c.recipient_name) });
   return null;
 }
 
@@ -351,6 +360,7 @@ JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|l
 
   try {
     console.log('WEBHOOK: AI call user="' + userMessage + '" pending=' + (pendingContext?.status || 'none'));
+    await dbLog('AI_REQUEST', { user: userMessage, pending: pendingContext?.status || 'none', promptLen: systemPrompt.length });
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
@@ -378,6 +388,7 @@ JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|l
     const jsonStr = content.replace(/^```json?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
     const parsed = JSON.parse(jsonStr);
     console.log('WEBHOOK: AI response:', JSON.stringify(parsed));
+    await dbLog('AI_RESPONSE', parsed);
     return parsed;
   } catch (e: any) {
     console.error('WEBHOOK: AI parse error:', e.message);
@@ -623,6 +634,7 @@ export async function POST(req) {
     const raw = msgContent?.conversation || msgContent?.extendedTextMessage?.text || msgContent?.imageMessage?.caption || '';
     if (!raw) { console.log('WEBHOOK: Empty text, skipping'); return NextResponse.json({ ok:true }); }
     console.log('WEBHOOK: Text received:', raw);
+    await dbLog('MSG_RECEIVED', { text: raw, sender: ownerPhone });
 
     // Ignore bot's own instruction text (safety guard)
     if (raw.includes('Per programmare un messaggio') || raw.includes('Benvenuto su WhatsLater') || raw.includes('[Nome]')) {
@@ -924,7 +936,9 @@ export async function POST(req) {
         }
 
         const rawMessage = messageText || extractContent(raw, 0, 0);
+        await dbLog('BEFORE_REWRITE', { rawMessage, recipientName: contact.recipient_name });
         const finalMessage = await verifyAndFixMessage(rawMessage, contact.recipient_name);
+        await dbLog('AFTER_REWRITE', { finalMessage });
         const recNum = contact.recipient_number;
         const recName = contact.recipient_name;
 
