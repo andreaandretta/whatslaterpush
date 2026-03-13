@@ -292,11 +292,26 @@ Destinatario: ${pendingContext.recipient_name} (${pendingContext.recipient_numbe
 Testo attuale: "${pendingContext.parsed_message}"
 Orario programmato: ${schedTime}
 
-L'utente ha già ricevuto la proposta di questo messaggio e sta rispondendo.
-- Se dice OK/sì/conferma/va bene → action='confirm'
-- Se dice no/annulla/cancella → action='cancel_confirm'
-- Se chiede una MODIFICA (cambia testo, cambia orario, riscrivi, ecc.) → action='modify', con i campi aggiornati
-  Mantieni i campi non menzionati invariati. Aggiorna solo quelli che l'utente vuole cambiare.`;
+L'utente ha già ricevuto la proposta e sta rispondendo. INTERPRETA COSÌ:
+- OK/sì/conferma/va bene/perfetto → action='confirm'
+- no/annulla/cancella/lascia stare → action='cancel_confirm'
+- QUALSIASI ALTRA COSA → action='modify'
+
+IMPORTANTE: Se l'utente scrive QUALSIASI testo che non è chiaramente una conferma o un annullamento,
+è SEMPRE una richiesta di modifica (action='modify'). Esempi:
+- "cambia il testo" → modify
+- "scrivi più gentilmente" → modify con message_text riscritto
+- "mettilo alle 9" → modify con datetime_iso aggiornato
+- "ciao suocera ricordati il vaccino" → modify con message_text = questo nuovo testo (riscritto)
+- "aggiungi anche di portare il pane" → modify con message_text aggiornato
+- Un qualsiasi testo libero → modify (l'utente vuole sostituire il messaggio con questo)
+
+Quando action='modify':
+- Se l'utente fornisce un nuovo testo, usalo come message_text (RISCRITTO come messaggio diretto)
+- Se chiede di cambiare orario, aggiorna datetime_iso
+- Se chiede di cambiare destinatario, aggiorna recipient_name
+- Mantieni i campi non menzionati invariati
+- In reply, mostra il messaggio aggiornato e chiedi conferma`;
     }
   }
 
@@ -433,52 +448,51 @@ Rispondi SOLO con JSON valido, nient'altro:
   }
 }
 
-// ── Verify and fix message rewriting via second OpenAI call ──
+// ── Always rewrite message via dedicated OpenAI call ──
+// The main AI call often copies raw text. This ALWAYS rewrites to be natural.
 async function verifyAndFixMessage(messageText: string, recipientName: string): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return messageText;
 
   try {
-    // First: check if the message looks like a direct message
-    const checkRes = await fetch('https://api.openai.com/v1/chat/completions', {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         messages: [
-          { role: 'system', content: 'Rispondi SOLO con SI o NO.' },
-          { role: 'user', content: 'Questo messaggio sembra scritto direttamente da una persona a un\'altra, senza istruzioni di invio come "di a", "scrivi a", "manda a"? \'' + messageText + '\'. Rispondi solo SI o NO.' }
-        ],
-        temperature: 0, max_tokens: 5,
-      }),
-    });
+          { role: 'system', content: `Sei un riscrittore di messaggi WhatsApp. Il tuo UNICO compito è trasformare un'istruzione in un messaggio diretto naturale.
 
-    if (!checkRes.ok) return messageText;
-    const checkData = await checkRes.json();
-    const answer = (checkData.choices?.[0]?.message?.content || '').trim().toUpperCase();
-    console.log('WEBHOOK: Message verify check=' + answer + ' text="' + messageText + '"');
+REGOLE ASSOLUTE:
+1. Il messaggio deve sembrare scritto DIRETTAMENTE dall'utente a ${recipientName}
+2. Rimuovi TUTTE le istruzioni di invio: "di a", "scrivi a", "manda a", "dici a", "ricorda a", "mandaglielo", "invia a"
+3. Rimuovi riferimenti a orari di invio: "alle 8", "domani", "fra 2 ore" (questi sono per il BOT, non per il destinatario)
+4. Aggiungi un saluto naturale (Ciao, Ehi, Amore, etc.) se manca
+5. Aggiungi 1-2 emoji appropriati
+6. Mantieni il CONTENUTO del messaggio intatto
 
-    if (answer === 'SI') return messageText; // Message is fine
+ESEMPI:
+"di a suocera di ricordare ad Andrea che alle 10 ha il vaccino" → "Ciao! Ricorda ad Andrea che alle 10 ha il vaccino 💉"
+"scrivi alla mia ragazza che stasera ho la partita e faccio tardi" → "Amore, stasera ho la partita e faccio tardi! 🙏"
+"manda a Marco che si ricordi la riunione delle 15" → "Ciao Marco! Ricordati della riunione alle 15 👋"
+"di Andrea di ricordare a suocera il vaccino" → "Ciao! Ricordati del vaccino 💉"
+"dici a suocera di portare il vino alla cena" → "Ciao! Ricordati di portare il vino alla cena 🍷"
 
-    // Second: rewrite the message properly
-    const fixRes = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: 'Riscrivi questo messaggio come se lo stessi inviando direttamente a ' + recipientName + ' su WhatsApp. Rimuovi tutte le istruzioni di invio (di a, scrivi a, manda a, mandaglielo). Usa un tono amichevole e naturale, aggiungi emoji. Rispondi SOLO con il messaggio riscritto, nient\'altro.' },
+Rispondi SOLO con il messaggio riscritto, nient'altro. Nessuna spiegazione, nessun prefisso.` },
           { role: 'user', content: messageText }
         ],
         temperature: 0.3, max_tokens: 200,
       }),
     });
 
-    if (!fixRes.ok) return messageText;
-    const fixData = await fixRes.json();
-    const fixed = (fixData.choices?.[0]?.message?.content || '').trim();
+    if (!res.ok) {
+      console.error('WEBHOOK: verifyAndFixMessage API error:', res.status);
+      return messageText;
+    }
+    const data = await res.json();
+    const fixed = (data.choices?.[0]?.message?.content || '').trim().replace(/^["']|["']$/g, '');
     if (fixed && fixed.length > 3) {
-      console.log('WEBHOOK: Message rewritten from "' + messageText + '" to "' + fixed + '"');
+      console.log('WEBHOOK: Message rewritten: "' + messageText + '" → "' + fixed + '"');
       return fixed;
     }
   } catch (e: any) {
@@ -730,7 +744,18 @@ export async function POST(req) {
     // ── AI-powered message understanding ──
     const contactList = await getContactList(ownerPhone);
     const pendingCtx = await getPendingContext(ownerPhone);
-    if (pendingCtx) console.log('WEBHOOK: Pending context:', pendingCtx.status, pendingCtx.recipient_name, pendingCtx.parsed_message?.substring(0, 40));
+    if (pendingCtx) {
+      console.log('WEBHOOK: PENDING CONTEXT FOUND:', JSON.stringify({
+        status: pendingCtx.status,
+        recipient: pendingCtx.recipient_name,
+        message: pendingCtx.parsed_message?.substring(0, 60),
+        scheduled_at: pendingCtx.scheduled_at,
+        id: pendingCtx.id
+      }));
+    } else {
+      console.log('WEBHOOK: No pending context for', ownerPhone);
+    }
+    console.log('WEBHOOK: Calling AI with message="' + raw + '" contacts=' + (contactList ? 'yes' : 'none') + ' pendingCtx=' + (pendingCtx?.status || 'none'));
     const aiResult = await askAI(raw, contactList, pendingCtx);
 
     if (aiResult) {
@@ -832,9 +857,11 @@ export async function POST(req) {
 
       // ── AI: modify (user wants to change pending message) ──
       if (aiResult.action === 'modify' && pendingCtx?.status === 'awaiting_confirm') {
+        console.log('WEBHOOK: MODIFY handler, AI message_text="' + aiResult.message_text + '" datetime_iso="' + aiResult.datetime_iso + '" recipient="' + aiResult.recipient_name + '"');
         const updates: any = {};
         if (aiResult.message_text) {
           updates.parsed_message = await verifyAndFixMessage(aiResult.message_text, pendingCtx.recipient_name || 'il destinatario');
+          console.log('WEBHOOK: MODIFY rewritten message="' + updates.parsed_message + '"');
         }
         if (aiResult.datetime_iso) {
           try {
@@ -865,6 +892,20 @@ export async function POST(req) {
             '"' + updated.parsed_message + '"\n\n' +
             'Va bene? Scrivi OK per confermare o dimmi come modificarlo.');
         }
+        return NextResponse.json({ ok: true });
+      }
+
+      // ── AI: modify without awaiting_confirm — treat as new schedule ──
+      if (aiResult.action === 'modify' && (!pendingCtx || pendingCtx.status !== 'awaiting_confirm')) {
+        console.log('WEBHOOK: MODIFY but no awaiting_confirm context, treating as chat');
+        await notifyOwner(instanceName, ownerPhone, aiResult.reply || 'Non c\'è nessun messaggio in attesa di conferma da modificare. Scrivi un nuovo messaggio per programmarlo.');
+        return NextResponse.json({ ok: true });
+      }
+
+      // ── AI: confirm/cancel_confirm without context ──
+      if ((aiResult.action === 'confirm' || aiResult.action === 'cancel_confirm') && (!pendingCtx || pendingCtx.status !== 'awaiting_confirm')) {
+        console.log('WEBHOOK: confirm/cancel_confirm but no awaiting_confirm context');
+        await notifyOwner(instanceName, ownerPhone, aiResult.reply || 'Non c\'è nessun messaggio in attesa di conferma.');
         return NextResponse.json({ ok: true });
       }
 
