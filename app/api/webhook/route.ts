@@ -364,7 +364,9 @@ ESEMPI:
 
 ATTENZIONE: "di a X di ricordare a Y" = il messaggio va a X, il contenuto riguarda Y.
 
-JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|list|cancel|status|help|chat","recipient_name":string|null,"datetime_iso":"ISO"|null,"message_text":"RISCRITTO"|null,"cancel_target":null,"reply":"risposta utente"}`;
+datetime_iso DEVE essere in ora locale italiana SENZA offset (es: "2026-03-14T15:00:00", MAI "2026-03-14T15:00:00+01:00" o con Z).
+
+JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|list|cancel|status|help|chat","recipient_name":string|null,"datetime_iso":"ISO locale senza offset"|null,"message_text":"RISCRITTO"|null,"cancel_target":null,"reply":"risposta utente"}`;
 
   const userContent = userMessage + '\n---\nContatti: ' + (contactList || 'nessuno') + '\nOra: ' + currentDateTime + pendingBlock;
 
@@ -833,7 +835,11 @@ export async function POST(req) {
         if (aiResult.datetime_iso) {
           try {
             const newDate = new Date(aiResult.datetime_iso);
-            if (!isNaN(newDate.getTime())) updates.scheduled_at = romeToUtc(newDate).toISOString();
+            if (!isNaN(newDate.getTime())) {
+              // P4 FIX: Only apply romeToUtc if no timezone offset in the ISO string
+              const hasOffset = /([+-]\d{2}:\d{2}|Z)\s*$/.test(aiResult.datetime_iso);
+              updates.scheduled_at = (hasOffset ? newDate : romeToUtc(newDate)).toISOString();
+            }
           } catch {}
         }
         if (aiResult.recipient_name) {
@@ -914,7 +920,7 @@ export async function POST(req) {
             user_instance_id: user.id, instance_phone: ownerPhone,
             recipient_number: 'unknown', recipient_name: null,
             caption: raw, parsed_message: messageText,
-            scheduled_at: aiResult.datetime_iso ? romeToUtc(new Date(aiResult.datetime_iso)).toISOString() : new Date('2099-01-01').toISOString(),
+            scheduled_at: aiResult.datetime_iso ? (/([+-]\d{2}:\d{2}|Z)\s*$/.test(aiResult.datetime_iso) ? new Date(aiResult.datetime_iso) : romeToUtc(new Date(aiResult.datetime_iso))).toISOString() : new Date('2099-01-01').toISOString(),
             status: 'awaiting_recipient',
             retry_count: 0, max_retries: 3,
           });
@@ -947,12 +953,15 @@ export async function POST(req) {
           return NextResponse.json({ ok: true });
         }
 
-        // Parse datetime from AI (Rome timezone)
+        // Parse datetime from AI
+        // P4 FIX: Only apply romeToUtc if the ISO string has NO timezone offset
+        // If it has +01:00, +02:00, or Z, Date() already parsed it to UTC correctly
         let scheduledAt: Date;
         try {
           const aiDate = new Date(datetimeStr);
           if (isNaN(aiDate.getTime())) throw new Error('Invalid date');
-          scheduledAt = romeToUtc(aiDate);
+          const hasOffset = /([+-]\d{2}:\d{2}|Z)\s*$/.test(datetimeStr);
+          scheduledAt = hasOffset ? aiDate : romeToUtc(aiDate);
         } catch {
           const parsed = parseCommand(raw);
           if (!parsed) {

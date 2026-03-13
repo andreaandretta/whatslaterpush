@@ -84,7 +84,7 @@ export async function GET(req: NextRequest) {
     // No per-user loop, no global state, no instance confusion possible
     const { data: pendingMessages, error: queryErr } = await supabase
       .from('scheduled_messages')
-      .select('*, user_instances!inner(id, phone_number, instance_name, trial_ends_at, subscription_status)')
+      .select('*, user_instances!inner(id, phone_number, instance_name, trial_ends_at, subscription_status, connection_status)')
       .eq('status', 'pending')
       .lte('scheduled_at', new Date().toISOString())
       .order('scheduled_at', { ascending: true })
@@ -96,42 +96,83 @@ export async function GET(req: NextRequest) {
     }
     console.log('CRON: ' + (pendingMessages || []).length + ' pending messages found');
 
-    let sent = 0, failed = 0, skipped = 0, rateLimited = 0;
+    let sent = 0, failed = 0, skipped = 0, rateLimited = 0, trialExpired = 0, disconnected = 0;
 
-    for (const msg of pendingMessages || []) {
-      const userInst = msg.user_instances;
-      if (!userInst || !userInst.instance_name) {
-        console.error('CRON: Message ' + msg.id + ' has no linked user_instance. Skipping.');
-        skipped++;
-        continue;
-      }
+    // Track which disconnected instances we've already logged
+    const disconnectedInstances = new Set<string>();
 
-      const instanceName = userInst.instance_name;
-      const ownerPhone = userInst.phone_number;
+    // Process messages in batches of 5 for speed (P11: avoid Vercel Hobby 10s timeout)
+    const messages = pendingMessages || [];
+    for (let i = 0; i < messages.length; i += 5) {
+      const batch = messages.slice(i, i + 5);
+      const results = await Promise.allSettled(batch.map(async (msg) => {
+        const userInst = msg.user_instances;
+        if (!userInst || !userInst.instance_name) {
+          console.error('CRON: Message ' + msg.id + ' has no linked user_instance. Skipping.');
+          return 'skipped' as const;
+        }
 
-      const isBlocked = await checkFailures(supabase, ownerPhone);
-      if (isBlocked) {
-        try {
-          await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
-            method: 'POST',
-            headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ number: ownerPhone, text: '\u26a0\ufe0f Messaggi sospesi temporaneamente. Troppi invii falliti.' })
-          });
-        } catch (e) {}
-        skipped++;
-        continue;
-      }
+        const instanceName = userInst.instance_name;
+        const ownerPhone = userInst.phone_number;
 
-      const check = canSend(ownerPhone, instanceName);
-      if (!check.allowed) {
-        console.log('CRON: RATE LIMITED:', ownerPhone, check.reason);
-        rateLimited++;
-        continue;
-      }
+        // P17: Check connection_status before sending
+        if (userInst.connection_status !== 'open') {
+          if (!disconnectedInstances.has(instanceName)) {
+            disconnectedInstances.add(instanceName);
+            console.log('CRON: Instance ' + instanceName + ' is ' + (userInst.connection_status || 'unknown') + ', rescheduling messages to tomorrow');
+          }
+          // Reschedule to tomorrow same time (not failed — user did nothing wrong)
+          const tomorrow = new Date(msg.scheduled_at);
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          await supabase.from('scheduled_messages').update({
+            scheduled_at: tomorrow.toISOString(),
+            error_message: 'Instance disconnected, rescheduled to ' + tomorrow.toISOString()
+          }).eq('id', msg.id);
+          return 'disconnected' as const;
+        }
 
-      try {
-        const jitter = 2000 + Math.random() * 2000;
-        await new Promise(r => setTimeout(r, jitter));
+        // P9: Check trial/subscription before sending
+        const subStatus = userInst.subscription_status;
+        const trialEnd = userInst.trial_ends_at;
+        if (subStatus !== 'active') {
+          const trialExpiredAt = trialEnd ? new Date(trialEnd) : null;
+          if (!trialExpiredAt || trialExpiredAt < new Date()) {
+            console.log('CRON: Trial expired for ' + ownerPhone + ' (status=' + subStatus + ' trial_ends=' + trialEnd + ')');
+            await supabase.from('scheduled_messages').update({
+              status: 'cancelled',
+              error_message: 'Trial scaduto'
+            }).eq('id', msg.id);
+            try {
+              await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
+                method: 'POST',
+                headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ number: ownerPhone, text: '⏰ Il tuo trial WhatsLater è scaduto. I messaggi programmati sono stati sospesi.\n\nVai su https://whatslaterpush.vercel.app/dashboard per continuare a usare il servizio.' })
+              });
+            } catch (e) {}
+            return 'trial_expired' as const;
+          }
+        }
+
+        const isBlocked = await checkFailures(supabase, ownerPhone);
+        if (isBlocked) {
+          try {
+            await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
+              method: 'POST',
+              headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ number: ownerPhone, text: '\u26a0\ufe0f Messaggi sospesi temporaneamente. Troppi invii falliti.' })
+            });
+          } catch (e) {}
+          return 'skipped' as const;
+        }
+
+        const check = canSend(ownerPhone, instanceName);
+        if (!check.allowed) {
+          console.log('CRON: RATE LIMITED:', ownerPhone, check.reason);
+          return 'rate_limited' as const;
+        }
+
+        // P11: Minimal jitter (200-400ms) instead of 2-4 seconds
+        await new Promise(r => setTimeout(r, 200 + Math.random() * 200));
         console.log('CRON: Sending msg ' + msg.id + ' via instance=' + instanceName + ' to=' + msg.recipient_number);
         const res = await fetch(
           process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName,
@@ -156,24 +197,42 @@ export async function GET(req: NextRequest) {
             body: JSON.stringify({ number: ownerPhone, text: '\u2705 Inviato a ' + (msg.recipient_name || msg.recipient_number) + '!' })
           });
         } catch (notifyErr) {}
-        sent++;
-      } catch (err: any) {
-        const newRetry = (msg.retry_count || 0) + 1;
-        await supabase.from('scheduled_messages').update({
-          status: newRetry >= 3 ? 'failed' : 'pending',
-          retry_count: newRetry,
-          error_message: err.message,
-          scheduled_at: newRetry < 3 ? new Date(Date.now() + (newRetry * 5 * 60 * 1000)).toISOString() : msg.scheduled_at
-        }).eq('id', msg.id);
-        if (newRetry >= 3) {
-          try {
-            await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
-              method: 'POST',
-              headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ number: ownerPhone, text: '\u274c Impossibile inviare a ' + (msg.recipient_name || msg.recipient_number) + ' dopo 3 tentativi.' })
-            });
-          } catch (e) {}
-          failed++;
+        return 'sent' as const;
+      }));
+
+      // Count results from this batch
+      for (let j = 0; j < results.length; j++) {
+        const r = results[j];
+        if (r.status === 'fulfilled') {
+          if (r.value === 'sent') sent++;
+          else if (r.value === 'skipped') skipped++;
+          else if (r.value === 'rate_limited') rateLimited++;
+          else if (r.value === 'trial_expired') trialExpired++;
+          else if (r.value === 'disconnected') disconnected++;
+        } else {
+          // Promise rejected = send error, handle retry
+          const msg = batch[j];
+          const userInst = msg.user_instances;
+          const instanceName = userInst?.instance_name;
+          const ownerPhone = userInst?.phone_number;
+          const err = r.reason;
+          const newRetry = (msg.retry_count || 0) + 1;
+          await supabase.from('scheduled_messages').update({
+            status: newRetry >= 3 ? 'failed' : 'pending',
+            retry_count: newRetry,
+            error_message: err?.message || 'Unknown error',
+            scheduled_at: newRetry < 3 ? new Date(Date.now() + (newRetry * 5 * 60 * 1000)).toISOString() : msg.scheduled_at
+          }).eq('id', msg.id);
+          if (newRetry >= 3) {
+            try {
+              await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
+                method: 'POST',
+                headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ number: ownerPhone, text: '\u274c Impossibile inviare a ' + (msg.recipient_name || msg.recipient_number) + ' dopo 3 tentativi.' })
+              });
+            } catch (e) {}
+            failed++;
+          }
         }
       }
     }
@@ -181,8 +240,8 @@ export async function GET(req: NextRequest) {
     
 
     const dur = Date.now() - startTime;
-    console.log('CRON DONE sent=' + sent + ' failed=' + failed + ' skip=' + skipped + ' rl=' + rateLimited + ' ms=' + dur);
-    return NextResponse.json({ sent, failed, skipped, rateLimited, duration: dur + 'ms', timestamp: new Date().toISOString() });
+    console.log('CRON DONE sent=' + sent + ' failed=' + failed + ' skip=' + skipped + ' rl=' + rateLimited + ' trial_exp=' + trialExpired + ' disconn=' + disconnected + ' ms=' + dur);
+    return NextResponse.json({ sent, failed, skipped, rateLimited, trialExpired, disconnected, duration: dur + 'ms', timestamp: new Date().toISOString() });
   } catch (err) {
     console.error('CRON ERROR:', (err as Error).message);
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
