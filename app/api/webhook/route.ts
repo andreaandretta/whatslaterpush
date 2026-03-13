@@ -312,11 +312,22 @@ async function getPendingContext(ownerPhone: string): Promise<any> {
   return data;
 }
 
-// ── OpenAI AI Assistant (minimal prompt architecture) ──
+// ── AI config: Groq (primary, free) → OpenAI (fallback) ──
+function getAIConfig(): { url: string; key: string; model: string; provider: string } | null {
+  if (process.env.GROQ_API_KEY) {
+    return { url: 'https://api.groq.com/openai/v1/chat/completions', key: process.env.GROQ_API_KEY, model: 'llama-3.1-8b-instant', provider: 'groq' };
+  }
+  if (process.env.OPENAI_API_KEY) {
+    return { url: 'https://api.openai.com/v1/chat/completions', key: process.env.OPENAI_API_KEY, model: 'gpt-4o-mini', provider: 'openai' };
+  }
+  return null;
+}
+
+// ── AI Assistant (Groq primary, OpenAI fallback) ──
 async function askAI(userMessage: string, contactList: string, pendingContext: any): Promise<any> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    console.log('WEBHOOK: OpenAI key not set, falling back to regex');
+  const ai = getAIConfig();
+  if (!ai) {
+    console.log('WEBHOOK: No AI key set (GROQ_API_KEY or OPENAI_API_KEY), falling back to regex');
     return null;
   }
 
@@ -355,17 +366,20 @@ ATTENZIONE: "di a X di ricordare a Y" = il messaggio va a X, il contenuto riguar
 
 JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|list|cancel|status|help|chat","recipient_name":string|null,"datetime_iso":"ISO"|null,"message_text":"RISCRITTO"|null,"cancel_target":null,"reply":"risposta utente"}`;
 
-  // Build user message with context
   const userContent = userMessage + '\n---\nContatti: ' + (contactList || 'nessuno') + '\nOra: ' + currentDateTime + pendingBlock;
 
   try {
-    console.log('WEBHOOK: AI call user="' + userMessage + '" pending=' + (pendingContext?.status || 'none'));
-    await dbLog('AI_REQUEST', { user: userMessage, pending: pendingContext?.status || 'none', promptLen: systemPrompt.length });
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    console.log('WEBHOOK: AI call provider=' + ai.provider + ' model=' + ai.model + ' user="' + userMessage + '"');
+    await dbLog('AI_REQUEST', { provider: ai.provider, model: ai.model, user: userMessage, pending: pendingContext?.status || 'none' });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    const res = await fetch(ai.url, {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': 'Bearer ' + ai.key, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: ai.model,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userContent }
@@ -373,27 +387,32 @@ JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|l
         temperature: 0.1,
         max_tokens: 300,
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
 
     if (!res.ok) {
       const errText = await res.text();
-      console.error('WEBHOOK: OpenAI error:', res.status, errText.substring(0, 200));
-      await dbLog('AI_ERROR', { status: res.status, error: errText.substring(0, 500) });
+      console.error('WEBHOOK: AI error (' + ai.provider + '):', res.status, errText.substring(0, 200));
+      await dbLog('AI_ERROR', { provider: ai.provider, status: res.status, error: errText.substring(0, 500) });
       return null;
     }
 
     const data = await res.json();
     const content = data.choices?.[0]?.message?.content?.trim();
-    if (!content) return null;
+    if (!content) {
+      await dbLog('AI_EMPTY', { provider: ai.provider, raw: JSON.stringify(data).substring(0, 500) });
+      return null;
+    }
 
     const jsonStr = content.replace(/^```json?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
     const parsed = JSON.parse(jsonStr);
-    console.log('WEBHOOK: AI response:', JSON.stringify(parsed));
-    await dbLog('AI_RESPONSE', parsed);
+    console.log('WEBHOOK: AI response (' + ai.provider + '):', JSON.stringify(parsed));
+    await dbLog('AI_RESPONSE', { provider: ai.provider, ...parsed });
     return parsed;
   } catch (e: any) {
-    console.error('WEBHOOK: AI parse error:', e.message);
-    await dbLog('AI_EXCEPTION', { error: e.message });
+    console.error('WEBHOOK: AI error:', e.message);
+    await dbLog('AI_EXCEPTION', { provider: ai.provider, error: e.message });
     return null;
   }
 }
@@ -412,28 +431,34 @@ async function verifyAndFixMessage(messageText: string, recipientName: string): 
   }
 
   console.log('WEBHOOK: Message still dirty, rewriting: "' + messageText + '"');
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return messageText;
+  const ai = getAIConfig();
+  if (!ai) return messageText;
 
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+
+    const res = await fetch(ai.url, {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': 'Bearer ' + ai.key, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: ai.model,
         messages: [
           { role: 'system', content: 'Riscrivi questo messaggio come se lo stessi inviando direttamente a ' + recipientName + ' su WhatsApp. Rimuovi TUTTE le istruzioni (di a, scrivi a, manda a, dici a). Aggiungi un saluto e emoji. Rispondi SOLO con il messaggio riscritto.' },
           { role: 'user', content: messageText }
         ],
         temperature: 0.2, max_tokens: 150,
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
 
     if (!res.ok) return messageText;
     const data = await res.json();
     const fixed = (data.choices?.[0]?.message?.content || '').trim().replace(/^["']|["']$/g, '');
     if (fixed && fixed.length > 3) {
-      console.log('WEBHOOK: Rewrite result: "' + messageText + '" → "' + fixed + '"');
+      console.log('WEBHOOK: Rewrite result (' + ai.provider + '): "' + messageText + '" → "' + fixed + '"');
+      await dbLog('REWRITE', { from: messageText, to: fixed, provider: ai.provider });
       return fixed;
     }
   } catch (e: any) {
