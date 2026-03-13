@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { extractInlineRecipient, extractInlineMessage, parseAIDatetime, getRomeOffsetMs, nowRome, romeToUtc } from '../../lib/webhook-utils';
 export const dynamic = 'force-dynamic';
 
 const supabase = createClient(
@@ -16,15 +17,7 @@ async function dbLog(tag: string, data: any) {
   } catch {}
 }
 
-// ── Rome timezone helpers ──
-function getRomeOffsetMs() {
-  const now = new Date();
-  const utcStr = now.toLocaleString('en-CA', { timeZone: 'UTC', hour12: false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
-  const romeStr = now.toLocaleString('en-CA', { timeZone: 'Europe/Rome', hour12: false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
-  return new Date(romeStr.replace(', ','T')).getTime() - new Date(utcStr.replace(', ','T')).getTime();
-}
-function nowRome() { return new Date(new Date().getTime() + getRomeOffsetMs()); }
-function romeToUtc(d) { return new Date(d.getTime() - getRomeOffsetMs()); }
+// Rome timezone helpers imported from ../../lib/webhook-utils
 
 // ── Legacy regex parser (fallback if OpenAI fails) ──
 const NUMERI_IT = { 'un':1,'uno':1,'una':1,'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,'sette':7,'otto':8,'nove':9,'dieci':10,'undici':11,'dodici':12,'quindici':15,'venti':20,'trenta':30,'quaranta':40,'cinquanta':50,'sessanta':60 };
@@ -105,16 +98,7 @@ function formatRome(d) {
   return d.toLocaleString('it-IT',{ day:'numeric', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Rome' });
 }
 
-function extractInlineRecipient(text) {
-  const m = /\b(?:manda|mandami|mandagli|mandale|scrivi|scrivimi|scrivigli|scrivile|invia|inviami|avvisa|avvisami|dici|digli|dille|ricordami|promemoria|reminder|comunica)\s+ad?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,25}?)(?=\s+(?:domani|fra|tra|stasera|stamattina|stanotte|all[ae]?\s+\d|il\s+\d|\d{1,2}[\/\-]\d))/i.exec(text);
-  return m ? m[1].trim() : null;
-}
-
-function extractInlineMessage(text) {
-  const idx = text.indexOf(': ');
-  if (idx > -1 && idx < text.length - 2) return text.substring(idx + 2).trim();
-  return null;
-}
+// extractInlineRecipient and extractInlineMessage imported from ../../lib/webhook-utils
 
 async function findContactByName(ownerPhone, name) {
   if (!name) return null;
@@ -834,12 +818,7 @@ export async function POST(req) {
         }
         if (aiResult.datetime_iso) {
           try {
-            const newDate = new Date(aiResult.datetime_iso);
-            if (!isNaN(newDate.getTime())) {
-              // P4 FIX: Only apply romeToUtc if no timezone offset in the ISO string
-              const hasOffset = /([+-]\d{2}:\d{2}|Z)\s*$/.test(aiResult.datetime_iso);
-              updates.scheduled_at = (hasOffset ? newDate : romeToUtc(newDate)).toISOString();
-            }
+            updates.scheduled_at = parseAIDatetime(aiResult.datetime_iso).toISOString();
           } catch {}
         }
         if (aiResult.recipient_name) {
@@ -920,7 +899,7 @@ export async function POST(req) {
             user_instance_id: user.id, instance_phone: ownerPhone,
             recipient_number: 'unknown', recipient_name: null,
             caption: raw, parsed_message: messageText,
-            scheduled_at: aiResult.datetime_iso ? (/([+-]\d{2}:\d{2}|Z)\s*$/.test(aiResult.datetime_iso) ? new Date(aiResult.datetime_iso) : romeToUtc(new Date(aiResult.datetime_iso))).toISOString() : new Date('2099-01-01').toISOString(),
+            scheduled_at: aiResult.datetime_iso ? parseAIDatetime(aiResult.datetime_iso).toISOString() : new Date('2099-01-01').toISOString(),
             status: 'awaiting_recipient',
             retry_count: 0, max_retries: 3,
           });
@@ -953,15 +932,10 @@ export async function POST(req) {
           return NextResponse.json({ ok: true });
         }
 
-        // Parse datetime from AI
-        // P4 FIX: Only apply romeToUtc if the ISO string has NO timezone offset
-        // If it has +01:00, +02:00, or Z, Date() already parsed it to UTC correctly
+        // Parse datetime from AI (P4 FIX: handles offset-aware and offset-naive ISO strings)
         let scheduledAt: Date;
         try {
-          const aiDate = new Date(datetimeStr);
-          if (isNaN(aiDate.getTime())) throw new Error('Invalid date');
-          const hasOffset = /([+-]\d{2}:\d{2}|Z)\s*$/.test(datetimeStr);
-          scheduledAt = hasOffset ? aiDate : romeToUtc(aiDate);
+          scheduledAt = parseAIDatetime(datetimeStr);
         } catch {
           const parsed = parseCommand(raw);
           if (!parsed) {

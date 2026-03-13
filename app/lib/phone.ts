@@ -6,6 +6,7 @@
 export function normalizeItalianPhone(raw: string): string {
   if (!raw) return raw;
   const clean = raw.replace(/\D/g, '');
+  if (clean.startsWith('0039')) return clean.substring(2); // 00393401234567 → 393401234567
   if (clean.startsWith('39') && clean.length >= 11) return clean;
   if (clean.startsWith('0')) return '39' + clean.substring(1);
   if (clean.startsWith('3') && clean.length === 10) return '39' + clean;
