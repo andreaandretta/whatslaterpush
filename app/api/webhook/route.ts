@@ -109,25 +109,68 @@ function extractInlineMessage(text) {
 }
 
 async function findContactByName(ownerPhone, name) {
+  if (!name) return null;
+  const cleanName = name.trim();
+  console.log('WEBHOOK: findContactByName owner=' + ownerPhone + ' name="' + cleanName + '"');
+
+  // Try exact ILIKE match first
   const { data: pending } = await supabase
     .from('pending_contacts')
     .select('recipient_number, recipient_name, id')
     .eq('owner_phone', ownerPhone)
-    .ilike('recipient_name', `%${name}%`)
+    .ilike('recipient_name', `%${cleanName}%`)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (pending) return pending;
+  if (pending) {
+    console.log('WEBHOOK: Found contact in pending_contacts: ' + pending.recipient_name + ' ' + pending.recipient_number);
+    return pending;
+  }
 
+  // Try historical messages
   const { data: historical } = await supabase
     .from('scheduled_messages')
     .select('recipient_number, recipient_name')
     .eq('instance_phone', ownerPhone)
-    .ilike('recipient_name', `%${name}%`)
+    .ilike('recipient_name', `%${cleanName}%`)
+    .not('recipient_name', 'is', null)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
-  return historical || null;
+  if (historical) {
+    console.log('WEBHOOK: Found contact in history: ' + historical.recipient_name + ' ' + historical.recipient_number);
+    return historical;
+  }
+
+  // Fallback: get ALL contacts and try fuzzy match (first word, nickname, etc)
+  const { data: allContacts } = await supabase
+    .from('pending_contacts')
+    .select('recipient_number, recipient_name, id')
+    .eq('owner_phone', ownerPhone)
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  if (allContacts) {
+    const nameLower = cleanName.toLowerCase();
+    for (const c of allContacts) {
+      const cName = (c.recipient_name || '').toLowerCase();
+      // Match if contact name starts with the search term or vice versa
+      if (cName.startsWith(nameLower) || nameLower.startsWith(cName)) {
+        console.log('WEBHOOK: Fuzzy match: "' + cleanName + '" → ' + c.recipient_name);
+        return c;
+      }
+      // Match first word of either
+      const cFirst = cName.split(/\s+/)[0];
+      const nFirst = nameLower.split(/\s+/)[0];
+      if (cFirst === nFirst || cFirst === nameLower || cName === nFirst) {
+        console.log('WEBHOOK: First-word match: "' + cleanName + '" → ' + c.recipient_name);
+        return c;
+      }
+    }
+  }
+
+  console.log('WEBHOOK: Contact NOT found: "' + cleanName + '"');
+  return null;
 }
 
 async function notifyOwner(instanceName, phone, msg) {
@@ -260,7 +303,7 @@ async function getPendingContext(ownerPhone: string): Promise<any> {
   return data;
 }
 
-// ── OpenAI AI Assistant (simplified single-call architecture) ──
+// ── OpenAI AI Assistant (minimal prompt architecture) ──
 async function askAI(userMessage: string, contactList: string, pendingContext: any): Promise<any> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -274,64 +317,40 @@ async function askAI(userMessage: string, contactList: string, pendingContext: a
     hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome'
   });
 
-  let contextBlock = '';
+  let pendingBlock = '';
   if (pendingContext) {
     if (pendingContext.status === 'awaiting_time') {
-      contextBlock = `\nSTATO: L'utente ha un messaggio in sospeso per ${pendingContext.recipient_name} — manca l'orario. Se scrive un orario, usa action="schedule".`;
+      pendingBlock = `\nMessaggio in sospeso per ${pendingContext.recipient_name} — manca orario. Se l'utente dà un orario, usa action="schedule".`;
     } else if (pendingContext.status === 'awaiting_recipient') {
-      contextBlock = `\nSTATO: L'utente ha un messaggio in sospeso — manca il destinatario. Se scrive un nome, usa action="schedule".`;
+      pendingBlock = `\nMessaggio in sospeso — manca destinatario. Se l'utente dà un nome, usa action="schedule".`;
     } else if (pendingContext.status === 'awaiting_confirm') {
       const schedTime = pendingContext.scheduled_at ? formatRome(new Date(pendingContext.scheduled_at)) : '?';
-      contextBlock = `\nSTATO: MESSAGGIO IN ATTESA DI CONFERMA.
-A: ${pendingContext.recipient_name} (${pendingContext.recipient_number})
-Testo: "${pendingContext.parsed_message}"
-Quando: ${schedTime}
-- Se l'utente dice OK/sì/conferma → action="confirm"
-- Se dice no/annulla → action="cancel_confirm"
-- QUALSIASI ALTRA COSA (testo, richiesta, modifica) → action="modify" con message_text riscritto`;
+      pendingBlock = `\nMESSAGGIO IN ATTESA DI CONFERMA → a ${pendingContext.recipient_name}, "${pendingContext.parsed_message}", ${schedTime}. OK/sì=confirm, no/annulla=cancel_confirm, QUALSIASI ALTRO TESTO=modify.`;
     }
   }
 
-  const systemPrompt = `Sei l'assistente di WhatsLater. L'utente ti scrive su WhatsApp per programmare messaggi.
-Ora: ${currentDateTime}
+  const systemPrompt = `Sei un assistente WhatsApp che programma messaggi. Rispondi SOLO con JSON valido, senza markdown.
 
-Contatti: ${contactList || 'Nessuno (deve inviare un contatto con 📎)'}
-${contextBlock}
+REGOLA PIU IMPORTANTE: message_text è il messaggio che RICEVE il destinatario.
+Scrivi SOLO il contenuto del messaggio, come se l'utente lo stesse scrivendo direttamente al destinatario.
+MAI copiare istruzioni come "di a", "scrivi a", "manda a", "dici a", "ricorda a", "mandaglielo".
+Aggiungi saluto e emoji.
 
-COMPITO: Interpreta il messaggio e rispondi in JSON.
+ESEMPI:
+"di a suocera di ricordare ad Andrea il vaccino alle 10" → recipient_name:"Suocera", message_text:"Ciao! Ricorda ad Andrea che alle 10 ha il vaccino 💉"
+"scrivi alla mia ragazza che faccio tardi" → recipient_name:"Amore", message_text:"Amore, stasera faccio tardi! 🙏"
+"manda a Marco che si ricordi la riunione" → recipient_name:"Marco", message_text:"Ciao Marco! Ricordati della riunione 👋"
+"di ad Andrea di ricordare a suocera il vaccino domani alle 8" → recipient_name:"Suocera", message_text:"Ciao! Ricorda ad Andrea che domani alle 8 ha il vaccino 💉" (il messaggio va a SUOCERA, non ad Andrea)
 
-REGOLA CRITICA — message_text:
-message_text è il messaggio che il DESTINATARIO riceverà su WhatsApp.
-NON copiare mai il testo dell'utente. RISCRIVI come messaggio diretto.
-Togli: "di a", "scrivi a", "manda a", "dici a", "ricorda a", orari di invio.
-Aggiungi: saluto naturale, emoji, tono amichevole.
+ATTENZIONE: "di a X di ricordare a Y" = il messaggio va a X, il contenuto riguarda Y.
 
-ESEMPI DI RISCRITTURA:
-Utente: "di a suocera di ricordare ad Andrea che alle 10 ha il vaccino"
-→ message_text: "Ciao! Ricorda ad Andrea che alle 10 ha il vaccino 💉"
+JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|list|cancel|status|help|chat","recipient_name":string|null,"datetime_iso":"ISO"|null,"message_text":"RISCRITTO"|null,"cancel_target":null,"reply":"risposta utente"}`;
 
-Utente: "scrivi alla mia ragazza che stasera ho la partita e faccio tardi"
-→ message_text: "Amore, stasera ho la partita e faccio tardi! 🙏"
-
-Utente: "manda a Marco che si ricordi la riunione delle 15"
-→ message_text: "Ciao Marco! Ricordati della riunione alle 15 👋"
-
-Utente: "di ad Andrea di ricordare a suocera il vaccino"
-→ message_text: "Ciao! Ricordati del vaccino 💉"
-
-AZIONI:
-- schedule: destinatario + orario + messaggio trovati
-- ask_time: manca l'orario
-- ask_recipient: manca il destinatario
-- confirm/cancel_confirm: risposta a messaggio in attesa
-- modify: modifica a messaggio in attesa (QUALSIASI testo non OK/annulla)
-- list/cancel/status/help/chat: comandi vari
-
-JSON (rispondi SOLO questo):
-{"action":"...","recipient_name":"..."|null,"datetime_iso":"2026-03-14T08:00:00"|null,"message_text":"TESTO RISCRITTO"|null,"cancel_target":null,"reply":"risposta per l'utente"}`;
+  // Build user message with context
+  const userContent = userMessage + '\n---\nContatti: ' + (contactList || 'nessuno') + '\nOra: ' + currentDateTime + pendingBlock;
 
   try {
-    console.log('WEBHOOK: AI prompt length=' + systemPrompt.length + ' user="' + userMessage + '"');
+    console.log('WEBHOOK: AI call user="' + userMessage + '" pending=' + (pendingContext?.status || 'none'));
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
@@ -339,10 +358,10 @@ JSON (rispondi SOLO questo):
         model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
+          { role: 'user', content: userContent }
         ],
-        temperature: 0.2,
-        max_tokens: 400,
+        temperature: 0.1,
+        max_tokens: 300,
       }),
     });
 
@@ -370,8 +389,10 @@ JSON (rispondi SOLO questo):
 // Safety net: if the main AI call failed to rewrite, this does a dedicated rewrite call
 async function verifyAndFixMessage(messageText: string, recipientName: string): Promise<string> {
   // Quick regex check: does the message still contain sending instructions?
-  const dirtyPatterns = /^(di[' ]?\s*a\s|scrivi\s+a\s|manda\s+a\s|dici\s+a\s|invia\s+a\s|ricorda\s+a\s)/i;
-  if (!dirtyPatterns.test(messageText.trim())) {
+  // Matches: "di a", "di' a", "di' ad", "Di a", "dici a", "scrivi a", "manda a", etc.
+  const dirtyPatterns = /^(di[''`\s]+a[d\s]|scrivi\s+a\s|manda\s+a\s|dici\s+a\s|invia\s+a\s|ricorda\s+a\s|dice?\s+a\s)/i;
+  const dirtyAnywhere = /(di[''`]?\s+a[d]?\s+\w+\s+di\s+ricordare|scrivi\s+all[ao]|manda\s+a\s+\w+\s+che)/i;
+  if (!dirtyPatterns.test(messageText.trim()) && !dirtyAnywhere.test(messageText)) {
     // Message looks clean — no rewrite needed
     console.log('WEBHOOK: Message looks clean, no rewrite needed: "' + messageText + '"');
     return messageText;
@@ -949,6 +970,22 @@ export async function POST(req) {
         await notifyOwner(instanceName, ownerPhone, aiResult.reply);
         return NextResponse.json({ ok: true });
       }
+
+      // Safety net: AI returned something but no handler caught it
+      console.log('WEBHOOK: AI returned action=' + aiResult.action + ' but no handler matched. pendingCtx=' + (pendingCtx?.status || 'none'));
+    }
+
+    // ── SAFETY NET: if awaiting_confirm exists but AI failed or no handler matched, always respond ──
+    if (pendingCtx?.status === 'awaiting_confirm') {
+      console.log('WEBHOOK: SAFETY NET — awaiting_confirm active, no AI handler matched. Treating as modify.');
+      const schedTime = pendingCtx.scheduled_at ? formatRome(new Date(pendingCtx.scheduled_at)) : '?';
+      await notifyOwner(instanceName, ownerPhone,
+        '📝 Hai un messaggio in attesa di conferma:\n' +
+        'A: ' + (pendingCtx.recipient_name || '?') + '\n' +
+        'Testo: "' + (pendingCtx.parsed_message || '?') + '"\n' +
+        'Quando: ' + schedTime + '\n\n' +
+        'Scrivi OK per confermare, ANNULLA per cancellare, o dimmi come modificarlo.');
+      return NextResponse.json({ ok: true });
     }
 
     // ══════════════════════════════════════════════════
