@@ -315,7 +315,7 @@ async function getPendingContext(ownerPhone: string): Promise<any> {
 // ── AI config: Groq (primary, free) → OpenAI (fallback) ──
 function getAIConfig(): { url: string; key: string; model: string; provider: string } | null {
   if (process.env.GROQ_API_KEY) {
-    return { url: 'https://api.groq.com/openai/v1/chat/completions', key: process.env.GROQ_API_KEY, model: 'llama-3.1-8b-instant', provider: 'groq' };
+    return { url: 'https://api.groq.com/openai/v1/chat/completions', key: process.env.GROQ_API_KEY, model: 'llama-3.3-70b-versatile', provider: 'groq' };
   }
   if (process.env.OPENAI_API_KEY) {
     return { url: 'https://api.openai.com/v1/chat/completions', key: process.env.OPENAI_API_KEY, model: 'gpt-4o-mini', provider: 'openai' };
