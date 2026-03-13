@@ -378,6 +378,7 @@ JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|l
     if (!res.ok) {
       const errText = await res.text();
       console.error('WEBHOOK: OpenAI error:', res.status, errText.substring(0, 200));
+      await dbLog('AI_ERROR', { status: res.status, error: errText.substring(0, 500) });
       return null;
     }
 
@@ -392,6 +393,7 @@ JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|l
     return parsed;
   } catch (e: any) {
     console.error('WEBHOOK: AI parse error:', e.message);
+    await dbLog('AI_EXCEPTION', { error: e.message });
     return null;
   }
 }
