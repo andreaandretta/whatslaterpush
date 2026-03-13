@@ -260,7 +260,7 @@ async function getPendingContext(ownerPhone: string): Promise<any> {
   return data;
 }
 
-// ── OpenAI AI Assistant ──
+// ── OpenAI AI Assistant (simplified single-call architecture) ──
 async function askAI(userMessage: string, contactList: string, pendingContext: any): Promise<any> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -277,143 +277,61 @@ async function askAI(userMessage: string, contactList: string, pendingContext: a
   let contextBlock = '';
   if (pendingContext) {
     if (pendingContext.status === 'awaiting_time') {
-      contextBlock = `\n\nCONTESTO PENDENTE: L'utente sta completando un messaggio già iniziato.
-Destinatario: ${pendingContext.recipient_name} (${pendingContext.recipient_number})
-Testo da inviare: "${pendingContext.parsed_message}"
-Manca solo l'orario. Se il messaggio dell'utente contiene un orario/data, usa action='schedule' con i dati completi.`;
+      contextBlock = `\nSTATO: L'utente ha un messaggio in sospeso per ${pendingContext.recipient_name} — manca l'orario. Se scrive un orario, usa action="schedule".`;
     } else if (pendingContext.status === 'awaiting_recipient') {
-      contextBlock = `\n\nCONTESTO PENDENTE: L'utente sta completando un messaggio già iniziato.
-Testo da inviare: "${pendingContext.parsed_message}"
-Manca il destinatario. Se il messaggio contiene un nome, usa action='schedule'.`;
+      contextBlock = `\nSTATO: L'utente ha un messaggio in sospeso — manca il destinatario. Se scrive un nome, usa action="schedule".`;
     } else if (pendingContext.status === 'awaiting_confirm') {
-      const schedTime = pendingContext.scheduled_at ? formatRome(new Date(pendingContext.scheduled_at)) : 'non specificato';
-      contextBlock = `\n\nCONTESTO PENDENTE — MESSAGGIO IN ATTESA DI CONFERMA:
-Destinatario: ${pendingContext.recipient_name} (${pendingContext.recipient_number})
-Testo attuale: "${pendingContext.parsed_message}"
-Orario programmato: ${schedTime}
-
-L'utente ha già ricevuto la proposta e sta rispondendo. INTERPRETA COSÌ:
-- OK/sì/conferma/va bene/perfetto → action='confirm'
-- no/annulla/cancella/lascia stare → action='cancel_confirm'
-- QUALSIASI ALTRA COSA → action='modify'
-
-IMPORTANTE: Se l'utente scrive QUALSIASI testo che non è chiaramente una conferma o un annullamento,
-è SEMPRE una richiesta di modifica (action='modify'). Esempi:
-- "cambia il testo" → modify
-- "scrivi più gentilmente" → modify con message_text riscritto
-- "mettilo alle 9" → modify con datetime_iso aggiornato
-- "ciao suocera ricordati il vaccino" → modify con message_text = questo nuovo testo (riscritto)
-- "aggiungi anche di portare il pane" → modify con message_text aggiornato
-- Un qualsiasi testo libero → modify (l'utente vuole sostituire il messaggio con questo)
-
-Quando action='modify':
-- Se l'utente fornisce un nuovo testo, usalo come message_text (RISCRITTO come messaggio diretto)
-- Se chiede di cambiare orario, aggiorna datetime_iso
-- Se chiede di cambiare destinatario, aggiorna recipient_name
-- Mantieni i campi non menzionati invariati
-- In reply, mostra il messaggio aggiornato e chiedi conferma`;
+      const schedTime = pendingContext.scheduled_at ? formatRome(new Date(pendingContext.scheduled_at)) : '?';
+      contextBlock = `\nSTATO: MESSAGGIO IN ATTESA DI CONFERMA.
+A: ${pendingContext.recipient_name} (${pendingContext.recipient_number})
+Testo: "${pendingContext.parsed_message}"
+Quando: ${schedTime}
+- Se l'utente dice OK/sì/conferma → action="confirm"
+- Se dice no/annulla → action="cancel_confirm"
+- QUALSIASI ALTRA COSA (testo, richiesta, modifica) → action="modify" con message_text riscritto`;
     }
   }
 
-  const systemPrompt = `Sei un assistente intelligente per WhatsLater, un'app per programmare messaggi WhatsApp.
-Il tuo compito è interpretare cosa vuole fare l'utente dal suo messaggio in italiano, anche se scritto in modo informale, con errori, o in dialetto.
+  const systemPrompt = `Sei l'assistente di WhatsLater. L'utente ti scrive su WhatsApp per programmare messaggi.
+Ora: ${currentDateTime}
 
-Data e ora corrente (Roma): ${currentDateTime}
+Contatti: ${contactList || 'Nessuno (deve inviare un contatto con 📎)'}
+${contextBlock}
 
-Contatti salvati dell'utente:
-${contactList || 'Nessun contatto salvato. L\'utente deve prima inviare un contatto (📎 → Contatto).'}${contextBlock}
+COMPITO: Interpreta il messaggio e rispondi in JSON.
 
-REGOLE IMPORTANTI:
-1. Se l'utente vuole mandare un messaggio a qualcuno, estrai:
-   - Chi è il destinatario (anche da contesto: 'suocera', 'mia moglie', 'il capo')
-   - Cosa vuole dire (il testo del messaggio)
-   - Quando (se non specificato, chiedi tu l'orario)
+REGOLA CRITICA — message_text:
+message_text è il messaggio che il DESTINATARIO riceverà su WhatsApp.
+NON copiare mai il testo dell'utente. RISCRIVI come messaggio diretto.
+Togli: "di a", "scrivi a", "manda a", "dici a", "ricorda a", orari di invio.
+Aggiungi: saluto naturale, emoji, tono amichevole.
 
-2. Se l'orario NON è specificato chiaramente, NON inventarlo. Invece usa action='ask_time' e in reply chiedi:
-   'A che ora vuoi inviarlo? (es. oggi alle 18, domani mattina, fra 2 ore)'
+ESEMPI DI RISCRITTURA:
+Utente: "di a suocera di ricordare ad Andrea che alle 10 ha il vaccino"
+→ message_text: "Ciao! Ricorda ad Andrea che alle 10 ha il vaccino 💉"
 
-3. Se il destinatario non è chiaro o non è nella lista contatti, usa action='ask_recipient' e chiedi.
-   Se il nome sembra un contatto non ancora salvato, chiedi di inviare prima il contatto con 📎.
+Utente: "scrivi alla mia ragazza che stasera ho la partita e faccio tardi"
+→ message_text: "Amore, stasera ho la partita e faccio tardi! 🙏"
 
-4. REGOLA FONDAMENTALE — RISCRITTURA MESSAGGIO:
-   Il campo message_text è il messaggio che riceverà il destinatario.
-   Devi riscriverlo come se TU fossi l'utente che scrive direttamente al destinatario.
+Utente: "manda a Marco che si ricordi la riunione delle 15"
+→ message_text: "Ciao Marco! Ricordati della riunione alle 15 👋"
 
-   ESEMPIO CRITICO:
-   - Input: "di a suocera di ricordare ad Andrea che alle 10 ha il vaccino, mandaglielo alle 9"
-     SBAGLIATO: message_text = "di a suocera di ricordare ad Andrea che alle 10 ha il vaccino"
-     GIUSTO: message_text = "Ciao! Ricorda ad Andrea che oggi alle 10 ha il vaccino 💉"
+Utente: "di ad Andrea di ricordare a suocera il vaccino"
+→ message_text: "Ciao! Ricordati del vaccino 💉"
 
-   - Input: "scrivi alla mia ragazza che stasera ho la partita e faccio tardi"
-     SBAGLIATO: message_text = "scrivi alla mia ragazza che stasera ho la partita e faccio tardi"
-     GIUSTO: message_text = "Amore, stasera ho la partita e faccio tardi! 🙏"
+AZIONI:
+- schedule: destinatario + orario + messaggio trovati
+- ask_time: manca l'orario
+- ask_recipient: manca il destinatario
+- confirm/cancel_confirm: risposta a messaggio in attesa
+- modify: modifica a messaggio in attesa (QUALSIASI testo non OK/annulla)
+- list/cancel/status/help/chat: comandi vari
 
-   - Input: "manda a Marco che si ricordi la riunione delle 15"
-     SBAGLIATO: message_text = "manda a Marco che si ricordi la riunione delle 15"
-     GIUSTO: message_text = "Ciao Marco! Ricordati della riunione alle 15 👋"
-
-   - Input: "dici a suocera di ricordare ad Andrea che alle 10 deve andare a fare il vaccino"
-     SBAGLIATO: message_text = "dici a suocera di ricordare ad Andrea che alle 10 deve andare a fare il vaccino"
-     GIUSTO: message_text = "Ciao! Ricorda ad Andrea che alle 10 deve andare a fare il vaccino 💉"
-
-   - Input: "scrivi alla suocera di ricordare ad Andrea il vino"
-     GIUSTO: message_text = "Ciao! Ricorda ad Andrea di portare il vino 🍷"
-
-   - Input: "manda a Marco che arrivo tardi scusa"
-     GIUSTO: message_text = "Ciao Marco, arrivo un po' in ritardo, scusa! 🙏"
-
-   REGOLA: Togli SEMPRE le istruzioni di invio (di a, scrivi a, manda a, dici a, alle ore X, mandaglielo alle) dal testo finale.
-   Il messaggio deve sembrare scritto direttamente dall'utente al destinatario, senza nessun riferimento al bot.
-
-5. Sii conversazionale e naturale in italiano. Se l'utente scrive in modo confuso, aiutalo a chiarire.
-
-6. Se vuole vedere messaggi programmati: action='list'
-7. Se vuole annullare: action='cancel', con cancel_target
-8. Se vuole lo stato: action='status'
-9. Se vuole aiuto: action='help'
-10. Se è conversazione generica: action='chat'
-
-11. MODIFICA MESSAGGIO IN ATTESA:
-    Se c'è un contesto pendente awaiting_confirm e l'utente chiede modifiche:
-    - action='modify' con i campi aggiornati (solo quelli da cambiare)
-    - Riscrivi message_text se l'utente lo chiede ("scrivi più gentilmente", "cambia il testo", ecc.)
-    - Cambia datetime_iso se chiede di cambiare orario ("mettilo alle 9", "spostalo a domani")
-    - action='confirm' se dice OK/sì/va bene/perfetto
-    - action='cancel_confirm' se dice no/annulla/lascia stare
-
-ESEMPI:
-- "scrivi alla suocera di ricordare ad Andrea di portare il vino domani sera"
-  → action: schedule, recipient_name: "Suocera", datetime_iso: "domani 20:00", message_text: "Ciao! Ricorda ad Andrea di portare il vino 🍷"
-
-- "Dici a suocera di ricordare ad Andrea che alle 10 deve andare a fare il vaccino. Alla suocera invia il messaggio alle ore 8"
-  → action: schedule, recipient_name: "Suocera", datetime_iso: "oggi 08:00", message_text: "Ciao! Ricorda ad Andrea che alle 10 deve andare a fare il vaccino 💉"
-
-- "di a Marco che arrivo in ritardo"
-  → action: ask_time, recipient_name: "Marco", message_text: "Ciao Marco, arrivo un po' in ritardo! 🙏"
-
-- "manda un promemoria fra 2 ore che abbiamo la cena"
-  → action: ask_recipient, message_text: "Ricordati che stasera abbiamo la cena! 🍽️"
-
-- "alle 19" (con contesto pendente)
-  → action: schedule, con datetime_iso alle 19:00 di oggi
-
-- "no cambia il testo, scrivi più gentilmente" (con awaiting_confirm pendente)
-  → action: modify, message_text: versione più gentile del messaggio
-
-- "mettilo alle 9 invece" (con awaiting_confirm pendente)
-  → action: modify, datetime_iso: oggi alle 09:00
-
-Rispondi SOLO con JSON valido, nient'altro:
-{
-  "action": "schedule" | "ask_time" | "ask_recipient" | "confirm" | "cancel_confirm" | "modify" | "list" | "cancel" | "status" | "help" | "chat",
-  "recipient_name": "nome del destinatario" | null,
-  "datetime_iso": "2026-03-12T15:00:00" | null,
-  "message_text": "testo RISCRITTO naturale per il destinatario" | null,
-  "cancel_target": "numero o nome" | null,
-  "reply": "messaggio in italiano da mostrare all'utente"
-}`;
+JSON (rispondi SOLO questo):
+{"action":"...","recipient_name":"..."|null,"datetime_iso":"2026-03-14T08:00:00"|null,"message_text":"TESTO RISCRITTO"|null,"cancel_target":null,"reply":"risposta per l'utente"}`;
 
   try {
+    console.log('WEBHOOK: AI prompt length=' + systemPrompt.length + ' user="' + userMessage + '"');
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
@@ -423,8 +341,8 @@ Rispondi SOLO con JSON valido, nient'altro:
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
         ],
-        temperature: 0.3,
-        max_tokens: 500,
+        temperature: 0.2,
+        max_tokens: 400,
       }),
     });
 
@@ -448,9 +366,18 @@ Rispondi SOLO con JSON valido, nient'altro:
   }
 }
 
-// ── Always rewrite message via dedicated OpenAI call ──
-// The main AI call often copies raw text. This ALWAYS rewrites to be natural.
+// ── Rewrite message if it still contains sending instructions ──
+// Safety net: if the main AI call failed to rewrite, this does a dedicated rewrite call
 async function verifyAndFixMessage(messageText: string, recipientName: string): Promise<string> {
+  // Quick regex check: does the message still contain sending instructions?
+  const dirtyPatterns = /^(di[' ]?\s*a\s|scrivi\s+a\s|manda\s+a\s|dici\s+a\s|invia\s+a\s|ricorda\s+a\s)/i;
+  if (!dirtyPatterns.test(messageText.trim())) {
+    // Message looks clean — no rewrite needed
+    console.log('WEBHOOK: Message looks clean, no rewrite needed: "' + messageText + '"');
+    return messageText;
+  }
+
+  console.log('WEBHOOK: Message still dirty, rewriting: "' + messageText + '"');
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return messageText;
 
@@ -461,38 +388,18 @@ async function verifyAndFixMessage(messageText: string, recipientName: string): 
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         messages: [
-          { role: 'system', content: `Sei un riscrittore di messaggi WhatsApp. Il tuo UNICO compito è trasformare un'istruzione in un messaggio diretto naturale.
-
-REGOLE ASSOLUTE:
-1. Il messaggio deve sembrare scritto DIRETTAMENTE dall'utente a ${recipientName}
-2. Rimuovi TUTTE le istruzioni di invio: "di a", "scrivi a", "manda a", "dici a", "ricorda a", "mandaglielo", "invia a"
-3. Rimuovi riferimenti a orari di invio: "alle 8", "domani", "fra 2 ore" (questi sono per il BOT, non per il destinatario)
-4. Aggiungi un saluto naturale (Ciao, Ehi, Amore, etc.) se manca
-5. Aggiungi 1-2 emoji appropriati
-6. Mantieni il CONTENUTO del messaggio intatto
-
-ESEMPI:
-"di a suocera di ricordare ad Andrea che alle 10 ha il vaccino" → "Ciao! Ricorda ad Andrea che alle 10 ha il vaccino 💉"
-"scrivi alla mia ragazza che stasera ho la partita e faccio tardi" → "Amore, stasera ho la partita e faccio tardi! 🙏"
-"manda a Marco che si ricordi la riunione delle 15" → "Ciao Marco! Ricordati della riunione alle 15 👋"
-"di Andrea di ricordare a suocera il vaccino" → "Ciao! Ricordati del vaccino 💉"
-"dici a suocera di portare il vino alla cena" → "Ciao! Ricordati di portare il vino alla cena 🍷"
-
-Rispondi SOLO con il messaggio riscritto, nient'altro. Nessuna spiegazione, nessun prefisso.` },
+          { role: 'system', content: 'Riscrivi questo messaggio come se lo stessi inviando direttamente a ' + recipientName + ' su WhatsApp. Rimuovi TUTTE le istruzioni (di a, scrivi a, manda a, dici a). Aggiungi un saluto e emoji. Rispondi SOLO con il messaggio riscritto.' },
           { role: 'user', content: messageText }
         ],
-        temperature: 0.3, max_tokens: 200,
+        temperature: 0.2, max_tokens: 150,
       }),
     });
 
-    if (!res.ok) {
-      console.error('WEBHOOK: verifyAndFixMessage API error:', res.status);
-      return messageText;
-    }
+    if (!res.ok) return messageText;
     const data = await res.json();
     const fixed = (data.choices?.[0]?.message?.content || '').trim().replace(/^["']|["']$/g, '');
     if (fixed && fixed.length > 3) {
-      console.log('WEBHOOK: Message rewritten: "' + messageText + '" → "' + fixed + '"');
+      console.log('WEBHOOK: Rewrite result: "' + messageText + '" → "' + fixed + '"');
       return fixed;
     }
   } catch (e: any) {
