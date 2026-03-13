@@ -201,7 +201,17 @@ export default function DashboardPage() {
 
       if (refreshTimer.current) clearInterval(refreshTimer.current);
       const instName = r.instanceName;
+      const pollStart = Date.now();
       refreshTimer.current = setInterval(async () => {
+        // Timeout after 35 seconds
+        if (Date.now() - pollStart > 35000) {
+          clearInterval(refreshTimer.current!);
+          setConnStatus('disconnected');
+          setQrCode(null);
+          setPairingCode(null);
+          setError('Connessione scaduta. Riprova inserendo di nuovo il codice su WhatsApp → Impostazioni → Dispositivi collegati → Collega dispositivo');
+          return;
+        }
         try {
           const sr = await fetch('/api/connect', {
             method: 'POST',
@@ -497,8 +507,16 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
             <p className="text-xs text-gray-500 mt-1">Inserisci il tuo numero di telefono</p>
           </div>
           {(phoneError || error) && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center text-sm text-red-600">
-              {phoneError || error}
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-center">
+              <p className="text-sm text-red-600">{phoneError || error}</p>
+              {error?.includes('scaduta') && (
+                <button
+                  onClick={() => { if (phone) onConnect(phone); }}
+                  className="mt-3 bg-primary text-white px-5 py-2 rounded-xl font-semibold text-sm hover:bg-primary/90 transition-colors"
+                >
+                  Riprova
+                </button>
+              )}
             </div>
           )}
           {connStatus !== 'connecting' && (
