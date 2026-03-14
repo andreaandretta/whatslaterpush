@@ -60,19 +60,23 @@ async function getOwnerPhone(name: string): Promise<string | null> {
 
 async function setWebhook(name: string): Promise<void> {
     const webhookUrl = `${APP_URL}/api/webhook`;
-    console.log('[connect] setting webhook:', webhookUrl, 'for', name);
+    const webhookSecret = process.env.WEBHOOK_SECRET || '';
+    console.log('[connect] setting webhook:', webhookUrl, 'for', name, 'secret:', webhookSecret ? 'SET' : 'NONE');
     try {
+          const webhookConfig: any = {
+                            url: webhookUrl,
+                            webhook_by_events: false,
+                            webhook_base64: false,
+                            events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+          };
+          // Evolution API v2: pass headers for webhook authentication
+          if (webhookSecret) {
+                  webhookConfig.headers = { 'x-webhook-secret': webhookSecret };
+          }
           const res = await fetch(`${EVO_URL}/webhook/set/${name}`, {
                   method: 'POST',
                   headers: { apikey: EVO_KEY, 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                            webhook: {
-                                        url: webhookUrl,
-                                        webhook_by_events: false,
-                                        webhook_base64: false,
-                                        events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
-                            }
-                  }),
+                  body: JSON.stringify({ webhook: webhookConfig }),
           });
           const data = await res.json();
           console.log('[connect] webhook set result:', JSON.stringify(data));
