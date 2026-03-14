@@ -4,6 +4,7 @@ import {
   parseAIDatetime,
   romeToUtc,
   getRomeOffsetMs,
+  escapeIlike,
 } from '../app/lib/webhook-utils';
 
 describe('extractInlineRecipient', () => {
@@ -107,5 +108,31 @@ describe('parseAIDatetime — timezone handling (P4 fix)', () => {
 
   test('throws on invalid date string', () => {
     expect(() => parseAIDatetime('not-a-date')).toThrow('Invalid date');
+  });
+});
+
+describe('escapeIlike — ILIKE wildcard injection prevention', () => {
+  test('escapes % wildcard', () => {
+    expect(escapeIlike('%admin%')).toBe('\\%admin\\%');
+  });
+
+  test('escapes _ wildcard', () => {
+    expect(escapeIlike('M_rco')).toBe('M\\_rco');
+  });
+
+  test('escapes both % and _', () => {
+    expect(escapeIlike('%test_name%')).toBe('\\%test\\_name\\%');
+  });
+
+  test('leaves normal names unchanged', () => {
+    expect(escapeIlike('Marco Rossi')).toBe('Marco Rossi');
+  });
+
+  test('leaves accented characters unchanged', () => {
+    expect(escapeIlike('José María')).toBe('José María');
+  });
+
+  test('handles empty string', () => {
+    expect(escapeIlike('')).toBe('');
   });
 });

@@ -100,9 +100,15 @@ function formatRome(d) {
 
 // extractInlineRecipient and extractInlineMessage imported from ../../lib/webhook-utils
 
+// Escape ILIKE wildcards to prevent pattern injection
+function escapeIlike(s: string): string {
+  return s.replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
 async function findContactByName(ownerPhone, name) {
   if (!name) return null;
   const cleanName = name.trim();
+  const safeName = escapeIlike(cleanName);
   console.log('WEBHOOK: findContactByName owner=' + ownerPhone + ' name="' + cleanName + '"');
 
   // Try exact ILIKE match first
@@ -110,7 +116,7 @@ async function findContactByName(ownerPhone, name) {
     .from('pending_contacts')
     .select('recipient_number, recipient_name, id')
     .eq('owner_phone', ownerPhone)
-    .ilike('recipient_name', `%${cleanName}%`)
+    .ilike('recipient_name', `%${safeName}%`)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -124,7 +130,7 @@ async function findContactByName(ownerPhone, name) {
     .from('scheduled_messages')
     .select('recipient_number, recipient_name')
     .eq('instance_phone', ownerPhone)
-    .ilike('recipient_name', `%${cleanName}%`)
+    .ilike('recipient_name', `%${safeName}%`)
     .not('recipient_name', 'is', null)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -496,6 +502,16 @@ async function getContactList(ownerPhone: string): Promise<string> {
 export async function POST(req) {
   let rawBody = '';
   try {
+    // Webhook authentication: validate secret from Evolution API
+    const webhookSecret = process.env.WEBHOOK_SECRET;
+    if (webhookSecret) {
+      const authHeader = req.headers.get('x-webhook-secret') || req.headers.get('authorization');
+      if (authHeader !== webhookSecret && authHeader !== 'Bearer ' + webhookSecret) {
+        console.log('WEBHOOK: Unauthorized request, invalid secret');
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
+
     const payload = await req.json();
     rawBody = JSON.stringify(payload).substring(0, 500);
     console.log('WEBHOOK incoming:', rawBody);

@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { normalizeItalianPhone } from '../../../lib/phone';
+import { shouldSendMessage, rescheduleTomorrow } from '../../../lib/cron-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -88,7 +89,7 @@ export async function GET(req: NextRequest) {
       .eq('status', 'pending')
       .lte('scheduled_at', new Date().toISOString())
       .order('scheduled_at', { ascending: true })
-      .limit(50);
+      .limit(25);
 
     if (queryErr) {
       console.error('CRON: Query error:', queryErr.message);
@@ -102,57 +103,60 @@ export async function GET(req: NextRequest) {
     const disconnectedInstances = new Set<string>();
 
     // Process messages in batches of 5 for speed (P11: avoid Vercel Hobby 10s timeout)
+    const TIMEOUT_MS = 8000; // bail out before Vercel's 10s limit
     const messages = pendingMessages || [];
+    let timedOut = false;
     for (let i = 0; i < messages.length; i += 5) {
+      // Timeout guard: stop processing if we're close to the 10s limit
+      if (Date.now() - startTime > TIMEOUT_MS) {
+        console.log('CRON: TIMEOUT GUARD — stopping after ' + (Date.now() - startTime) + 'ms, ' + (messages.length - i) + ' messages deferred');
+        timedOut = true;
+        break;
+      }
+
       const batch = messages.slice(i, i + 5);
       const results = await Promise.allSettled(batch.map(async (msg) => {
-        const userInst = msg.user_instances;
-        if (!userInst || !userInst.instance_name) {
+        // Use shouldSendMessage from cron-utils (tested by 19 unit tests)
+        const decision = shouldSendMessage(msg);
+
+        if (decision === 'no_instance') {
           console.error('CRON: Message ' + msg.id + ' has no linked user_instance. Skipping.');
           return 'skipped' as const;
         }
 
-        const instanceName = userInst.instance_name;
-        const ownerPhone = userInst.phone_number;
+        const instanceName = msg.user_instances.instance_name;
+        const ownerPhone = msg.user_instances.phone_number;
 
-        // P17: Check connection_status before sending
-        if (userInst.connection_status !== 'open') {
+        if (decision === 'disconnected') {
           if (!disconnectedInstances.has(instanceName)) {
             disconnectedInstances.add(instanceName);
-            console.log('CRON: Instance ' + instanceName + ' is ' + (userInst.connection_status || 'unknown') + ', rescheduling messages to tomorrow');
+            console.log('CRON: Instance ' + instanceName + ' is ' + (msg.user_instances.connection_status || 'unknown') + ', rescheduling to tomorrow');
           }
-          // Reschedule to tomorrow same time (not failed — user did nothing wrong)
-          const tomorrow = new Date(msg.scheduled_at);
-          tomorrow.setDate(tomorrow.getDate() + 1);
+          const tomorrowIso = rescheduleTomorrow(msg.scheduled_at);
           await supabase.from('scheduled_messages').update({
-            scheduled_at: tomorrow.toISOString(),
-            error_message: 'Instance disconnected, rescheduled to ' + tomorrow.toISOString()
+            scheduled_at: tomorrowIso,
+            error_message: 'Instance disconnected, rescheduled to ' + tomorrowIso
           }).eq('id', msg.id);
           return 'disconnected' as const;
         }
 
-        // P9: Check trial/subscription before sending
-        const subStatus = userInst.subscription_status;
-        const trialEnd = userInst.trial_ends_at;
-        if (subStatus !== 'active') {
-          const trialExpiredAt = trialEnd ? new Date(trialEnd) : null;
-          if (!trialExpiredAt || trialExpiredAt < new Date()) {
-            console.log('CRON: Trial expired for ' + ownerPhone + ' (status=' + subStatus + ' trial_ends=' + trialEnd + ')');
-            await supabase.from('scheduled_messages').update({
-              status: 'cancelled',
-              error_message: 'Trial scaduto'
-            }).eq('id', msg.id);
-            try {
-              await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
-                method: 'POST',
-                headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ number: ownerPhone, text: '⏰ Il tuo trial WhatsLater è scaduto. I messaggi programmati sono stati sospesi.\n\nVai su https://whatslaterpush.vercel.app/dashboard per continuare a usare il servizio.' })
-              });
-            } catch (e) {}
-            return 'trial_expired' as const;
-          }
+        if (decision === 'trial_expired') {
+          console.log('CRON: Trial expired for ' + ownerPhone);
+          await supabase.from('scheduled_messages').update({
+            status: 'cancelled',
+            error_message: 'Trial scaduto'
+          }).eq('id', msg.id);
+          try {
+            await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
+              method: 'POST',
+              headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ number: ownerPhone, text: '⏰ Il tuo trial WhatsLater è scaduto. I messaggi programmati sono stati sospesi.\n\nVai su https://whatslaterpush.vercel.app/dashboard per continuare a usare il servizio.' })
+            });
+          } catch (e) {}
+          return 'trial_expired' as const;
         }
 
+        // decision === 'send' — proceed with rate limiting and sending
         const isBlocked = await checkFailures(supabase, ownerPhone);
         if (isBlocked) {
           try {
@@ -171,7 +175,7 @@ export async function GET(req: NextRequest) {
           return 'rate_limited' as const;
         }
 
-        // P11: Minimal jitter (200-400ms) instead of 2-4 seconds
+        // Minimal jitter (200-400ms)
         await new Promise(r => setTimeout(r, 200 + Math.random() * 200));
         console.log('CRON: Sending msg ' + msg.id + ' via instance=' + instanceName + ' to=' + msg.recipient_number);
         const res = await fetch(
@@ -240,8 +244,8 @@ export async function GET(req: NextRequest) {
     
 
     const dur = Date.now() - startTime;
-    console.log('CRON DONE sent=' + sent + ' failed=' + failed + ' skip=' + skipped + ' rl=' + rateLimited + ' trial_exp=' + trialExpired + ' disconn=' + disconnected + ' ms=' + dur);
-    return NextResponse.json({ sent, failed, skipped, rateLimited, trialExpired, disconnected, duration: dur + 'ms', timestamp: new Date().toISOString() });
+    console.log('CRON DONE sent=' + sent + ' failed=' + failed + ' skip=' + skipped + ' rl=' + rateLimited + ' trial_exp=' + trialExpired + ' disconn=' + disconnected + ' timedOut=' + timedOut + ' ms=' + dur);
+    return NextResponse.json({ sent, failed, skipped, rateLimited, trialExpired, disconnected, timedOut, duration: dur + 'ms', timestamp: new Date().toISOString() });
   } catch (err) {
     console.error('CRON ERROR:', (err as Error).message);
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });

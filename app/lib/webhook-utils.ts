@@ -19,6 +19,11 @@ export function romeToUtc(d: Date): Date {
   return new Date(d.getTime() - getRomeOffsetMs());
 }
 
+// ── ILIKE escape (prevents wildcard injection) ──
+export function escapeIlike(s: string): string {
+  return s.replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
 // ── Inline recipient/message extraction ──
 export function extractInlineRecipient(text: string): string | null {
   const m = /\b(?:manda|mandami|mandagli|mandale|scrivi|scrivimi|scrivigli|scrivile|invia|inviami|avvisa|avvisami|dici|digli|dille|ricordami|promemoria|reminder|comunica)\s+ad?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,25}?)(?=\s+(?:domani|fra|tra|stasera|stamattina|stanotte|all[ae]?\s+\d|il\s+\d|\d{1,2}[\/\-]\d))/i.exec(text);
