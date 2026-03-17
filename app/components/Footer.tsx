@@ -12,8 +12,8 @@ export default function Footer() {
         <p className="text-gray-400 mb-12">Scrivi ora, invia dopo.</p>
 
         <div className="flex flex-wrap justify-center gap-8 text-sm font-medium text-gray-300 mb-16">
-          <a href="#" className="hover:text-white transition-colors">Privacy Policy</a>
-          <a href="#" className="hover:text-white transition-colors">Termini di Servizio</a>
+          <a href="/privacy" className="hover:text-white transition-colors">Privacy Policy</a>
+          <a href="/terms" className="hover:text-white transition-colors">Termini di Servizio</a>
           <a href="#" className="hover:text-white transition-colors">Contatti</a>
         </div>
 
