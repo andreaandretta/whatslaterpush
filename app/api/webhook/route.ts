@@ -503,11 +503,19 @@ export async function POST(req) {
   let rawBody = '';
   try {
     // Webhook authentication: validate secret from Evolution API
+    // Check multiple header formats — Evolution API v2 may send differently
     const webhookSecret = process.env.WEBHOOK_SECRET;
     if (webhookSecret) {
-      const authHeader = req.headers.get('x-webhook-secret') || req.headers.get('authorization');
-      if (authHeader !== webhookSecret && authHeader !== 'Bearer ' + webhookSecret) {
-        console.log('WEBHOOK: Unauthorized request, invalid secret');
+      const secretHeader = req.headers.get('x-webhook-secret');
+      const authHeader = req.headers.get('authorization');
+      const apiKeyHeader = req.headers.get('apikey');
+      const matched =
+        secretHeader === webhookSecret ||
+        authHeader === webhookSecret ||
+        authHeader === 'Bearer ' + webhookSecret ||
+        apiKeyHeader === webhookSecret;
+      if (!matched) {
+        console.log('WEBHOOK: Unauthorized — headers received: x-webhook-secret=' + (secretHeader || 'NONE') + ' authorization=' + (authHeader || 'NONE') + ' apikey=' + (apiKeyHeader || 'NONE'));
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
     }

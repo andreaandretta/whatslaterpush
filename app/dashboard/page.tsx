@@ -27,7 +27,7 @@ const getStoredExpiry   = () => (typeof window !== 'undefined' ? localStorage.ge
 const savePhone    = (p: string) => { if (p) localStorage.setItem(PHONE_KEY, p); };
 const saveInstance = (n: string) => { if (n) localStorage.setItem(INST_KEY, n); };
 const saveExpiry   = () => { localStorage.setItem(EXPIRY_KEY, String(Date.now() + 30 * 24 * 3600 * 1000)); };
-const clearPhone   = () => { localStorage.removeItem(PHONE_KEY); localStorage.removeItem(INST_KEY); localStorage.removeItem(EXPIRY_KEY); };
+const clearPhone   = () => { localStorage.removeItem(PHONE_KEY); localStorage.removeItem(INST_KEY); localStorage.removeItem(EXPIRY_KEY); localStorage.removeItem('sw_onboarding_shown'); };
 
 interface SubscriptionState {
   status: string;
@@ -78,34 +78,67 @@ export default function DashboardPage() {
         setSessionValidated(true);
         return;
       }
-      try {
-        const res = await fetch('/api/connect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'status', instanceName: storedInst }),
-        });
-        const r = await res.json();
-        if (r.status === 'not_found' || r.status === 'close') {
-          clearPhone();
-          setSessionValidated(true);
-          return;
-        }
-        if (r.status === 'open') {
-          if (r.owner && normalizeItalianPhone(r.owner) !== normalizeItalianPhone(storedPhone)) {
+
+      // Try up to 2 times with a delay to handle transient states
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await fetch('/api/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'status', instanceName: storedInst }),
+          });
+          const r = await res.json();
+
+          if (r.status === 'open') {
+            if (r.owner && normalizeItalianPhone(r.owner) !== normalizeItalianPhone(storedPhone)) {
+              clearPhone();
+              setSessionValidated(true);
+              return;
+            }
+            setUserPhone(normalizeItalianPhone(storedPhone));
+            setInstanceName(storedInst);
+            setConnStatus('connected');
+            saveExpiry();
+            fetchMessagesForPhone(storedPhone);
+            setSessionValidated(true);
+            return;
+          }
+
+          if (r.status === 'not_found') {
+            // Instance doesn't exist at all — clear session
             clearPhone();
             setSessionValidated(true);
             return;
           }
-          setUserPhone(normalizeItalianPhone(storedPhone));
-          setInstanceName(storedInst);
-          setConnStatus('connected');
-          saveExpiry();
-          fetchMessagesForPhone(storedPhone);
-        } else {
-          clearPhone();
+
+          // Transient states: 'close', 'connecting', etc.
+          // On first attempt, wait and retry before giving up
+          if (attempt === 0) {
+            console.log('[dashboard] status=' + r.status + ', retrying in 3s...');
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            continue;
+          }
+
+          // After retry, if still 'close' — keep session but show disconnected
+          // User can reconnect without losing their phone/instance data
+          if (r.status === 'close') {
+            setUserPhone(normalizeItalianPhone(storedPhone));
+            setInstanceName(storedInst);
+            setConnStatus('disconnected');
+          } else {
+            // 'connecting' or other transient — show as connecting
+            setUserPhone(normalizeItalianPhone(storedPhone));
+            setInstanceName(storedInst);
+            setConnStatus('disconnected');
+          }
+        } catch {
+          // On network error, keep session data — don't logout
+          if (attempt === 1) {
+            setUserPhone(normalizeItalianPhone(storedPhone));
+            setInstanceName(storedInst);
+            setConnStatus('disconnected');
+          }
         }
-      } catch {
-        // on network error, stay disconnected
       }
       setSessionValidated(true);
     };
@@ -405,8 +438,11 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
   const prevConnStatusRef = useRef<string>('disconnected');
 
   useEffect(() => {
-    if (connStatus === 'connected' && prevConnStatusRef.current !== 'connected') {
+    // Show onboarding only on FIRST ever connection (not on page refresh)
+    const alreadyShown = typeof window !== 'undefined' && localStorage.getItem('sw_onboarding_shown');
+    if (connStatus === 'connected' && prevConnStatusRef.current === 'connecting' && !alreadyShown) {
       setShowOnboarding(true);
+      localStorage.setItem('sw_onboarding_shown', '1');
     }
     prevConnStatusRef.current = connStatus;
   }, [connStatus]);
@@ -439,7 +475,7 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
     return (
       <>
         {showOnboarding && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="fixed inset-x-0 top-16 bottom-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
             <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 flex flex-col items-center text-center">
               <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
                 <CheckCircle2 className="w-8 h-8 text-primary" />

@@ -3,6 +3,7 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/__tests__'],
+  testPathIgnorePatterns: ['<rootDir>/__tests__/helpers/'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/app/$1',
   },

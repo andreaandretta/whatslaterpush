@@ -63,23 +63,37 @@ async function setWebhook(name: string): Promise<void> {
     const webhookSecret = process.env.WEBHOOK_SECRET || '';
     console.log('[connect] setting webhook:', webhookUrl, 'for', name, 'secret:', webhookSecret ? 'SET' : 'NONE');
     try {
-          const webhookConfig: any = {
+          // Evolution API v2: flat config (no wrapper object)
+          const webhookBody: any = {
+                            enabled: true,
                             url: webhookUrl,
                             webhook_by_events: false,
                             webhook_base64: false,
                             events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
           };
-          // Evolution API v2: pass headers for webhook authentication
           if (webhookSecret) {
-                  webhookConfig.headers = { 'x-webhook-secret': webhookSecret };
+                  webhookBody.headers = { 'x-webhook-secret': webhookSecret };
           }
+          // Try flat format first (Evolution API v2.x)
           const res = await fetch(`${EVO_URL}/webhook/set/${name}`, {
                   method: 'POST',
-                  headers: { apikey: EVO_KEY, 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ webhook: webhookConfig }),
+                  headers: { apikey: EVO_KEY!, 'Content-Type': 'application/json' },
+                  body: JSON.stringify(webhookBody),
           });
           const data = await res.json();
           console.log('[connect] webhook set result:', JSON.stringify(data));
+
+          // If flat format returned error, try wrapped format (v2.0 compat)
+          if (data?.error || data?.status === 'error' || !res.ok) {
+                  console.log('[connect] flat format failed, trying wrapped format...');
+                  const res2 = await fetch(`${EVO_URL}/webhook/set/${name}`, {
+                          method: 'POST',
+                          headers: { apikey: EVO_KEY!, 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ webhook: webhookBody }),
+                  });
+                  const data2 = await res2.json();
+                  console.log('[connect] webhook set (wrapped) result:', JSON.stringify(data2));
+          }
     } catch (e) { console.log('[connect] setWebhook error:', e); }
 }
 
@@ -180,10 +194,12 @@ export async function POST(req: NextRequest) {
                           qrcode: true,            // BUG1 FIX: true to get QR from create response
                           integration: 'WHATSAPP-BAILEYS',
                           webhook: {
+                                      enabled: true,
                                       url: webhookCreateUrl,
                                       webhook_by_events: false,
                                       webhook_base64: false,
                                       events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+                                      ...(process.env.WEBHOOK_SECRET ? { headers: { 'x-webhook-secret': process.env.WEBHOOK_SECRET } } : {}),
                           },
                 };
                 console.log('[connect] creating instance:', JSON.stringify(createBody));
@@ -328,6 +344,37 @@ export async function POST(req: NextRequest) {
         if (!instanceName) return NextResponse.json({ error: 'instanceName required' }, { status: 400 });
         await setWebhook(instanceName);
         return NextResponse.json({ success: true });
+  }
+
+  // ── REFRESH WEBHOOKS — re-set webhook on all active instances ────────────
+  if (action === 'refreshWebhooks') {
+        const supa = getSupabase();
+        const { data: instances } = await supa.from('user_instances')
+          .select('instance_name, connection_status')
+          .in('connection_status', ['open', 'connecting']);
+        const results: any[] = [];
+        for (const inst of (instances || [])) {
+          try {
+                await setWebhook(inst.instance_name);
+                results.push({ instance: inst.instance_name, status: 'ok' });
+          } catch (e: any) {
+                results.push({ instance: inst.instance_name, status: 'error', error: e.message });
+          }
+        }
+        // Also check current webhook config for each instance
+        const configs: any[] = [];
+        for (const inst of (instances || [])) {
+          try {
+                const res = await fetch(`${EVO_URL}/webhook/find/${inst.instance_name}`, {
+                          headers: { apikey: EVO_KEY! },
+                });
+                const data = await res.json();
+                configs.push({ instance: inst.instance_name, webhook: data });
+          } catch (e: any) {
+                configs.push({ instance: inst.instance_name, error: e.message });
+          }
+        }
+        return NextResponse.json({ refreshed: results, configs });
   }
 
   // ── LEGACY getCode / getPairingCode — REMOVED ─────────────────────────────
