@@ -135,7 +135,7 @@ export function createFetchMock() {
 
 // Helper to create a mock NextRequest-like object
 export function mockRequest(body: any, headers: Record<string, string> = {}) {
-  const headerMap = new Map(Object.entries(headers));
+  const headerMap = new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
   return {
     json: () => Promise.resolve(body),
     headers: {

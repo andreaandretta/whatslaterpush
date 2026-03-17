@@ -515,7 +515,7 @@ export async function POST(req) {
         authHeader === 'Bearer ' + webhookSecret ||
         apiKeyHeader === webhookSecret;
       if (!matched) {
-        console.log('WEBHOOK: Unauthorized — headers received: x-webhook-secret=' + (secretHeader || 'NONE') + ' authorization=' + (authHeader || 'NONE') + ' apikey=' + (apiKeyHeader || 'NONE'));
+        console.log('WEBHOOK: Unauthorized — headers present: x-webhook-secret=' + (secretHeader ? 'YES' : 'NONE') + ' authorization=' + (authHeader ? 'YES' : 'NONE') + ' apikey=' + (apiKeyHeader ? 'YES' : 'NONE'));
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
     }

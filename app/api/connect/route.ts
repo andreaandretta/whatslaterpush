@@ -348,6 +348,10 @@ export async function POST(req: NextRequest) {
 
   // ── REFRESH WEBHOOKS — re-set webhook on all active instances ────────────
   if (action === 'refreshWebhooks') {
+        const { secret } = body;
+        if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) {
+          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
         const supa = getSupabase();
         const { data: instances } = await supa.from('user_instances')
           .select('instance_name, connection_status')

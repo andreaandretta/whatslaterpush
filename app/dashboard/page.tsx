@@ -119,18 +119,11 @@ export default function DashboardPage() {
             continue;
           }
 
-          // After retry, if still 'close' — keep session but show disconnected
+          // After retry, still not open — keep session but show disconnected
           // User can reconnect without losing their phone/instance data
-          if (r.status === 'close') {
-            setUserPhone(normalizeItalianPhone(storedPhone));
-            setInstanceName(storedInst);
-            setConnStatus('disconnected');
-          } else {
-            // 'connecting' or other transient — show as connecting
-            setUserPhone(normalizeItalianPhone(storedPhone));
-            setInstanceName(storedInst);
-            setConnStatus('disconnected');
-          }
+          setUserPhone(normalizeItalianPhone(storedPhone));
+          setInstanceName(storedInst);
+          setConnStatus('disconnected');
         } catch {
           // On network error, keep session data — don't logout
           if (attempt === 1) {
