@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { normalizeItalianPhone } from '../../lib/phone'
+import { getPlanLimits } from '../../lib/plans'
 
 export const dynamic = 'force-dynamic';
 
@@ -28,10 +29,14 @@ export async function GET(req: NextRequest) {
                                 if (!user) {
                                         return NextResponse.json({ error: 'User not found' }, { status: 404 })
                                 }
+                        const planLimits = getPlanLimits(user.subscription_plan || 'free')
+                        const historyStart = new Date(Date.now() - planLimits.historyDays * 24 * 60 * 60 * 1000).toISOString()
+
                         const { data, error } = await supabase
                                         .from('scheduled_messages')
                                         .select('*')
                                         .eq('instance_phone', normalizedPhone)
+                                        .gte('created_at', historyStart)
                                         .order('scheduled_at', { ascending: false })
 
                         if (error) {
