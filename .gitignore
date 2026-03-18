@@ -39,3 +39,6 @@ next-env.d.ts
 .idea
 *.swp
 *.swo
+
+# MCP config (contains secrets)
+.mcp.json
