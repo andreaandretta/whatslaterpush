@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { normalizeItalianPhone } from '../../../lib/phone';
 import { shouldSendMessage, rescheduleTomorrow } from '../../../lib/cron-utils';
+import { getPlanLimits } from '../../../lib/plans';
 
 export const dynamic = 'force-dynamic';
 
@@ -81,6 +82,40 @@ export async function GET(req: NextRequest) {
       console.log('CRON: Cleaned up ' + staleCleanup.length + ' stale awaiting records');
     }
 
+    // Midnight reset: reset daily counters for all users
+    const { data: resetResult } = await supabase
+      .from('user_instances')
+      .update({ messages_sent_today: 0, upsell_sent_today: false })
+      .gt('messages_sent_today', 0)
+      .select('id');
+    if (resetResult?.length) {
+      console.log('CRON: Reset daily counters for ' + resetResult.length + ' users');
+    }
+
+    // Trial → Free downgrade
+    const { data: expiredTrials } = await supabase
+      .from('user_instances')
+      .select('phone_number, instance_name')
+      .eq('subscription_plan', 'trial')
+      .lt('trial_ends_at', new Date().toISOString());
+
+    for (const trial of (expiredTrials || [])) {
+      await supabase.from('user_instances')
+        .update({ subscription_plan: 'free' })
+        .eq('phone_number', trial.phone_number);
+      try {
+        await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + trial.instance_name, {
+          method: 'POST',
+          headers: { apikey: process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            number: trial.phone_number,
+            text: '⏰ Il tuo trial WhatsLater è scaduto.\n\nHai 3 messaggi gratuiti al giorno. Per 20/giorno, passa a Personal a €4,99/mese:\nhttps://whatslaterpush.vercel.app/dashboard'
+          }),
+        });
+      } catch (e) {}
+      console.log('CRON: Trial expired → free for ' + trial.phone_number);
+    }
+
     // P0 FIX: Single JOIN query - each row carries its own instance_name
     // No per-user loop, no global state, no instance confusion possible
     const { data: pendingMessages, error: queryErr } = await supabase
@@ -156,7 +191,36 @@ export async function GET(req: NextRequest) {
           return 'trial_expired' as const;
         }
 
-        // decision === 'send' — proceed with rate limiting and sending
+        // decision === 'send' — proceed with tier limits, cool-down, rate limiting
+
+        // Tier daily limit check
+        const plan = msg.user_instances.subscription_plan || 'free';
+        const planLimits = getPlanLimits(plan);
+        const sentToday = msg.user_instances.messages_sent_today || 0;
+        if (sentToday >= planLimits.dailyLimit) {
+          console.log('CRON: DAILY LIMIT reached for ' + ownerPhone + ' (' + sentToday + '/' + planLimits.dailyLimit + ' plan=' + plan + ')');
+          return 'rate_limited' as const;
+        }
+
+        // Cool-down: max 3 messages to same recipient in 24h
+        const { count: recentToRecipient } = await supabase
+          .from('scheduled_messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('instance_phone', ownerPhone)
+          .eq('recipient_number', msg.recipient_number)
+          .eq('status', 'sent')
+          .gte('sent_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+
+        if ((recentToRecipient || 0) >= 3) {
+          console.log('CRON: COOLDOWN — 3 msgs already sent to ' + msg.recipient_number + ' in 24h');
+          const tomorrowIso = rescheduleTomorrow(msg.scheduled_at);
+          await supabase.from('scheduled_messages').update({
+            scheduled_at: tomorrowIso,
+            error_message: 'Cool-down: max 3 messaggi allo stesso contatto in 24h. Riprogrammato.'
+          }).eq('id', msg.id);
+          return 'rate_limited' as const;
+        }
+
         const isBlocked = await checkFailures(supabase, ownerPhone);
         if (isBlocked) {
           try {
@@ -194,6 +258,34 @@ export async function GET(req: NextRequest) {
         await supabase.from('scheduled_messages')
           .update({ status: 'sent', sent_at: new Date().toISOString(), user_notified: true })
           .eq('id', msg.id);
+
+        // Increment daily counter
+        const newSentToday = sentToday + 1;
+        await supabase.from('user_instances')
+          .update({ messages_sent_today: newSentToday })
+          .eq('phone_number', ownerPhone);
+
+        // Upsell at 80% of daily limit (once per day)
+        const upsellThreshold = Math.floor(planLimits.dailyLimit * 0.8);
+        if (newSentToday === upsellThreshold && !(msg.user_instances.upsell_sent_today) && plan !== 'business') {
+          const nextPlan = (plan === 'free' || plan === 'trial') ? 'Personal' : 'Business';
+          const nextLimit = (plan === 'free' || plan === 'trial') ? 20 : 50;
+          const nextPrice = (plan === 'free' || plan === 'trial') ? '€4,99' : '€19,99';
+          try {
+            await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
+              method: 'POST',
+              headers: { apikey: process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                number: ownerPhone,
+                text: `📊 Hai usato ${newSentToday} dei tuoi ${planLimits.dailyLimit} messaggi oggi.\n\nPassa a ${nextPlan} per ${nextLimit}/giorno a ${nextPrice}/mese:\nhttps://whatslaterpush.vercel.app/dashboard`
+              }),
+            });
+            await supabase.from('user_instances')
+              .update({ upsell_sent_today: true })
+              .eq('phone_number', ownerPhone);
+          } catch (e) {}
+        }
+
         try {
           await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
             method: 'POST',
