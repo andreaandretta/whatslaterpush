@@ -67,16 +67,16 @@ WhatsLater non compete direttamente con nessuno di questi. Crea una nuova catego
 
 ### Modello: Freemium a 3 tier con cool-down automatico
 
-| | Free | Personal (€4.99/mese) | Business (€19.99/mese) |
-|---|---|---|---|
-| Messaggi/giorno | 3 | 20 | 50 |
-| Messaggi/mese | ~90 | ~600 | ~1.500 |
-| Contatti salvati | 5 | 50 | Illimitati |
-| AI parsing (Groq) | Incluso | Incluso | Incluso + rewrite |
-| Retry automatico | 1x | 3x | 3x + notifica errore |
-| Cool-down anti-ban | Aggressivo | Moderato | Leggero |
-| Supporto | FAQ | Email | WhatsApp prioritario |
-| Storico messaggi | 7 giorni | 30 giorni | 90 giorni + export |
+| | Trial (7 giorni) | Free | Personal (€4.99/mese) | Business (€19.99/mese) |
+|---|---|---|---|---|
+| Messaggi/giorno | 20 | 3 | 20 | 50 |
+| Contatti salvati | 50 | 5 | 50 | Illimitati |
+| AI parsing (Groq) | Incluso | Incluso | Incluso | Incluso + rewrite |
+| Retry automatico | 3x | 1x | 3x | 3x + notifica errore |
+| Supporto | Email | FAQ | Email | WhatsApp prioritario |
+| Storico messaggi | 30 giorni | 7 giorni | 30 giorni | 90 giorni + export |
+
+> **Nota:** Il trial ha gli stessi limiti del piano Personal per dare l'esperienza completa e incentivare la conversione.
 
 ### Logica dei tier
 
@@ -295,18 +295,28 @@ Stripe è integrato nel codice ma non configurato. Nessun prodotto o prezzo crea
 
 ### Roadmap tecnica e di business
 
-#### FASE 0 — Pre-lancio (2-3 settimane)
+#### FASE 0 — "7 Giorni Build + 23 Giorni Sell" (RIVISTA — Marzo 2026)
 
-| # | Task | Priorità | Effort |
-|---|------|----------|--------|
-| 0.1 | Attivare Stripe: prodotti, price ID, checkout, webhook | Bloccante | 2-3 giorni |
-| 0.2 | Implementare tier Free/Personal/Business con limiti | Bloccante | 2-3 giorni |
-| 0.3 | Downgrade automatico trial → Free | Bloccante | 1-2 giorni |
-| 0.4 | Privacy Policy + ToS in italiano (/privacy, /terms) | Bloccante | 1 giorno |
-| 0.5 | Cool-down per destinatario (max 3 msg stesso numero/24h) | Bloccante | 1 giorno |
-| 0.6 | Disclaimer onboarding + checkbox accettazione ToS | Alto | 0.5 giorni |
-| 0.7 | Referral system (link codice, 30 giorni gratis entrambi) | Alto | 2 giorni |
-| 0.8 | SEO landing page (meta tag, H1/H2, schema, sitemap) | Medio | 1 giorno |
+> Approccio rivisto dopo analisi critica. Principio: costruire il minimo per lanciare, poi vendere.
+> Piano dettagliato: vedi `LAUNCH_PLAN.md`
+
+| Giorno | Task | Stato |
+|--------|------|-------|
+| 1 | Account Stripe + prodotti + price ID. Migration DB | Da fare |
+| 2 | `app/lib/plans.ts` + API checkout + portal | Da fare |
+| 3 | API Stripe webhook. Test completo in test mode | Da fare |
+| 4 | Tier enforcement cron: limiti, reset, cool-down, trial→free, upsell | Da fare |
+| 5 | Tier enforcement webhook: limite contatti. Dashboard: storico + bottoni upgrade | Da fare |
+| 6 | Disclaimer WhatsApp post-connessione. Stripe live mode | Da fare |
+| 7 | Buffer: bugfix, test e2e, deploy | Da fare |
+| — | Privacy Policy + ToS (/privacy, /terms) | ✅ Completato |
+
+**Tagliato da FASE 0 (rientra dopo validazione):**
+- Referral system → dopo 20 utenti
+- SEO/blog/sitemap → dopo 50 utenti
+- Video TikTok/Reels → dopo validazione messaging
+- Messaggi ricorrenti → solo se feedback utenti lo richiede
+- Integrazione Google Calendar → solo se feedback utenti lo richiede
 
 #### FASE 1 — Lancio e primi 100 utenti (Mese 1-3)
 
@@ -357,47 +367,47 @@ Ipotesi: 30-35% utenti attivi paganti, mix 70% Personal / 30% Business.
 
 ---
 
-## 6. Prossimi 30 Giorni
+## 6. Prossimi 30 Giorni (RIVISTO — Marzo 2026)
 
-Azioni concrete in ordine di priorità per il lancio.
+> Piano operativo rivisto con approccio "7 giorni build + 23 giorni sell".
+> Piano dettagliato con specifiche tecniche: vedi `LAUNCH_PLAN.md`
 
-### Settimana 1 — Billing e Legal (BLOCCANTI)
+### Settimana 1 — Build (solo codice, zero outreach)
 
-- [ ] **Giorno 1-2:** Creare account Stripe, configurare prodotti Personal (€4.99) e Business (€19.99), testare checkout in modalità test
-- [ ] **Giorno 2-3:** Implementare tier system nel codice — limiti messaggi/giorno per piano Free (3), Personal (20), Business (50)
-- [ ] **Giorno 3-4:** Implementare downgrade automatico: trial scade → piano Free, messaggi in pausa, notifica WhatsApp
-- [ ] **Giorno 4-5:** Scrivere e pubblicare Privacy Policy (/privacy) e Termini di Servizio (/terms) in italiano
+- [x] Privacy Policy + ToS in italiano (/privacy, /terms)
+- [ ] Stripe completo: account, prodotti, checkout, webhook, portal
+- [ ] Tier system: Free/Trial/Personal/Business con limiti enforced
+- [ ] Cool-down: max 3 msg stesso destinatario/24h
+- [ ] Trial → Free downgrade automatico + notifica WhatsApp
+- [ ] Disclaimer WhatsApp post-connessione (prima dell'onboarding)
+- [ ] Deploy produzione
 
-### Settimana 2 — Anti-ban e Onboarding
+### Settimane 2-4 — Sell (solo outreach, codice solo per bugfix)
 
-- [ ] **Giorno 6:** Cool-down per destinatario: max 3 messaggi allo stesso numero in 24h
-- [ ] **Giorno 7:** Disclaimer onboarding con checkbox accettazione ToS
-- [ ] **Giorno 8-9:** Referral system: generazione link, tracking in DB, 30 giorni gratis per chi invita e chi viene invitato
-- [ ] **Giorno 10:** Attivare Stripe in modalità live, testare flusso completo end-to-end
-
-### Settimana 3 — SEO e Contenuti
-
-- [ ] **Giorno 11:** Ottimizzare landing page SEO: meta tag, H1/H2, Open Graph, schema markup, sitemap.xml
-- [ ] **Giorno 12-13:** Scrivere 2 articoli blog SEO: "Come ridurre i no-show con WhatsApp" e "Alternative gratuite a WATI per piccole imprese"
-- [ ] **Giorno 14-15:** Creare 2 video TikTok/Reels: demo setup 30 secondi, demo scheduling completo 60 secondi (base: contenuto /tutorial)
-
-### Settimana 4 — Outreach e Primi Utenti
-
-- [ ] **Giorno 16-20:** Contattare 50 professionisti locali: medici, dentisti, personal trainer, estetiste, parrucchieri
-- [ ] **Giorno 21-23:** Postare su 5 gruppi Facebook di settore
-- [ ] **Giorno 24-25:** Pubblicare 2 post LinkedIn su riduzione no-show
-- [ ] **Giorno 26-28:** Raccogliere feedback dai primi utenti, iterare su UX
-- [ ] **Giorno 29-30:** Primo report: utenti attivi, conversione trial → pagante, messaggi inviati, problemi segnalati
+- [ ] 50 professionisti locali di persona: medici, dentisti, parrucchieri, estetiste, personal trainer
+- [ ] Demo live + setup sul posto per ogni prospect
+- [ ] Follow-up trial attivi, raccolta feedback
+- [ ] Push conversione trial → pagante
+- [ ] Report: cosa funziona, cosa no, cosa chiedono
 
 ### Obiettivo fine mese 1
 
-- 20+ utenti attivi (mix free e trial)
-- 5+ utenti paganti
-- €40+ MRR
-- Zero problemi di ban WhatsApp
-- Privacy Policy e ToS pubblicati
-- Stripe attivo e funzionante
+- **10 utenti paganti** (€50-200 MRR)
+- 0 ban WhatsApp
+- Feedback qualitativo: feature mancante più richiesta, punto di attrito principale
+
+### Decision Gate a 30 Giorni
+
+| Segnale | Azione |
+|---------|--------|
+| Utenti chiedono messaggi ricorrenti | Implementare ricorrenza |
+| Utenti chiedono integrazione calendario | Implementare Google Calendar |
+| Churn alto | Investigare causa (UX? flusso? mancanza ricorrenza?) |
+| Conversione trial→pagante < 20% | Rivedere pricing o value proposition |
+| Problemi di ban | Stringere cool-down |
+| Referral spontaneo | Implementare referral system |
+| Nessun interesse professionisti | Pivot: utenti normali (compleanni, promemoria) |
 
 ---
 
-*Documento generato il 17 Marzo 2026. Da aggiornare mensilmente con metriche reali.*
+*Documento generato il 17 Marzo 2026. Rivisto il 18 Marzo 2026 dopo analisi critica. Da aggiornare con metriche reali al decision gate (Giorno 30).*
