@@ -195,7 +195,7 @@ async function findUserStrict(instanceName: string, phone: string): Promise<any>
   for (const v of variants) {
     const { data } = await supabase
       .from('user_instances')
-      .select('id, phone_number, subscription_status, trial_ends_at, instance_name')
+      .select('id, phone_number, subscription_plan, trial_ends_at, instance_name')
       .eq('instance_name', instanceName)
       .eq('phone_number', v)
       .maybeSingle();
@@ -213,7 +213,7 @@ async function findUserByPhoneOnly(phone: string): Promise<any> {
   for (const v of variants) {
     const { data } = await supabase
       .from('user_instances')
-      .select('id, phone_number, subscription_status, trial_ends_at, instance_name')
+      .select('id, phone_number, subscription_plan, trial_ends_at, instance_name')
       .eq('phone_number', v)
       .maybeSingle();
     if (data) return data;

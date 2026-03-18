@@ -169,7 +169,7 @@ export async function POST(req: NextRequest) {
         {
           phone_number: cleanPhone,
           instance_name: instanceName,
-          subscription_status: 'trial',
+          subscription_plan: 'trial',
           trial_ends_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
         },
         { onConflict: 'phone_number' }

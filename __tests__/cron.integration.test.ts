@@ -51,7 +51,7 @@ function makePendingMsg(overrides: any = {}) {
       phone_number: '393501234567',
       instance_name: 'SchedWhats-393501234567',
       trial_ends_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-      subscription_status: 'trial',
+      subscription_plan: 'trial',
       connection_status: 'open',
       ...instOverrides,
     },
@@ -169,7 +169,7 @@ describe('Cron integration: trial expiry', () => {
   test('cancels message and notifies user when trial expired', async () => {
     const msg = makePendingMsg({
       user_instances: {
-        subscription_status: 'trial',
+        subscription_plan: 'trial',
         trial_ends_at: new Date(Date.now() - 86400000).toISOString(), // expired yesterday
       },
     });

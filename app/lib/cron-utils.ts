@@ -7,7 +7,7 @@ export interface UserInstance {
   phone_number: string;
   instance_name: string;
   trial_ends_at: string | null;
-  subscription_status: string;
+  subscription_plan: string;
   connection_status: string;
 }
 
@@ -45,9 +45,10 @@ export function shouldSendMessage(msg: PendingMessage): SkipReason {
   }
 
   // P9: Check trial/subscription
-  const subStatus = userInst.subscription_status;
+  const subPlan = userInst.subscription_plan;
   const trialEnd = userInst.trial_ends_at;
-  if (subStatus !== 'active') {
+  const isPaying = subPlan === 'personal' || subPlan === 'business';
+  if (!isPaying) {
     const trialExpiredAt = trialEnd ? new Date(trialEnd) : null;
     if (!trialExpiredAt || trialExpiredAt < new Date()) {
       return 'trial_expired';

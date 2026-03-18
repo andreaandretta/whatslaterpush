@@ -155,7 +155,7 @@ describe('Webhook: message filtering', () => {
     mockSupa.setResponse('user_instances:select', {
       id: 'ui-1', phone_number: '393501234567',
       instance_name: 'SchedWhats-393501234567',
-      subscription_status: 'trial',
+      subscription_plan: 'trial',
       trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
     });
 
@@ -182,7 +182,7 @@ describe('Webhook: vCard contact saving', () => {
     mockSupa.setResponse('user_instances:select', {
       id: 'ui-1', phone_number: '393501234567',
       instance_name: 'SchedWhats-393501234567',
-      subscription_status: 'trial',
+      subscription_plan: 'trial',
       trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
     });
     // upsert contact
@@ -223,7 +223,7 @@ describe('Webhook: fast-path confirm', () => {
     mockSupa.setResponse('user_instances:select', {
       id: 'ui-1', phone_number: '393501234567',
       instance_name: 'SchedWhats-393501234567',
-      subscription_status: 'trial',
+      subscription_plan: 'trial',
       trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
     });
     // Fast-path query for awaiting_confirm
@@ -268,7 +268,7 @@ describe('Webhook: AI scheduling flow', () => {
     mockSupa.setResponse('user_instances:select', {
       id: 'ui-1', phone_number: '393501234567',
       instance_name: 'SchedWhats-393501234567',
-      subscription_status: 'trial',
+      subscription_plan: 'trial',
       trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
     });
     // getContactList queries
@@ -333,7 +333,7 @@ describe('Webhook: edge cases', () => {
     mockSupa.setResponse('user_instances:select', {
       id: 'ui-1', phone_number: '393501234567',
       instance_name: 'SchedWhats-393501234567',
-      subscription_status: 'trial',
+      subscription_plan: 'trial',
       trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
     });
     mockSupa.setResponse('pending_contacts:select', [

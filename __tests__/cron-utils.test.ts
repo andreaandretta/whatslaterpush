@@ -6,7 +6,7 @@ function makeMessage(overrides: { user_instances?: Partial<UserInstance> | null 
     phone_number: '393401234567',
     instance_name: 'SchedWhats-test',
     trial_ends_at: null,
-    subscription_status: 'active',
+    subscription_plan: 'personal',
     connection_status: 'open',
   };
   const { user_instances: instOverrides, ...msgOverrides } = overrides;
@@ -57,17 +57,17 @@ describe('shouldSendMessage', () => {
   test('returns "trial_expired" when subscription is trial and trial_ends_at is in the past', () => {
     const msg = makeMessage({
       user_instances: {
-        subscription_status: 'trial',
+        subscription_plan: 'trial',
         trial_ends_at: '2026-01-01T00:00:00.000Z', // past
       },
     });
     expect(shouldSendMessage(msg)).toBe('trial_expired');
   });
 
-  test('returns "trial_expired" when subscription_status is empty and no trial date', () => {
+  test('returns "trial_expired" when subscription_plan is empty and no trial date', () => {
     const msg = makeMessage({
       user_instances: {
-        subscription_status: '',
+        subscription_plan: '',
         trial_ends_at: null,
       },
     });
@@ -77,18 +77,18 @@ describe('shouldSendMessage', () => {
   test('returns "send" when trial is still active (future trial_ends_at)', () => {
     const msg = makeMessage({
       user_instances: {
-        subscription_status: 'trial',
+        subscription_plan: 'trial',
         trial_ends_at: '2099-12-31T23:59:59.000Z', // far future
       },
     });
     expect(shouldSendMessage(msg)).toBe('send');
   });
 
-  test('returns "send" for active subscription regardless of trial_ends_at', () => {
+  test('returns "send" for personal subscription regardless of trial_ends_at', () => {
     const msg = makeMessage({
       user_instances: {
-        subscription_status: 'active',
-        trial_ends_at: '2020-01-01T00:00:00.000Z', // past, but status is active
+        subscription_plan: 'personal',
+        trial_ends_at: '2020-01-01T00:00:00.000Z', // past, but plan is personal
       },
     });
     expect(shouldSendMessage(msg)).toBe('send');
@@ -98,7 +98,7 @@ describe('shouldSendMessage', () => {
     const msg = makeMessage({
       user_instances: {
         connection_status: 'close',
-        subscription_status: 'trial',
+        subscription_plan: 'trial',
         trial_ends_at: '2020-01-01T00:00:00.000Z',
       },
     });

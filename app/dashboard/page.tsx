@@ -30,7 +30,7 @@ const saveExpiry   = () => { localStorage.setItem(EXPIRY_KEY, String(Date.now() 
 const clearPhone   = () => { localStorage.removeItem(PHONE_KEY); localStorage.removeItem(INST_KEY); localStorage.removeItem(EXPIRY_KEY); localStorage.removeItem('sw_onboarding_shown'); };
 
 interface SubscriptionState {
-  status: string;
+  plan: string;
   trial_ends_at: string | null;
   expired: boolean;
 }
@@ -57,7 +57,7 @@ export default function DashboardPage() {
   const [userPhone, setUserPhone]       = useState('');
   const [messages, setMessages]         = useState<ScheduledMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(true);
-  const [subscription, setSubscription] = useState<SubscriptionState>({ status: 'unknown', trial_ends_at: null, expired: false });
+  const [subscription, setSubscription] = useState<SubscriptionState>({ plan: 'unknown', trial_ends_at: null, expired: false });
   const [sessionValidated, setSessionValidated] = useState(false);
 
   const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -145,7 +145,7 @@ export default function DashboardPage() {
       const res = await fetch('/api/messages?phone=' + encodeURIComponent(ph));
       if (res.status === 403) {
         const err = await res.json();
-        setSubscription({ status: err.subscription_status || 'expired', trial_ends_at: err.trial_ends_at, expired: true });
+        setSubscription({ plan: err.subscription_plan || 'expired', trial_ends_at: err.trial_ends_at, expired: true });
         setMessages([]);
         return;
       }
@@ -153,7 +153,7 @@ export default function DashboardPage() {
         const d = await res.json();
         if (d.messages) {
           setMessages(Array.isArray(d.messages) ? d.messages : []);
-          setSubscription({ status: d.subscription_status || 'unknown', trial_ends_at: d.trial_ends_at, expired: false });
+          setSubscription({ plan: d.subscription_plan || 'free', trial_ends_at: d.trial_ends_at, expired: false });
         } else setMessages(Array.isArray(d) ? d : []);
       }
     } catch {
@@ -294,7 +294,7 @@ export default function DashboardPage() {
     setQrCode(null);
     setPairingCode(null);
     setInstanceName('');
-    setSubscription({ status: 'unknown', trial_ends_at: null, expired: false });
+    setSubscription({ plan: 'unknown', trial_ends_at: null, expired: false });
   };
 
   const handleDelete = async (id: string) => {
@@ -324,7 +324,7 @@ export default function DashboardPage() {
 
   const trunc = (s: string, n: number) => (!s ? '' : s.length > n ? s.substring(0, n) + '...' : s);
 
-  const showPricing = subscription.status === 'trial' || subscription.expired;
+  const showPricing = subscription.plan === 'trial' || subscription.plan === 'free' || subscription.expired;
 
   if (!sessionValidated) {
     return (

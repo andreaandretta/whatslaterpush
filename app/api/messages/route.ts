@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
                                 // Verify that this phone has an active instance (basic auth check)
                                 const { data: user } = await supabase
                                         .from('user_instances')
-                                        .select('id, trial_ends_at, subscription_status, connection_status')
+                                        .select('id, trial_ends_at, subscription_plan, connection_status')
                                         .eq('phone_number', normalizedPhone)
                                         .single()
 
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
 
                         return NextResponse.json({
                                                         messages: data || [],
-                                                        subscription_status: user?.subscription_status || 'unknown',
+                                                        subscription_plan: user?.subscription_plan || 'unknown',
                                                         trial_ends_at: user?.trial_ends_at || null,
                         })
         }

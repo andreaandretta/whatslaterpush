@@ -85,7 +85,7 @@ export async function GET(req: NextRequest) {
     // No per-user loop, no global state, no instance confusion possible
     const { data: pendingMessages, error: queryErr } = await supabase
       .from('scheduled_messages')
-      .select('*, user_instances!inner(id, phone_number, instance_name, trial_ends_at, subscription_status, connection_status)')
+      .select('*, user_instances!inner(id, phone_number, instance_name, trial_ends_at, subscription_plan, connection_status, messages_sent_today, upsell_sent_today)')
       .eq('status', 'pending')
       .lte('scheduled_at', new Date().toISOString())
       .order('scheduled_at', { ascending: true })

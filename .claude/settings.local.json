@@ -1,0 +1,45 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__supabase__execute_sql",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Read(//usr/**)",
+      "Bash(node --version)",
+      "Bash(/c/Python313/python:*)",
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(node:*)",
+      "Bash(npx next:*)",
+      "Bash(start:*)",
+      "Bash(npm ls:*)",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && npx next@14 build 2>&1 | tail -30)",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && node -e \"require\\('fs'\\).readFileSync\\('app/api/cron/send-messages/route.ts','utf8'\\)\" && echo \"Cron file reads OK\" && node -e \"require\\('fs'\\).readFileSync\\('app/api/webhook/route.ts','utf8'\\)\" && echo \"Webhook file reads OK\")",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && npm install --save-dev jest ts-jest @types/jest 2>&1 | tail -5)",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && npx jest --no-cache 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && npx jest --no-cache --verbose 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && npx jest --no-coverage 2>&1 | tail -30)",
+      "Bash(which vercel:*)",
+      "Bash(which npx:*)",
+      "Bash(npx vercel:*)",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && npx jest --no-cache 2>&1 | tail -5)",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && npx jest __tests__/cron.integration.test.ts --no-cache 2>&1 | head -120)",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && npx jest __tests__/cron.integration.test.ts --no-cache 2>&1 | tail -60)",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && npx jest __tests__/webhook.integration.test.ts --no-cache 2>&1 | tail -80)",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && npx jest --no-cache 2>&1 | tail -30)",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && npx jest --no-cache 2>&1 | tail -20)",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && npx jest __tests__/webhook.integration.test.ts --no-cache --verbose 2>&1 | tail -30)",
+      "WebFetch(domain:whatslaterpush.vercel.app)",
+      "Bash(cd /c/Users/\"Windows 11 Pro\"/schedwhats-ops/whatslaterpush && npx jest --passWithNoTests 2>&1 | tail -30)",
+      "Bash(cd \"C:\\\\Users\\\\Windows 11 Pro\\\\schedwhats-ops\\\\whatslaterpush\" && npx jest --no-cache 2>&1 | tail -10)",
+      "mcp__supabase__list_tables",
+      "mcp__supabase__apply_migration",
+      "Bash(cd \"/c/Users/Windows 11 Pro/schedwhats-ops/whatslaterpush\" && npx jest __tests__/plans.test.ts --no-cache 2>&1 | tail -15)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "supabase",
+    "github",
+    "fetch"
+  ]
+}
