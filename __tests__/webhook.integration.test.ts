@@ -105,11 +105,16 @@ describe('Webhook: connection update', () => {
     const resBody = await res.json();
     expect(resBody.ok).toBe(true);
 
-    // Verify onboarding message was sent
+    // Verify disclaimer + onboarding messages were sent (2 calls)
     const evoCalls = fetchMock.calls.filter(c => c.url.includes('/message/sendText/'));
-    expect(evoCalls.length).toBeGreaterThanOrEqual(1);
-    const sendBody = JSON.parse(evoCalls[0].options.body as string);
-    expect(sendBody.text).toContain('Benvenuto su WhatsLater');
+    expect(evoCalls.length).toBeGreaterThanOrEqual(2);
+    // First call = disclaimer
+    const disclaimerBody = JSON.parse(evoCalls[0].options.body as string);
+    expect(disclaimerBody.text).toContain('Importante');
+    expect(disclaimerBody.text).toContain('Dispositivi Collegati');
+    // Second call = onboarding
+    const onboardingBody = JSON.parse(evoCalls[1].options.body as string);
+    expect(onboardingBody.text).toContain('Benvenuto su WhatsLater');
   });
 
   test('handles disconnect (close state)', async () => {
@@ -206,6 +211,46 @@ describe('Webhook: vCard contact saving', () => {
     const notifBody = JSON.parse(evoCalls[0].options.body as string);
     expect(notifBody.text).toContain('Marco Rossi');
     expect(notifBody.text).toContain('salvato');
+  });
+});
+
+// ── vCard: contact limit enforcement ─────────────────────────────────────────
+
+describe('Webhook: contact limit enforcement', () => {
+  test('rejects vCard when contact limit reached (free plan)', async () => {
+    const body = makeMessagePayload({
+      instance: 'SchedWhats-393501234567',
+      fromMe: true,
+      contactMessage: {
+        displayName: 'Nuovo Contatto',
+        vcard: 'BEGIN:VCARD\nVERSION:3.0\nFN:Nuovo Contatto\nTEL;waid=393409999999:+393409999999\nEND:VCARD',
+      },
+    });
+
+    // findUserStrict — free plan (limit: 5 contacts)
+    mockSupa.setResponse('user_instances:select', {
+      id: 'ui-1', phone_number: '393501234567',
+      instance_name: 'SchedWhats-393501234567',
+      subscription_plan: 'free',
+      trial_ends_at: null,
+    });
+    // Contact count query returns count: 5 (at limit) + existing contact check returns null
+    mockSupa.setResponse('pending_contacts:select', null, null, { count: 5 });
+    // webhook_logs
+    mockSupa.setResponse('webhook_logs:insert', null);
+    // Notification for limit reached
+    fetchMock.setJsonResponse('/message/sendText/', { ok: true });
+
+    const res = await callWebhook(body);
+    const resBody = await res.json();
+    expect(resBody.ok).toBe(true);
+
+    // Should have sent limit warning, NOT the "salvato" confirmation
+    const evoCalls = fetchMock.calls.filter(c => c.url.includes('/message/sendText/'));
+    expect(evoCalls.length).toBeGreaterThanOrEqual(1);
+    const notifBody = JSON.parse(evoCalls[0].options.body as string);
+    expect(notifBody.text).toContain('limite');
+    expect(notifBody.text).not.toContain('salvato');
   });
 });
 

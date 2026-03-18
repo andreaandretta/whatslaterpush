@@ -15,8 +15,8 @@ export function createMockSupabase() {
   const calls: MockSupabaseCall[] = [];
   const responseMap = new Map<string, any>();
 
-  function setResponse(key: string, data: any, error: any = null) {
-    responseMap.set(key, { data, error });
+  function setResponse(key: string, data: any, error: any = null, extra: Record<string, any> = {}) {
+    responseMap.set(key, { data, error, ...extra });
   }
 
   function makeChain(table: string, operation: string, args: any[]) {

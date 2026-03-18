@@ -352,6 +352,11 @@ export default function DashboardPage() {
           onDisconnect={handleLogout}
         />
 
+        {/* Plan Badge - only when connected */}
+        {connStatus === 'connected' && userPhone && subscription.plan !== 'unknown' && (
+          <PlanBadge subscription={subscription} />
+        )}
+
         {/* Messages Section - only when connected */}
         {connStatus === 'connected' && userPhone && (
           <MessagesSection
@@ -370,8 +375,10 @@ export default function DashboardPage() {
           <HowToUseBox />
         )}
 
-        {/* Pricing for trial users */}
-        {showPricing && <PricingSection />}
+        {/* Pricing for trial/free users, or manage subscription for paying */}
+        {(showPricing || subscription.plan === 'personal' || subscription.plan === 'business') && (
+          <PricingSection currentPlan={subscription.plan} userPhone={userPhone} />
+        )}
       </main>
 
       <FAQSection />
@@ -678,6 +685,43 @@ function MessagesSection({ messages, messagesLoading, subscription, onDelete, fm
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// --- Plan Badge ---
+function PlanBadge({ subscription }: { subscription: SubscriptionState }) {
+  const planLabels: Record<string, string> = {
+    trial: 'Trial',
+    free: 'Free',
+    personal: 'Personal',
+    business: 'Business',
+  };
+  const planColors: Record<string, string> = {
+    trial: 'bg-blue-100 text-blue-700 border-blue-200',
+    free: 'bg-gray-100 text-gray-600 border-gray-200',
+    personal: 'bg-green-100 text-green-700 border-green-200',
+    business: 'bg-purple-100 text-purple-700 border-purple-200',
+  };
+
+  const label = planLabels[subscription.plan] || subscription.plan;
+  const color = planColors[subscription.plan] || planColors.free;
+
+  let trialInfo = '';
+  if (subscription.plan === 'trial' && subscription.trial_ends_at) {
+    const daysLeft = Math.max(0, Math.ceil((new Date(subscription.trial_ends_at).getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
+    trialInfo = daysLeft > 0 ? `${daysLeft} giorni rimanenti` : 'Scaduto';
+  }
+
+  return (
+    <div className={`flex items-center justify-between rounded-xl px-4 py-3 border ${color}`}>
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-semibold">Piano: {label}</span>
+        {trialInfo && <span className="text-xs opacity-75">({trialInfo})</span>}
+      </div>
+      {(subscription.plan === 'trial' || subscription.plan === 'free') && (
+        <a href="#prezzi" className="text-xs font-medium hover:underline">Passa a Personal</a>
       )}
     </div>
   );

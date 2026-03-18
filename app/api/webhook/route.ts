@@ -2,6 +2,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { extractInlineRecipient, extractInlineMessage, parseAIDatetime, getRomeOffsetMs, nowRome, romeToUtc } from '../../lib/webhook-utils';
+import { getPlanLimits } from '../../lib/plans';
 export const dynamic = 'force-dynamic';
 
 const supabase = createClient(
@@ -541,6 +542,19 @@ export async function POST(req) {
           const { data: inst } = await supabase.from('user_instances')
             .select('phone_number').eq('instance_name', evoInstance).maybeSingle();
           if (inst?.phone_number) {
+              // Step 1: Disclaimer message
+              await notifyOwner(evoInstance, inst.phone_number,
+                '⚠️ Importante: WhatsLater usa la funzione "Dispositivi Collegati" di WhatsApp.\n' +
+                'Un uso responsabile protegge il tuo numero.\n\n' +
+                '• Max 20-30 messaggi mirati al giorno\n' +
+                '• Solo a contatti che ti conoscono\n' +
+                '• Nessun invio massivo o spam\n\n' +
+                'Leggi i termini completi: https://whatslaterpush.vercel.app/terms\n\n' +
+                'WhatsLater non è affiliato a Meta/WhatsApp.'
+              );
+              // Step 2: Wait 2 seconds
+              await new Promise(r => setTimeout(r, 2000));
+              // Step 3: Onboarding message
               await notifyOwner(evoInstance, inst.phone_number,
                 'Ciao! 👋 Benvenuto su WhatsLater!\n' +
                 'Per programmare un messaggio segui questi 2 step:\n\n' +
@@ -652,6 +666,26 @@ export async function POST(req) {
       }
       console.log('WEBHOOK: vCard received:', name, num, 'owner:', ownerPhone);
       if (num) {
+        // Contact limit enforcement
+        const userPlan = user.subscription_plan || 'free';
+        const planLimits = getPlanLimits(userPlan);
+        const { count: contactCount } = await supabase.from('pending_contacts')
+          .select('id', { count: 'exact', head: true })
+          .eq('owner_phone', ownerPhone);
+
+        // Check if this is an existing contact (update) vs new contact
+        const { data: existingContact } = await supabase.from('pending_contacts')
+          .select('id').eq('owner_phone', ownerPhone).eq('recipient_number', num).maybeSingle();
+
+        if (!existingContact && (contactCount || 0) >= planLimits.maxContacts) {
+          console.log('WEBHOOK: Contact limit reached for', ownerPhone, 'plan=' + userPlan, 'count=' + contactCount, 'limit=' + planLimits.maxContacts);
+          const upgradeLink = 'https://whatslaterpush.vercel.app/dashboard#prezzi';
+          await notifyOwner(instanceName, ownerPhone,
+            '⚠️ Hai raggiunto il limite di ' + planLimits.maxContacts + ' contatti del piano ' + userPlan.charAt(0).toUpperCase() + userPlan.slice(1) + '.\n\n' +
+            'Per aggiungere altri contatti, passa al piano superiore:\n' + upgradeLink);
+          return NextResponse.json({ ok: true });
+        }
+
         const { error: upsertErr } = await supabase.from('pending_contacts').upsert(
           { owner_phone: ownerPhone, recipient_number: num, recipient_name: name, created_at: new Date().toISOString() },
           { onConflict: 'owner_phone,recipient_number' }
