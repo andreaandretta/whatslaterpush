@@ -549,8 +549,8 @@ export async function POST(req) {
       if (state === 'open' || state === 'connected') {
         try {
           const { data: inst } = await supabase.from('user_instances')
-            .select('phone_number').eq('instance_name', evoInstance).maybeSingle();
-          if (inst?.phone_number) {
+            .select('phone_number, welcome_sent').eq('instance_name', evoInstance).maybeSingle();
+          if (inst?.phone_number && !inst.welcome_sent) {
               // Step 1: Disclaimer message
               await notifyOwner(evoInstance, inst.phone_number,
                 '⚠️ Importante: WhatsLater usa la funzione "Dispositivi Collegati" di WhatsApp.\n' +
@@ -559,22 +559,23 @@ export async function POST(req) {
                 '• Solo a contatti che ti conoscono\n' +
                 '• Nessun invio massivo o spam\n\n' +
                 'Leggi i termini completi: https://whatslaterpush.vercel.app/terms\n\n' +
-                'WhatsLater non è affiliato a Meta/WhatsApp.'
+                'WhatsLater non e affiliato a Meta/WhatsApp.'
               );
-              // Step 2: Wait 2 seconds
-              await new Promise(r => setTimeout(r, 2000));
-              // Step 3: Onboarding message
+              // Step 2: Wait 1 second to ensure order
+              await new Promise(r => setTimeout(r, 1000));
+              // Step 3: Welcome message
               await notifyOwner(evoInstance, inst.phone_number,
-                'Ciao! 👋 Benvenuto su WhatsLater!\n' +
-                'Per programmare un messaggio segui questi 2 step:\n\n' +
-                '1️⃣ Allega il contatto del destinatario (premi 📎 → Contatto)\n' +
-                '2️⃣ Poi scrivi: "Invia a [Nome] domani alle 15: Testo del messaggio"\n\n' +
-                'Esempio: "Invia a Marco domani alle 15: Ricordati la riunione!"\n\n' +
-                '📹 Guarda come si fa: https://whatslaterpush.vercel.app/tutorial\n\n' +
-                '📊 Vedi i tuoi messaggi programmati:\n' +
-                '- Dashboard: https://whatslaterpush.vercel.app/dashboard\n' +
-                '- Oppure scrivi LISTA qui in chat'
+                'Benvenuto su WhatsLater! 🎉\n\n' +
+                'Ecco come mandare il tuo primo promemoria in 2 passi:\n\n' +
+                '1️⃣ Inviami il contatto di un tuo cliente (premi 📎 → Contatto)\n' +
+                '2️⃣ Poi scrivi: "Ricorda a [nome] l\'appuntamento di domani alle 15"\n\n' +
+                'Il messaggio partira automaticamente all\'orario che scegli! 📲\n\n' +
+                'Hai bisogno di aiuto? Scrivi AIUTO'
               );
+              // Mark welcome as sent
+              await supabase.from('user_instances')
+                .update({ welcome_sent: true })
+                .eq('instance_name', evoInstance);
           }
         } catch(e) { console.error('WEBHOOK: onboarding error:', e.message); }
       }
@@ -1138,15 +1139,12 @@ export async function POST(req) {
 
     if (/^(help|aiuto|comandi|\?)$/i.test(rawLower)) {
       await notifyOwner(instanceName, ownerPhone,
-        '📖 Come usare WhatsLater:\n\n' +
-        '1️⃣ Allega il contatto del destinatario (premi 📎 → Contatto) — solo la prima volta\n' +
-        '2️⃣ Scrivi il messaggio, esempio:\n' +
-        '   "Invia a Marco domani alle 15: Ricordati la riunione!"\n\n' +
-        '📹 Guarda come si fa: https://whatslaterpush.vercel.app/tutorial\n\n' +
-        '💬 Altri comandi:\n' +
-        '- LISTA — vedi messaggi programmati\n' +
-        '- ANNULLA [numero] — cancella un messaggio\n' +
-        '- STATO — controlla connessione');
+        'Benvenuto su WhatsLater! 🎉\n\n' +
+        'Ecco come mandare il tuo primo promemoria in 2 passi:\n\n' +
+        '1️⃣ Inviami il contatto di un tuo cliente (premi 📎 → Contatto)\n' +
+        '2️⃣ Poi scrivi: "Ricorda a [nome] l\'appuntamento di domani alle 15"\n\n' +
+        'Il messaggio partira automaticamente all\'orario che scegli! 📲\n\n' +
+        'Hai bisogno di aiuto? Scrivi AIUTO');
       return NextResponse.json({ ok: true });
     }
 
