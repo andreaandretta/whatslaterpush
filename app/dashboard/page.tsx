@@ -484,7 +484,7 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
               <p className="text-text-secondary text-sm leading-relaxed mb-6">
                 Invia messaggi programmati direttamente da WhatsApp.<br />
                 Manda la vCard del destinatario, poi scrivi:<br />
-                <span className="font-mono font-medium text-text-primary">Invia a [Nome] domani alle 15: Il tuo messaggio</span>
+                <span className="font-sans font-medium text-text-primary">Invia a [Nome] domani alle 15: Il tuo messaggio</span>
               </p>
               <a
                 href={waUrl}
@@ -595,7 +595,7 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
             {pairingCode && (
               <div className="flex flex-col items-center gap-3 w-full max-w-sm">
                 <p className="text-sm font-semibold text-gray-700">Oppure inserisci questo codice su WhatsApp</p>
-                <div className="text-4xl md:text-5xl font-mono font-bold tracking-widest text-text-primary bg-background py-5 px-8 rounded-3xl border border-gray-200 shadow-inner w-full text-center">
+                <div className="text-4xl md:text-5xl font-sans font-bold tracking-widest text-text-primary bg-background py-5 px-8 rounded-3xl border border-gray-200 shadow-inner w-full text-center">
                   {pairingCode.length >= 8 ? pairingCode.slice(0, 4) + '-' + pairingCode.slice(4, 8) : pairingCode}
                 </div>
                 <button

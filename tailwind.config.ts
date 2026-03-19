@@ -22,8 +22,6 @@ const config: Config = {
       fontFamily: {
         sans: ['var(--font-inter)', 'sans-serif'],
         heading: ['var(--font-space-grotesk)', 'sans-serif'],
-        serif: ['var(--font-playfair)', 'serif'],
-        mono: ['var(--font-jetbrains-mono)', 'monospace'],
       },
       boxShadow: {
         'soft': '0 8px 30px rgba(0, 0, 0, 0.04)',
