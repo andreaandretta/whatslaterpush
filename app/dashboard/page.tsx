@@ -235,7 +235,7 @@ export default function DashboardPage() {
           setConnStatus('disconnected');
           setQrCode(null);
           setPairingCode(null);
-          setError('Connessione scaduta. Riprova inserendo di nuovo il codice su WhatsApp → Impostazioni → Dispositivi collegati → Collega dispositivo');
+          setError('Il collegamento e scaduto. Clicca qui per ricollegarti — ci vogliono 30 secondi');
           return;
         }
         try {
@@ -266,7 +266,7 @@ export default function DashboardPage() {
         }
       }, 3000);
     } catch {
-      setError('Errore di connessione. Riprova.');
+      setError('Qualcosa non ha funzionato. Riprova tra un momento — se il problema continua scrivi a supporto@whatslaterpush.vercel.app');
     } finally {
       setIsLoading(false);
     }

@@ -9,7 +9,7 @@ interface PricingSectionProps {
 export default function PricingSection({ currentPlan, userPhone }: PricingSectionProps) {
   const handleCheckout = async (plan: 'personal' | 'business') => {
     if (!userPhone) {
-      window.location.href = '#connetti';
+      window.location.href = '/dashboard';
       return;
     }
     try {
@@ -88,8 +88,8 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 3 tentativi di invio</li>
             </ul>
             {currentPlan === 'personal' ? (
-              <button onClick={handlePortal} className="w-full py-2.5 rounded-xl text-sm font-medium text-primary border border-primary hover:bg-primary/5 transition-colors">
-                Gestisci abbonamento
+              <button onClick={() => window.open('/#prezzi', '_blank')} className="w-full py-2.5 rounded-xl text-sm font-medium text-primary border border-primary hover:bg-primary/5 transition-colors">
+                Cambia piano
               </button>
             ) : (
               <button onClick={() => handleCheckout('personal')} className="w-full bg-primary text-white py-2.5 rounded-xl font-semibold hover:scale-[1.02] transition-transform shadow-md shadow-primary/30">
@@ -112,8 +112,8 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 3 tentativi di invio</li>
             </ul>
             {currentPlan === 'business' ? (
-              <button onClick={handlePortal} className="w-full py-2.5 rounded-xl text-sm font-medium text-primary border border-primary hover:bg-primary/5 transition-colors">
-                Gestisci abbonamento
+              <button onClick={() => window.open('/#prezzi', '_blank')} className="w-full py-2.5 rounded-xl text-sm font-medium text-primary border border-primary hover:bg-primary/5 transition-colors">
+                Cambia piano
               </button>
             ) : (
               <button onClick={() => handleCheckout('business')} className="w-full bg-gray-900 text-white py-2.5 rounded-xl font-semibold hover:scale-[1.02] transition-transform shadow-md">

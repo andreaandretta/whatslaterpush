@@ -9,7 +9,7 @@ export default function Footer() {
           <Calendar className="w-8 h-8 text-primary" />
           <span>WhatsLater</span>
         </div>
-        <p className="text-gray-400 mb-12">Scrivi ora, invia dopo.</p>
+        <p className="text-gray-400 mb-12">Promemoria WhatsApp automatici, dal tuo numero.</p>
 
         <div className="flex flex-wrap justify-center gap-8 text-sm font-medium text-gray-300 mb-16">
           <a href="/privacy" className="hover:text-white transition-colors">Privacy Policy</a>

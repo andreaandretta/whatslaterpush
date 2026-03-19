@@ -4,11 +4,11 @@ import { ChevronDown } from 'lucide-react';
 import { cn } from '../lib/cn';
 
 const faqs = [
-  { q: "Il mio WhatsApp è sicuro?", a: "Assolutamente sì. Usiamo lo stesso protocollo di WhatsApp Web. Non leggiamo i tuoi messaggi. I dati sono protetti con Row Level Security su database PostgreSQL." },
-  { q: "Devo scansionare un QR Code?", a: "Puoi scegliere: scansiona un QR Code oppure inserisci un codice di abbinamento a 8 cifre direttamente su WhatsApp. Entrambi i metodi funzionano dal cellulare." },
-  { q: "Cosa succede se il mio telefono è spento?", a: "Il messaggio resta in coda. Quando torni online, viene inviato automaticamente. Ti avvisiamo se qualcosa non va." },
-  { q: "Posso annullare un messaggio programmato?", a: "Sì. Scrivi 'annulla' o 'cancella [nome]' nella chat con Te Stesso, oppure eliminalo dalla dashboard." },
-  { q: "Come funziona l'AI?", a: "Scrivi in linguaggio naturale — 'domani alle 9', 'fra 2 ore', 'lunedì mattina' — e la nostra AI (GPT-4o Mini) capisce esattamente quando inviare." }
+  { q: "E sicuro collegare WhatsApp?", a: "I tuoi dati sono protetti con la massima sicurezza. Nessuno puo leggere i tuoi messaggi." },
+  { q: "Come collego WhatsApp?", a: "Inserisci il tuo numero di telefono e segui le istruzioni. Ci vogliono 30 secondi." },
+  { q: "E se il telefono e spento?", a: "I messaggi programmati partono anche se il telefono e spento." },
+  { q: "Posso annullare un messaggio programmato?", a: "Si, dalla dashboard clicca 'Annulla invio' su qualsiasi messaggio non ancora inviato." },
+  { q: "Come capisce gli orari?", a: "Scrivi normalmente: 'domani alle 15', 'lunedi mattina', 'tra 2 ore'. WhatsLater capisce automaticamente." },
 ];
 
 export default function FAQSection() {

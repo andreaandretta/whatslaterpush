@@ -115,11 +115,7 @@ export default function TutorialPage() {
         </div>
       </div>
 
-      <style jsx>{`
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
+      <style>{`
         .animate-fade-in-1 { animation: fadeInUp 0.5s ease-out 0.5s both; }
         .animate-fade-in-2 { animation: fadeInUp 0.5s ease-out 1.2s both; }
         .animate-fade-in-3 { animation: fadeInUp 0.5s ease-out 2.0s both; }
