@@ -53,23 +53,34 @@ async function sendEvolutionText(instanceName: string, toPhone: string, text: st
   const evoKey = process.env.EVOLUTION_API_KEY;
   const normalizedTo = normalizeItalianPhone(toPhone);
   console.log('CRON: sendText inst=' + instanceName + ' to=' + normalizedTo + ' (raw=' + toPhone + ')');
-  const res = await fetch(evoUrl + '/message/sendText/' + instanceName, {
-    method: 'POST',
-    headers: { 'apikey': evoKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ number: normalizedTo, text }),
-  });
-  const body = await res.text();
-  console.log('CRON: Evolution status=' + res.status + ' body=' + body.substring(0, 400));
-  return { ok: res.ok, status: res.status, body };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(evoUrl + '/message/sendText/' + instanceName, {
+      method: 'POST',
+      headers: { 'apikey': evoKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ number: normalizedTo, text }),
+      signal: controller.signal,
+    });
+    const body = await res.text();
+    console.log('CRON: Evolution status=' + res.status + ' body=' + body.substring(0, 400));
+    return { ok: res.ok, status: res.status, body };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function GET(req: NextRequest) {
   const supabase = createClient(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
   const startTime = Date.now();
   try {
+    // Auth: accept CRON_SECRET via query param OR Vercel's automatic cron header
     const { searchParams } = new URL(req.url);
     const secret = searchParams.get('secret');
-    if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const isVercelCron = req.headers.get('x-vercel-cron') === '1';
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret) return NextResponse.json({ error: 'CRON_SECRET not configured' }, { status: 500 });
+    if (!isVercelCron && secret !== cronSecret) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     // Clean up stale awaiting_* records older than 1 hour
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
@@ -118,6 +129,12 @@ export async function GET(req: NextRequest) {
 
     // P0 FIX: Single JOIN query - each row carries its own instance_name
     // No per-user loop, no global state, no instance confusion possible
+    // Reset messages stuck in 'sending' for more than 2 minutes (crashed cron)
+    await supabase.from('scheduled_messages')
+      .update({ status: 'pending' })
+      .eq('status', 'sending')
+      .lt('updated_at', new Date(Date.now() - 2 * 60 * 1000).toISOString());
+
     const { data: pendingMessages, error: queryErr } = await supabase
       .from('scheduled_messages')
       .select('*, user_instances!inner(id, phone_number, instance_name, trial_ends_at, subscription_plan, connection_status, messages_sent_today, upsell_sent_today)')
@@ -239,17 +256,36 @@ export async function GET(req: NextRequest) {
           return 'rate_limited' as const;
         }
 
+        // Atomic lock: claim message before sending (prevents double-send on overlapping cron runs)
+        const { data: claimed } = await supabase.from('scheduled_messages')
+          .update({ status: 'sending' })
+          .eq('id', msg.id)
+          .eq('status', 'pending')
+          .select('id');
+        if (!claimed || claimed.length === 0) {
+          console.log('CRON: Message ' + msg.id + ' already claimed by another process, skipping');
+          return 'skipped' as const;
+        }
+
         // Minimal jitter (200-400ms)
         await new Promise(r => setTimeout(r, 200 + Math.random() * 200));
         console.log('CRON: Sending msg ' + msg.id + ' via instance=' + instanceName + ' to=' + msg.recipient_number);
-        const res = await fetch(
-          process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName,
-          {
-            method: 'POST',
-            headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ number: msg.recipient_number, text: msg.parsed_message })
-          }
-        );
+        const sendCtrl = new AbortController();
+        const sendTimeout = setTimeout(() => sendCtrl.abort(), 8000);
+        let res;
+        try {
+          res = await fetch(
+            process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName,
+            {
+              method: 'POST',
+              headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ number: msg.recipient_number, text: msg.parsed_message }),
+              signal: sendCtrl.signal,
+            }
+          );
+        } finally {
+          clearTimeout(sendTimeout);
+        }
         if (!res.ok) {
           const errText = await res.text();
           throw new Error('HTTP ' + res.status + ': ' + errText);

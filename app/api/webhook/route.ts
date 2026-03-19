@@ -175,13 +175,17 @@ async function findContactByName(ownerPhone, name) {
 
 async function notifyOwner(instanceName, phone, msg) {
   if (!phone || !instanceName) return;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
     const r = await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
       method:'POST', headers:{ 'apikey': process.env.EVOLUTION_API_KEY, 'Content-Type':'application/json' },
-      body: JSON.stringify({ number: phone, text: msg })
+      body: JSON.stringify({ number: phone, text: msg }),
+      signal: controller.signal,
     });
     console.log('notify status:', r.status, 'to:', phone, 'via:', instanceName);
   } catch(e) { console.error('notify err:', e.message); }
+  finally { clearTimeout(timeout); }
 }
 
 function phoneVariants(phone: string): string[] {
@@ -497,16 +501,21 @@ async function getContactList(ownerPhone: string): Promise<string> {
   }
 
   if (all.length === 0) return '';
-  return all.map(c => `- ${c.name}: ${c.number}`).join('\n');
+  // Sanitize contact names: strip control chars, newlines, limit length (prevent AI prompt injection)
+  const sanitizeName = (n: string) => n.replace(/[\n\r\t\x00-\x1f]/g, ' ').substring(0, 50).trim();
+  return all.map(c => `- ${sanitizeName(c.name)}: ${c.number}`).join('\n');
 }
 
 export async function POST(req) {
   let rawBody = '';
   try {
-    // Webhook authentication: validate secret from Evolution API
-    // Check multiple header formats — Evolution API v2 may send differently
+    // Webhook authentication: validate secret from Evolution API (MANDATORY)
     const webhookSecret = process.env.WEBHOOK_SECRET;
-    if (webhookSecret) {
+    if (!webhookSecret) {
+      console.error('WEBHOOK: WEBHOOK_SECRET not configured — rejecting all requests');
+      return NextResponse.json({ error: 'WEBHOOK_SECRET not configured' }, { status: 500 });
+    }
+    {
       const secretHeader = req.headers.get('x-webhook-secret');
       const authHeader = req.headers.get('authorization');
       const apiKeyHeader = req.headers.get('apikey');
@@ -659,10 +668,16 @@ export async function POST(req) {
     const isSelfChat = ownerVariants.includes(senderRaw);
 
     if (!isSelfChat) {
-      // Exception: allow replies to an awaiting_confirm context (e.g. user replies "ok" in a chat)
+      // Groups (@g.us) and broadcasts (@broadcast) are NEVER processed, even with awaiting_confirm
+      const fullJid = msgKey?.remoteJid || '';
+      if (fullJid.includes('@g.us') || fullJid.includes('@broadcast') || !fullJid.includes('@s.whatsapp.net')) {
+        console.log(`WEBHOOK: IGNORED - group/broadcast/non-personal chat. jid=${fullJid} owner=${ownerPhone}`);
+        return NextResponse.json({ ok: true });
+      }
+      // Exception: allow replies to an awaiting_confirm context ONLY in 1:1 personal chats
       const pendingCtx = await getPendingContext(ownerPhone);
       if (pendingCtx && pendingCtx.status === 'awaiting_confirm') {
-        console.log(`WEBHOOK: NOT self-chat but awaiting_confirm active - allowing. remoteJid=${senderRaw} owner=${ownerPhone}`);
+        console.log(`WEBHOOK: NOT self-chat but awaiting_confirm active in 1:1 chat - allowing. remoteJid=${senderRaw} owner=${ownerPhone}`);
       } else {
         console.log(`WEBHOOK: IGNORED - not self-chat. remoteJid=${senderRaw} owner=${ownerPhone} instance=${instanceName}`);
         return NextResponse.json({ ok: true });
@@ -1017,6 +1032,14 @@ export async function POST(req) {
             return NextResponse.json({ ok: true });
           }
           scheduledAt = parsed.date;
+        }
+
+        // Reject dates in the past (or less than 1 minute from now)
+        const minScheduleTime = new Date(Date.now() + 60 * 1000);
+        if (scheduledAt < minScheduleTime) {
+          await notifyOwner(instanceName, ownerPhone,
+            '⚠️ La data/ora indicata è nel passato. Scrivi un orario futuro (es. "fra 10 minuti", "domani alle 15").');
+          return NextResponse.json({ ok: true });
         }
 
         const rawMessage = messageText || extractContent(raw, 0, 0);

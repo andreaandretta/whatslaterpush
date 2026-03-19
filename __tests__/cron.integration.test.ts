@@ -70,7 +70,10 @@ async function callCronRoute(secret = 'test-secret') {
 
   const { GET } = await import('../app/api/cron/send-messages/route');
   const url = `https://whatslaterpush.vercel.app/api/cron/send-messages?secret=${secret}`;
-  const req = { url } as any;
+  const req = {
+    url,
+    headers: { get: (name: string) => name === 'x-vercel-cron' ? null : null },
+  } as any;
   return GET(req);
 }
 
@@ -88,7 +91,8 @@ describe('Cron integration: send flow', () => {
     const msg = makePendingMsg();
 
     // Stale cleanup returns nothing
-    mockSupa.setResponse('scheduled_messages:update', []);
+    // Atomic lock + other updates return claimed row
+    mockSupa.setResponse('scheduled_messages:update', [{ id: 'msg-1' }]);
     // Main query returns 1 pending message
     mockSupa.setResponse('scheduled_messages:select', [msg]);
 
@@ -113,7 +117,7 @@ describe('Cron integration: send flow', () => {
   test('handles Evolution API failure with retry', async () => {
     const msg = makePendingMsg({ retry_count: 0 });
 
-    mockSupa.setResponse('scheduled_messages:update', []);
+    mockSupa.setResponse('scheduled_messages:update', [{ id: 'msg-1' }]);
     mockSupa.setResponse('scheduled_messages:select', [msg]);
 
     // Evolution API fails
@@ -130,7 +134,7 @@ describe('Cron integration: send flow', () => {
   test('marks message failed after 3 retries', async () => {
     const msg = makePendingMsg({ retry_count: 2 }); // This will be attempt 3
 
-    mockSupa.setResponse('scheduled_messages:update', []);
+    mockSupa.setResponse('scheduled_messages:update', [{ id: 'msg-1' }]);
     mockSupa.setResponse('scheduled_messages:select', [msg]);
 
     // Evolution API fails
@@ -216,7 +220,7 @@ describe('Cron integration: batch processing', () => {
       })
     );
 
-    mockSupa.setResponse('scheduled_messages:update', []);
+    mockSupa.setResponse('scheduled_messages:update', [{ id: 'msg-0' }]);
     mockSupa.setResponse('scheduled_messages:select', messages);
     fetchMock.setJsonResponse('/message/sendText/', { ok: true });
 
