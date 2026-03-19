@@ -150,10 +150,98 @@ describe('Webhook: message filtering', () => {
     expect(aiCalls.length).toBe(0);
   });
 
+  test('ignores fromMe messages sent to another contact (not self-chat)', async () => {
+    // User 393501234567 sends a normal message to contact 393409999999
+    // This should be IGNORED — only self-chat messages are processed
+    const body = makeMessagePayload({
+      instance: 'SchedWhats-393501234567',
+      fromMe: true,
+      remoteJid: '393409999999@s.whatsapp.net', // another contact, NOT self
+      text: 'Ciao, come stai?',
+    });
+
+    // findUserStrict — instance phone matches owner, but remoteJid is someone else
+    mockSupa.setResponse('user_instances:select', {
+      id: 'ui-1', phone_number: '393501234567',
+      instance_name: 'SchedWhats-393501234567',
+      subscription_plan: 'trial',
+      trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
+    });
+    // getPendingContext — no awaiting_confirm
+    mockSupa.setResponse('scheduled_messages:select', null);
+    mockSupa.setResponse('scheduled_messages:update', null);
+
+    const res = await callWebhook(body);
+    const resBody = await res.json();
+    expect(resBody.ok).toBe(true);
+
+    // No AI calls — message was ignored
+    const aiCalls = fetchMock.calls.filter(c => c.url.includes('groq.com') || c.url.includes('openai.com'));
+    expect(aiCalls.length).toBe(0);
+
+    // No Evolution API notifications sent
+    const evoCalls = fetchMock.calls.filter(c => c.url.includes('/message/sendText/'));
+    expect(evoCalls.length).toBe(0);
+  });
+
+  test('processes fromMe self-chat messages (remoteJid matches owner phone)', async () => {
+    // User 393501234567 sends a message to themselves (self-chat)
+    // This SHOULD be processed
+    const body = makeMessagePayload({
+      instance: 'SchedWhats-393501234567',
+      fromMe: true,
+      remoteJid: '393501234567@s.whatsapp.net', // self-chat
+      text: 'Invia a Marco domani alle 15: Test',
+    });
+
+    // findUserStrict
+    mockSupa.setResponse('user_instances:select', {
+      id: 'ui-1', phone_number: '393501234567',
+      instance_name: 'SchedWhats-393501234567',
+      subscription_plan: 'trial',
+      trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
+    });
+    mockSupa.setResponse('pending_contacts:select', [
+      { recipient_name: 'Marco', recipient_number: '393401234567' },
+    ]);
+    mockSupa.setResponse('scheduled_messages:select', null);
+    mockSupa.setResponse('scheduled_messages:update', null);
+    mockSupa.setResponse('scheduled_messages:insert', { id: 'sm-new' });
+    mockSupa.setResponse('webhook_logs:insert', null);
+
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(15, 0, 0, 0);
+    fetchMock.setHandler('groq.com', () => ({
+      ok: true, status: 200,
+      json: () => Promise.resolve({
+        choices: [{ message: { content: JSON.stringify({
+          action: 'schedule',
+          recipient_name: 'Marco',
+          datetime_iso: tomorrow.toISOString().replace(/Z$/, '').replace(/\+.*$/, ''),
+          message_text: 'Test',
+          reply: 'Programmato',
+        }) } }],
+      }),
+      text: () => Promise.resolve('ok'),
+      headers: new Headers(),
+    }));
+    fetchMock.setJsonResponse('/message/sendText/', { ok: true });
+
+    const res = await callWebhook(body);
+    const resBody = await res.json();
+    expect(resBody.ok).toBe(true);
+
+    // AI WAS called — message was processed
+    const aiCalls = fetchMock.calls.filter(c => c.url.includes('groq.com'));
+    expect(aiCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
   test('ignores empty text messages', async () => {
     const body = makeMessagePayload({
       instance: 'SchedWhats-393501234567',
       fromMe: true,
+      remoteJid: '393501234567@s.whatsapp.net', // self-chat
       text: '',
     });
     // findUserStrict needs a DB response
@@ -177,6 +265,7 @@ describe('Webhook: vCard contact saving', () => {
     const body = makeMessagePayload({
       instance: 'SchedWhats-393501234567',
       fromMe: true,
+      remoteJid: '393501234567@s.whatsapp.net', // self-chat
       contactMessage: {
         displayName: 'Marco Rossi',
         vcard: 'BEGIN:VCARD\nVERSION:3.0\nFN:Marco Rossi\nTEL;waid=393401234567:+393401234567\nEND:VCARD',
@@ -221,6 +310,7 @@ describe('Webhook: contact limit enforcement', () => {
     const body = makeMessagePayload({
       instance: 'SchedWhats-393501234567',
       fromMe: true,
+      remoteJid: '393501234567@s.whatsapp.net', // self-chat
       contactMessage: {
         displayName: 'Nuovo Contatto',
         vcard: 'BEGIN:VCARD\nVERSION:3.0\nFN:Nuovo Contatto\nTEL;waid=393409999999:+393409999999\nEND:VCARD',
@@ -261,6 +351,7 @@ describe('Webhook: fast-path confirm', () => {
     const body = makeMessagePayload({
       instance: 'SchedWhats-393501234567',
       fromMe: true,
+      remoteJid: '393501234567@s.whatsapp.net', // self-chat
       text: 'ok',
     });
 
@@ -306,6 +397,7 @@ describe('Webhook: AI scheduling flow', () => {
     const body = makeMessagePayload({
       instance: 'SchedWhats-393501234567',
       fromMe: true,
+      remoteJid: '393501234567@s.whatsapp.net', // self-chat
       text: 'Invia a Marco domani alle 15: Ricordati la riunione!',
     });
 
@@ -371,6 +463,7 @@ describe('Webhook: edge cases', () => {
     const body = makeMessagePayload({
       instance: 'SchedWhats-393501234567',
       fromMe: true,
+      remoteJid: '393501234567@s.whatsapp.net', // self-chat
       text: 'Manda a Marco domani alle 10: test message',
     });
 
@@ -410,6 +503,7 @@ describe('Webhook: edge cases', () => {
     const body = makeMessagePayload({
       instance: 'SchedWhats-Unknown',
       fromMe: true,
+      remoteJid: '393501234567@s.whatsapp.net', // self-chat
       text: 'Ciao',
     });
 

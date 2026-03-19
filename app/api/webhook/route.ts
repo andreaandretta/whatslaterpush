@@ -653,6 +653,22 @@ export async function POST(req) {
     const instanceName = user.instance_name;
     console.log(`WEBHOOK: IDENTITY CONFIRMED - owner=${ownerPhone} instance=${instanceName} user_id=${user.id}`);
 
+    // ── SELF-CHAT CHECK: Only process messages the user sends to themselves ──
+    // remoteJid contains the chat partner; for self-chat it equals the owner's phone
+    const ownerVariants = phoneVariants(ownerPhone);
+    const isSelfChat = ownerVariants.includes(senderRaw);
+
+    if (!isSelfChat) {
+      // Exception: allow replies to an awaiting_confirm context (e.g. user replies "ok" in a chat)
+      const pendingCtx = await getPendingContext(ownerPhone);
+      if (pendingCtx && pendingCtx.status === 'awaiting_confirm') {
+        console.log(`WEBHOOK: NOT self-chat but awaiting_confirm active - allowing. remoteJid=${senderRaw} owner=${ownerPhone}`);
+      } else {
+        console.log(`WEBHOOK: IGNORED - not self-chat. remoteJid=${senderRaw} owner=${ownerPhone} instance=${instanceName}`);
+        return NextResponse.json({ ok: true });
+      }
+    }
+
     // ── vCard handling ──
     if (msgContent?.contactMessage) {
       const c = msgContent.contactMessage;
