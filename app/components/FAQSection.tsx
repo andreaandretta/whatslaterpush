@@ -17,7 +17,7 @@ export default function FAQSection() {
   return (
     <section id="faq" className="py-24 bg-background">
       <div className="max-w-3xl mx-auto px-6">
-        <h2 className="text-4xl font-bold text-text-primary mb-12 text-center">Domande Frequenti</h2>
+        <h2 className="font-heading text-3xl sm:text-4xl font-bold text-text-primary mb-12 text-center">Domande Frequenti</h2>
         <div className="space-y-4">
           {faqs.map((faq, i) => (
             <div key={i} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">

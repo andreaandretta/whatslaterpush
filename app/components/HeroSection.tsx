@@ -54,8 +54,8 @@ export default function HeroSection() {
                 <div className="bg-[#005c4b] rounded-lg p-2 text-[11px] text-white/90 max-w-[90%] ml-auto">
                   Invia a Marco domani alle 15: Ricorda l&apos;appuntamento
                 </div>
-                <div className="bg-[#1a2c34] rounded-lg p-2 text-[11px] text-white/90 max-w-[90%] leading-relaxed">
-                  ✅ Programmato!{'\n'}Inviero a Marco Rossi domani alle 15:00:{'\n'}&quot;Ricorda l&apos;appuntamento&quot;
+                <div className="bg-[#1a2c34] rounded-lg p-2 text-[11px] text-white/90 max-w-[90%] leading-relaxed whitespace-pre-line">
+                  {`✅ Programmato!\nInviero a Marco Rossi\ndomani alle 15:00:\n"Ricorda l'appuntamento"`}
                 </div>
                 <div className="text-[9px] text-white/30 mt-1">14:32 ✓✓</div>
               </div>
@@ -68,10 +68,10 @@ export default function HeroSection() {
                 <span className="text-xs text-white font-medium">Marco Rossi</span>
               </div>
               <div className="flex-1 bg-[#0b141a] p-3 flex flex-col justify-end gap-2">
-                <div className="bg-[#005c4b] rounded-lg p-2 text-[11px] text-white/90 max-w-[90%] ml-auto leading-relaxed">
+                <div className="bg-[#1a2c34] rounded-lg p-2 text-[11px] text-white/90 max-w-[90%] leading-relaxed">
                   Ciao Marco! Ricorda l&apos;appuntamento di domani alle 15:00
                 </div>
-                <div className="text-[9px] text-white/30 text-right mt-1">15:00 ✓✓</div>
+                <div className="text-[9px] text-white/30 mt-1">15:00</div>
               </div>
             </div>
 

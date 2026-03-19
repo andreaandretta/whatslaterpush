@@ -6,7 +6,7 @@ export default function StatsBar() {
   ];
 
   return (
-    <section className="bg-[#111B21] py-10">
+    <section className="bg-text-primary py-10">
       <div className="max-w-4xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-8">
         {stats.map((stat, i) => (
           <div

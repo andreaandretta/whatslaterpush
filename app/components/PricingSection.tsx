@@ -1,4 +1,5 @@
 'use client';
+import { useState } from 'react';
 import { CheckCircle2, Zap } from 'lucide-react';
 
 interface PricingSectionProps {
@@ -7,7 +8,10 @@ interface PricingSectionProps {
 }
 
 export default function PricingSection({ currentPlan, userPhone }: PricingSectionProps) {
+  const [error, setError] = useState<string | null>(null);
+
   const handleCheckout = async (plan: 'personal' | 'business') => {
+    setError(null);
     if (!userPhone) {
       window.location.href = '/dashboard';
       return;
@@ -20,13 +24,14 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
       });
       const data = await res.json();
       if (data.url) window.location.href = data.url;
-      else alert(data.error || 'Errore durante il checkout');
+      else setError('Qualcosa non ha funzionato. Riprova tra un momento — se il problema continua scrivi a supporto@whatslaterpush.vercel.app');
     } catch {
-      alert('Errore di connessione. Riprova.');
+      setError('Qualcosa non ha funzionato. Riprova tra un momento — se il problema continua scrivi a supporto@whatslaterpush.vercel.app');
     }
   };
 
   const handlePortal = async () => {
+    setError(null);
     if (!userPhone) return;
     try {
       const res = await fetch('/api/payment/portal', {
@@ -36,18 +41,18 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
       });
       const data = await res.json();
       if (data.url) window.location.href = data.url;
-      else alert(data.error || 'Errore apertura portale');
+      else setError('Qualcosa non ha funzionato. Riprova tra un momento — se il problema continua scrivi a supporto@whatslaterpush.vercel.app');
     } catch {
-      alert('Errore di connessione. Riprova.');
+      setError('Qualcosa non ha funzionato. Riprova tra un momento — se il problema continua scrivi a supporto@whatslaterpush.vercel.app');
     }
   };
 
   const isPaying = currentPlan === 'personal' || currentPlan === 'business';
 
   return (
-    <section id="prezzi" className="py-16">
-      <div className="max-w-4xl mx-auto px-4 text-center">
-        <h2 className="text-3xl font-bold text-text-primary mb-2">Scegli il tuo piano</h2>
+    <section id="prezzi" className="py-24 bg-background">
+      <div className="max-w-4xl mx-auto px-6 text-center">
+        <h2 className="font-heading text-3xl sm:text-4xl font-bold text-text-primary mb-2">Scegli il tuo piano</h2>
         <p className="text-text-secondary mb-10">Inizia gratis, passa a pagamento quando sei pronto.</p>
 
         <div className="grid md:grid-cols-3 gap-6 max-w-3xl mx-auto">
@@ -122,6 +127,12 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
             )}
           </div>
         </div>
+
+        {error && (
+          <div className="mt-6 bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 max-w-xl mx-auto">
+            {error}
+          </div>
+        )}
 
         {isPaying && (
           <p className="mt-6 text-sm text-text-secondary">
