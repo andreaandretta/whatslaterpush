@@ -59,6 +59,7 @@ export default function DashboardPage() {
   const [messagesLoading, setMessagesLoading] = useState(true);
   const [subscription, setSubscription] = useState<SubscriptionState>({ plan: 'unknown', trial_ends_at: null, expired: false });
   const [sessionValidated, setSessionValidated] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const msgTimer     = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -310,19 +311,51 @@ export default function DashboardPage() {
     }
   };
 
-  const fmt = (d: string) => {
-    try { return new Date(d).toLocaleString('it-IT', { timeZone: 'Europe/Rome' }); }
-    catch { return d; }
+  const statusConfig: Record<string, { color: string; label: string }> = {
+    awaiting_confirm:  { color: '#EAB308', label: 'In attesa di conferma' },
+    awaiting_contact:  { color: '#EAB308', label: 'In attesa del contatto' },
+    awaiting_datetime: { color: '#EAB308', label: 'In attesa della data' },
+    awaiting_message:  { color: '#EAB308', label: 'In attesa del messaggio' },
+    pending:           { color: '#3B82F6', label: 'Programmato' },
+    sending:           { color: '#3B82F6', label: 'In invio...' },
+    sent:              { color: '#22C55E', label: 'Inviato' },
+    failed:            { color: '#EF4444', label: 'Non inviato' },
+    cancelled:         { color: '#9CA3AF', label: 'Annullato' },
   };
 
-  const statusColors: Record<string, string> = {
-    pending:   'bg-yellow-100 text-yellow-800',
-    sent:      'bg-green-100 text-green-800',
-    failed:    'bg-red-100 text-red-800',
-    cancelled: 'bg-gray-100 text-gray-600',
-  };
+  function formatCountdown(scheduledAt: string): { text: string; urgent: boolean } {
+    const target = new Date(scheduledAt);
+    const now = new Date();
+    const diffMs = target.getTime() - now.getTime();
+    const diffMin = Math.round(diffMs / 60000);
+    const diffHours = Math.round(diffMs / 3600000);
 
-  const trunc = (s: string, n: number) => (!s ? '' : s.length > n ? s.substring(0, n) + '...' : s);
+    if (diffMs < 0) return { text: 'scaduto', urgent: false };
+
+    if (diffMin < 60) {
+      return { text: `tra ${diffMin} minuti`, urgent: diffMin < 10 };
+    }
+
+    const hh = target.getHours().toString().padStart(2, '0');
+    const mm = target.getMinutes().toString().padStart(2, '0');
+    const time = `${hh}:${mm}`;
+
+    if (diffHours < 24) {
+      return { text: `oggi alle ${time}`, urgent: false };
+    }
+    if (diffHours < 48) {
+      return { text: `domani alle ${time}`, urgent: false };
+    }
+
+    const days = ['domenica','lunedi','martedi','mercoledi','giovedi','venerdi','sabato'];
+    if (diffHours < 168) {
+      return { text: `${days[target.getDay()]} alle ${time}`, urgent: false };
+    }
+
+    const dd = target.getDate().toString().padStart(2, '0');
+    const mo = (target.getMonth() + 1).toString().padStart(2, '0');
+    return { text: `${dd}/${mo} alle ${time}`, urgent: false };
+  }
 
   const showPricing = subscription.plan === 'trial' || subscription.plan === 'free' || subscription.expired;
 
@@ -352,6 +385,16 @@ export default function DashboardPage() {
           onDisconnect={handleLogout}
         />
 
+        {/* Banner */}
+        {connStatus === 'connected' && (
+          <DashboardBanner
+            connectionStatus={connStatus}
+            subscriptionPlan={subscription.plan}
+            trialEndsAt={subscription.trial_ends_at}
+            messages={messages}
+          />
+        )}
+
         {/* Plan Badge - only when connected */}
         {connStatus === 'connected' && userPhone && subscription.plan !== 'unknown' && (
           <PlanBadge subscription={subscription} />
@@ -364,16 +407,38 @@ export default function DashboardPage() {
             messagesLoading={messagesLoading}
             subscription={subscription}
             onDelete={handleDelete}
-            fmt={fmt}
-            statusColors={statusColors}
-            trunc={trunc}
+            formatCountdown={formatCountdown}
+            statusConfig={statusConfig}
           />
         )}
 
-        {/* How To Use Box - only when connected */}
-        {connStatus === 'connected' && (
-          <HowToUseBox />
-        )}
+        {/* How To Use Box - inline for new users, FAB for returning */}
+        {connStatus === 'connected' && (() => {
+          const hasNoMessages = messages.length === 0;
+          return hasNoMessages ? (
+            <HowToUseBox />
+          ) : (
+            <>
+              <button
+                onClick={() => setShowHelp(!showHelp)}
+                className="fixed bottom-4 right-4 w-12 h-12 rounded-full bg-primary text-white flex items-center justify-center shadow-lg text-lg font-bold z-30"
+                aria-label="Aiuto"
+              >
+                ?
+              </button>
+              {showHelp && (
+                <div className="fixed bottom-20 right-4 w-80 bg-white rounded-xl shadow-2xl p-4 z-30 text-sm text-text-primary">
+                  <button onClick={() => setShowHelp(false)} className="absolute top-2 right-2 text-gray-400">&times;</button>
+                  <p className="font-bold mb-2">Come funziona:</p>
+                  <ol className="list-decimal list-inside space-y-1 text-text-secondary">
+                    <li>Invia il contatto di un tuo cliente (📎 &rarr; Contatto)</li>
+                    <li>Scrivi: &quot;Ricorda a [nome] l&apos;appuntamento di domani alle 15&quot;</li>
+                  </ol>
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         {/* Pricing for trial/free users, or manage subscription for paying */}
         {(showPricing || subscription.plan === 'personal' || subscription.plan === 'business') && (
@@ -385,6 +450,56 @@ export default function DashboardPage() {
       <Footer />
     </div>
   );
+}
+
+// --- Dashboard Banner ---
+function DashboardBanner({
+  connectionStatus,
+  subscriptionPlan,
+  trialEndsAt,
+  messages,
+}: {
+  connectionStatus: string;
+  subscriptionPlan: string;
+  trialEndsAt: string | null;
+  messages: ScheduledMessage[];
+}) {
+  const dailyLimits: Record<string, number> = { free: 3, trial: 10, personal: 20, business: 50 };
+  const dailyLimit = dailyLimits[subscriptionPlan] || 3;
+
+  // Priority 1: Disconnected
+  if (connectionStatus !== 'connected') {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+        WhatsApp scollegato — ricollegati per inviare i promemoria
+      </div>
+    );
+  }
+
+  // Priority 2: Daily limit
+  const today = new Date().toISOString().slice(0, 10);
+  const sentToday = messages.filter(
+    (m) => m.status === 'sent' && m.scheduled_at?.startsWith(today)
+  ).length;
+  if (sentToday >= dailyLimit) {
+    return (
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+        Hai usato {sentToday}/{dailyLimit} messaggi oggi — riparte domani o passa a Personal
+      </div>
+    );
+  }
+
+  // Priority 3: Trial
+  if (subscriptionPlan === 'trial' && trialEndsAt) {
+    const daysLeft = Math.max(0, Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / 86400000));
+    return (
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
+        Trial: {daysLeft} giorni rimasti — Passa a Personal per continuare
+      </div>
+    );
+  }
+
+  return null;
 }
 
 // --- Dashboard Navbar ---
@@ -434,18 +549,10 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
   const [phone, setPhone] = useState('');
   const [phoneError, setPhoneError] = useState('');
   const [copied, setCopied] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState(false);
-  const prevConnStatusRef = useRef<string>('disconnected');
-
-  useEffect(() => {
-    // Show onboarding only on FIRST ever connection (not on page refresh)
-    const alreadyShown = typeof window !== 'undefined' && localStorage.getItem('sw_onboarding_shown');
-    if (connStatus === 'connected' && prevConnStatusRef.current === 'connecting' && !alreadyShown) {
-      setShowOnboarding(true);
-      localStorage.setItem('sw_onboarding_shown', '1');
-    }
-    prevConnStatusRef.current = connStatus;
-  }, [connStatus]);
+  const [showQr, setShowQr] = useState(false);
+  const [platform, setPlatform] = useState<'android' | 'iphone'>(
+    typeof navigator !== 'undefined' && /iPhone|iPad/i.test(navigator.userAgent) ? 'iphone' : 'android'
+  );
 
   const handleCopy = () => {
     if (pairingCode) {
@@ -474,35 +581,6 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
     const waUrl = `https://wa.me/+${userPhone}`;
     return (
       <>
-        {showOnboarding && (
-          <div className="fixed inset-x-0 top-16 bottom-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 flex flex-col items-center text-center">
-              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
-                <CheckCircle2 className="w-8 h-8 text-primary" />
-              </div>
-              <h2 className="text-2xl font-bold mb-3">Sei connesso!</h2>
-              <p className="text-text-secondary text-sm leading-relaxed mb-6">
-                Invia messaggi programmati direttamente da WhatsApp.<br />
-                Manda la vCard del destinatario, poi scrivi:<br />
-                <span className="font-sans font-medium text-text-primary">Invia a [Nome] domani alle 15: Il tuo messaggio</span>
-              </p>
-              <a
-                href={waUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full bg-primary text-white py-3 rounded-xl font-semibold hover:scale-[1.02] transition-transform shadow-lg shadow-primary/30 mb-3 text-center block"
-              >
-                Inizia a messaggiare
-              </a>
-              <button
-                onClick={() => setShowOnboarding(false)}
-                className="w-full py-3 rounded-xl border border-gray-200 text-gray-600 font-medium hover:bg-gray-50 transition-colors"
-              >
-                Chiudi
-              </button>
-            </div>
-          </div>
-        )}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           <div className="flex items-center gap-3 mb-2">
             <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
@@ -524,7 +602,7 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
       <div className="p-6 md:p-8">
         <h2 className="text-2xl font-bold text-text-primary mb-2 text-center">Connetti WhatsApp</h2>
         <p className="text-text-secondary text-sm text-center mb-6">
-          Inserisci il tuo numero per generare il codice di collegamento
+          Collega il tuo WhatsApp in 30 secondi
         </p>
 
         <form onSubmit={handleSubmit} className="max-w-sm mx-auto flex flex-col gap-4 mb-6">
@@ -570,31 +648,50 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
           )}
         </form>
 
-        {/* QR + Pairing Code */}
+        {/* Pairing Code (primary) + QR (secondary) */}
         {(qrCode || pairingCode) && (
           <div className="flex flex-col items-center gap-6">
-            {qrCode && (
-              <div className="flex flex-col items-center gap-3">
-                <p className="text-sm font-semibold text-gray-700">QR Code generato</p>
-                <p className="text-xs text-gray-500">Scansiona con WhatsApp &rarr; Dispositivi collegati</p>
-                <div className="w-56 h-56 bg-white border-4 border-primary/20 rounded-3xl p-3 shadow-lg relative flex items-center justify-center overflow-hidden">
-                  <img src={qrCode} alt="QR Code" className="w-full h-full object-contain relative z-10" />
-                  <div className="absolute inset-0 bg-gradient-to-b from-transparent via-primary/10 to-transparent h-1/2 animate-[scan_2s_ease-in-out_infinite] z-20 pointer-events-none"></div>
-                </div>
+            {/* Platform guide */}
+            <div className="w-full max-w-sm">
+              <div className="flex gap-2 mb-3 justify-center">
+                <button
+                  onClick={() => setPlatform('android')}
+                  className={`px-3 py-1 rounded-full text-xs ${platform === 'android' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-400'}`}
+                >
+                  Android
+                </button>
+                <button
+                  onClick={() => setPlatform('iphone')}
+                  className={`px-3 py-1 rounded-full text-xs ${platform === 'iphone' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-400'}`}
+                >
+                  iPhone
+                </button>
               </div>
-            )}
-
-            {qrCode && pairingCode && (
-              <div className="flex items-center gap-4 w-full max-w-sm">
-                <div className="flex-1 h-px bg-gray-200"></div>
-                <span className="text-xs text-gray-400 font-medium">OPPURE</span>
-                <div className="flex-1 h-px bg-gray-200"></div>
+              <div className="flex items-center gap-2 text-xs text-gray-400 justify-center flex-wrap">
+                {platform === 'android' ? (
+                  <>
+                    <span className="bg-gray-100 rounded px-2 py-1">⋮</span>
+                    <span>&rarr;</span>
+                    <span className="bg-gray-100 rounded px-2 py-1">Dispositivi collegati</span>
+                    <span>&rarr;</span>
+                    <span className="bg-gray-100 rounded px-2 py-1">Collega un dispositivo</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="bg-gray-100 rounded px-2 py-1">Impostazioni</span>
+                    <span>&rarr;</span>
+                    <span className="bg-gray-100 rounded px-2 py-1">Dispositivi collegati</span>
+                    <span>&rarr;</span>
+                    <span className="bg-gray-100 rounded px-2 py-1">Collega un dispositivo</span>
+                  </>
+                )}
               </div>
-            )}
+            </div>
 
+            {/* Pairing code — primary */}
             {pairingCode && (
               <div className="flex flex-col items-center gap-3 w-full max-w-sm">
-                <p className="text-sm font-semibold text-gray-700">Oppure inserisci questo codice su WhatsApp</p>
+                <p className="text-sm font-semibold text-gray-700">Inserisci questo codice su WhatsApp</p>
                 <div className="text-4xl md:text-5xl font-sans font-bold tracking-widest text-text-primary bg-background py-5 px-8 rounded-3xl border border-gray-200 shadow-inner w-full text-center">
                   {pairingCode.length >= 8 ? pairingCode.slice(0, 4) + '-' + pairingCode.slice(4, 8) : pairingCode}
                 </div>
@@ -604,14 +701,29 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
                 >
                   {copied ? 'Copiato!' : 'Copia Codice'}
                 </button>
-                <p className="text-xs text-gray-500 text-center">
-                  WhatsApp &rarr; Menu &#8942; &rarr; Dispositivi connessi &rarr; Connetti con numero &rarr; Inserisci il codice
-                </p>
+              </div>
+            )}
+
+            {/* QR code — secondary toggle */}
+            {qrCode && (
+              <div className="flex flex-col items-center gap-3">
+                <button
+                  onClick={() => setShowQr(!showQr)}
+                  className="text-xs text-primary hover:underline"
+                >
+                  {showQr ? 'Nascondi QR code' : 'Preferisci inquadrare un codice? Clicca qui'}
+                </button>
+                {showQr && (
+                  <div className="w-56 h-56 bg-white border-4 border-primary/20 rounded-3xl p-3 shadow-lg relative flex items-center justify-center overflow-hidden">
+                    <img src={qrCode} alt="QR Code" className="w-full h-full object-contain relative z-10" />
+                    <div className="absolute inset-0 bg-gradient-to-b from-transparent via-primary/10 to-transparent h-1/2 animate-[scan_2s_ease-in-out_infinite] z-20 pointer-events-none"></div>
+                  </div>
+                )}
               </div>
             )}
 
             <div className="flex items-center gap-2 text-primary font-medium bg-primary/10 px-5 py-2.5 rounded-full">
-              <Loader2 className="w-4 h-4 animate-spin" /> In attesa di connessione...
+              <Loader2 className="w-4 h-4 animate-spin" /> Apri WhatsApp sul telefono e inserisci il codice 👆
             </div>
           </div>
         )}
@@ -621,19 +733,18 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
 }
 
 // --- Messages Section ---
-function MessagesSection({ messages, messagesLoading, subscription, onDelete, fmt, statusColors, trunc }: {
+function MessagesSection({ messages, messagesLoading, subscription, onDelete, formatCountdown, statusConfig }: {
   messages: ScheduledMessage[];
   messagesLoading: boolean;
   subscription: SubscriptionState;
   onDelete: (id: string) => void;
-  fmt: (d: string) => string;
-  statusColors: Record<string, string>;
-  trunc: (s: string, n: number) => string;
+  formatCountdown: (d: string) => { text: string; urgent: boolean };
+  statusConfig: Record<string, { color: string; label: string }>;
 }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold text-text-primary">Messaggi Schedulati</h2>
+        <h2 className="text-xl font-bold text-text-primary">Promemoria</h2>
         <span className="text-sm text-text-secondary bg-white px-3 py-1 rounded-full border border-gray-100">
           {messages.length} messagg{messages.length !== 1 ? 'i' : 'io'}
         </span>
@@ -651,39 +762,40 @@ function MessagesSection({ messages, messagesLoading, subscription, onDelete, fm
         </div>
       ) : messages.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center">
-          <p className="text-gray-500">Nessun messaggio. Invia una vCard a &quot;Te Stesso&quot; su WhatsApp!</p>
+          <p className="text-gray-500">Nessun promemoria programmato. Apri WhatsApp e invia il primo!</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {messages.map((msg) => (
-            <div key={msg.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 transition-all hover:shadow-md">
-              <div className="flex items-start justify-between gap-4">
+          {messages.map((msg) => {
+            const countdown = formatCountdown(msg.scheduled_at);
+            const status = statusConfig[msg.status] || { color: '#9CA3AF', label: msg.status };
+            return (
+              <div key={msg.id} className="flex items-center justify-between p-4 rounded-xl bg-white border border-gray-100 shadow-sm">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-medium text-gray-900 truncate">
-                      {(msg.recipient_name || msg.recipient_number || '?') + (msg.recipient_name && msg.recipient_number ? ' (' + msg.recipient_number + ')' : '')}
-                    </span>
-                    <span className={'px-2 py-0.5 rounded-full text-xs font-medium ' + (statusColors[msg.status] || 'bg-gray-100 text-gray-600')}>
-                      {msg.status}
-                    </span>
+                  <div className="text-base font-bold text-text-primary truncate">{msg.recipient_name || msg.recipient_number || '?'}</div>
+                  <div className="text-sm text-gray-500 truncate">{(msg.parsed_message || '').substring(0, 50)}</div>
+                  <div className={`text-sm mt-1 ${countdown.urgent ? 'text-red-400' : 'text-primary'}`}>
+                    {countdown.text}
                   </div>
-                  <p className="text-sm text-gray-700 mb-1 font-medium">{trunc(msg.parsed_message || '', 100)}</p>
-                  {msg.caption && msg.caption !== msg.parsed_message && (
-                    <p className="text-xs text-gray-400 mb-1">Originale: {trunc(msg.caption, 60)}</p>
-                  )}
-                  <p className="text-xs text-gray-400 flex items-center gap-1">
-                    <Calendar className="w-3 h-3" /> {fmt(msg.scheduled_at)}
-                  </p>
                 </div>
-                <button
-                  onClick={() => onDelete(msg.id)}
-                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-200 text-red-700 hover:bg-red-50 transition-colors flex items-center gap-1 shrink-0"
-                >
-                  <Trash2 className="w-3 h-3" /> Elimina
-                </button>
+                <div className="flex items-center gap-3 ml-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: status.color }} />
+                    <span className="text-xs text-gray-400">{status.label}</span>
+                  </div>
+                  {(msg.status === 'pending' || msg.status.startsWith('awaiting_')) && (
+                    <button
+                      onClick={() => { if (confirm('Vuoi annullare questo invio?')) onDelete(msg.id) }}
+                      className="p-2 text-gray-400 hover:text-red-400 transition-colors"
+                      title="Annulla invio"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
