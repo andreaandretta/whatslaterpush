@@ -34,7 +34,7 @@ export default function Navbar() {
           href="/dashboard"
           className="bg-primary text-white px-5 h-12 flex items-center rounded-full text-sm font-semibold hover:bg-primary/90 transition-colors"
         >
-          Attiva i promemoria gratis
+          Programma i messaggi gratis
         </Link>
       </div>
     </nav>

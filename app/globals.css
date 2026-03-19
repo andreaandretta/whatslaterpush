@@ -85,10 +85,10 @@
   animation: fadeInUp 0.4s ease-out forwards;
 }
 
-/* Phone mockup frame animation (3 frames, 6s loop) */
-@keyframes phoneFrame {
-  0%, 30% { opacity: 1; }
-  33%, 97% { opacity: 0; }
+/* Phone mockup frame animation (4 frames, 12s loop) */
+@keyframes phoneFrame4 {
+  0%, 22% { opacity: 1; }
+  25%, 97% { opacity: 0; }
   100% { opacity: 1; }
 }
 
@@ -97,6 +97,7 @@
   inset: 0;
   opacity: 0;
 }
-.phone-frame:nth-child(1) { animation: phoneFrame 6s infinite; }
-.phone-frame:nth-child(2) { animation: phoneFrame 6s infinite 2s; }
-.phone-frame:nth-child(3) { animation: phoneFrame 6s infinite 4s; }
+.phone-frame:nth-child(1) { animation: phoneFrame4 12s infinite; }
+.phone-frame:nth-child(2) { animation: phoneFrame4 12s infinite 3s; }
+.phone-frame:nth-child(3) { animation: phoneFrame4 12s infinite 6s; }
+.phone-frame:nth-child(4) { animation: phoneFrame4 12s infinite 9s; }

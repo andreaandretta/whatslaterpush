@@ -578,18 +578,29 @@ function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, use
 
   // Connected state
   if (connStatus === 'connected') {
-    const waUrl = `https://wa.me/+${userPhone}`;
+    const waUrl = `https://wa.me/${userPhone}`;
     return (
       <>
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-              <CheckCircle2 className="w-5 h-5 text-primary" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                <CheckCircle2 className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <h3 className="font-bold">WhatsApp Connesso</h3>
+                {userPhone && <p className="text-sm text-text-secondary">+{userPhone}</p>}
+              </div>
             </div>
-            <div>
-              <h3 className="font-bold">WhatsApp Connesso</h3>
-              {userPhone && <p className="text-sm text-text-secondary">+{userPhone}</p>}
-            </div>
+            <a
+              href={waUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm"
+            >
+              <Smartphone className="w-4 h-4" />
+              Apri WhatsApp
+            </a>
           </div>
         </div>
       </>

@@ -21,7 +21,7 @@ export default function HeroSection() {
               href="/dashboard"
               className="inline-flex items-center justify-center bg-primary text-white px-8 h-14 rounded-full text-base font-bold shadow-lg shadow-primary/30 hover:bg-primary/90 transition-colors"
             >
-              Attiva i promemoria gratis
+              Inizia a programmare i messaggi
             </Link>
           </div>
           <p className="mt-3 text-xs text-white/40">Nessuna carta richiesta</p>
@@ -29,35 +29,61 @@ export default function HeroSection() {
 
         {/* Phone mockup */}
         <div className="flex justify-center">
-          <div className="w-[220px] h-[440px] bg-[#1a1a1a] rounded-[2rem] border-2 border-white/10 overflow-hidden relative p-3">
-            {/* Frame 1: Chat screen */}
-            <div className="phone-frame flex flex-col h-full bg-[#0b141a] rounded-2xl p-3">
-              <div className="text-xs text-white/50 mb-2">WhatsApp</div>
-              <div className="mt-auto">
-                <div className="bg-[#005c4b] rounded-lg p-2 text-xs text-white/90 max-w-[80%] ml-auto">
-                  Ricorda appuntamento domani alle 15
+          <div className="w-[240px] h-[460px] bg-[#1a1a1a] rounded-[2rem] border-2 border-white/10 overflow-hidden relative p-3">
+            {/* Frame 1: Chat "Te Stesso" — utente scrive il comando */}
+            <div className="phone-frame flex flex-col h-full bg-[#0b141a] rounded-2xl overflow-hidden">
+              <div className="bg-[#075E54] px-3 py-2 flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center text-[10px] text-white font-bold">Tu</div>
+                <span className="text-xs text-white font-medium">Te Stesso</span>
+              </div>
+              <div className="flex-1 bg-[#0b141a] p-3 flex flex-col justify-end">
+                <div className="bg-[#005c4b] rounded-lg p-2 text-[11px] text-white/90 max-w-[90%] ml-auto leading-relaxed">
+                  Invia a Marco domani alle 15: Ricorda l&apos;appuntamento
                 </div>
+                <div className="text-[9px] text-white/30 text-right mt-1">14:32 ✓✓</div>
               </div>
             </div>
-            {/* Frame 2: Message visible */}
-            <div className="phone-frame flex flex-col h-full bg-[#0b141a] rounded-2xl p-3">
-              <div className="text-xs text-white/50 mb-2">Marco Rossi</div>
-              <div className="mt-auto space-y-2">
-                <div className="bg-[#005c4b] rounded-lg p-2 text-xs text-white/90 max-w-[80%] ml-auto">
-                  Ciao Marco! Ti ricordo l&apos;appuntamento di domani alle 15:00
+
+            {/* Frame 2: Bot risponde con conferma */}
+            <div className="phone-frame flex flex-col h-full bg-[#0b141a] rounded-2xl overflow-hidden">
+              <div className="bg-[#075E54] px-3 py-2 flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center text-[10px] text-white font-bold">Tu</div>
+                <span className="text-xs text-white font-medium">Te Stesso</span>
+              </div>
+              <div className="flex-1 bg-[#0b141a] p-3 flex flex-col justify-end gap-2">
+                <div className="bg-[#005c4b] rounded-lg p-2 text-[11px] text-white/90 max-w-[90%] ml-auto">
+                  Invia a Marco domani alle 15: Ricorda l&apos;appuntamento
                 </div>
-                <div className="text-[10px] text-white/30 text-right">14:59</div>
+                <div className="bg-[#1a2c34] rounded-lg p-2 text-[11px] text-white/90 max-w-[90%] leading-relaxed">
+                  ✅ Programmato!{'\n'}Inviero a Marco Rossi domani alle 15:00:{'\n'}&quot;Ricorda l&apos;appuntamento&quot;
+                </div>
+                <div className="text-[9px] text-white/30 mt-1">14:32 ✓✓</div>
               </div>
             </div>
-            {/* Frame 3: Sent check */}
+
+            {/* Frame 3: Marco riceve il messaggio */}
+            <div className="phone-frame flex flex-col h-full bg-[#0b141a] rounded-2xl overflow-hidden">
+              <div className="bg-[#075E54] px-3 py-2 flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-blue-400/30 flex items-center justify-center text-[10px] text-white font-bold">M</div>
+                <span className="text-xs text-white font-medium">Marco Rossi</span>
+              </div>
+              <div className="flex-1 bg-[#0b141a] p-3 flex flex-col justify-end gap-2">
+                <div className="bg-[#005c4b] rounded-lg p-2 text-[11px] text-white/90 max-w-[90%] ml-auto leading-relaxed">
+                  Ciao Marco! Ricorda l&apos;appuntamento di domani alle 15:00
+                </div>
+                <div className="text-[9px] text-white/30 text-right mt-1">15:00 ✓✓</div>
+              </div>
+            </div>
+
+            {/* Frame 4: Conferma invio */}
             <div className="phone-frame flex flex-col items-center justify-center h-full bg-[#0b141a] rounded-2xl">
               <div className="w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center mb-3">
                 <svg className="w-8 h-8 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <p className="text-sm text-white font-medium">Inviato</p>
-              <p className="text-xs text-white/40 mt-1">Promemoria consegnato</p>
+              <p className="text-sm text-white font-medium">Consegnato</p>
+              <p className="text-xs text-white/40 mt-1">Marco ha ricevuto il promemoria</p>
             </div>
           </div>
         </div>
