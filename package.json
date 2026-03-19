@@ -11,13 +11,11 @@
         "db:types": "npx supabase gen types typescript --project-id $SUPABASE_PROJECT_ID --schema public > types/supabase.ts"
     },
     "dependencies": {
-        "@gsap/react": "^2.1.2",
         "@supabase/ssr": "^0.4.0",
         "@supabase/supabase-js": "^2.45.0",
         "clsx": "^2.1.1",
         "cron-parser": "^4.9.0",
         "date-fns": "^3.6.0",
-        "gsap": "^3.14.2",
         "lucide-react": "^0.427.0",
         "next": "^14.2.15",
         "openai": "^4.55.0",

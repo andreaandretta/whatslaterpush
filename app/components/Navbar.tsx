@@ -1,39 +1,42 @@
 'use client';
-import { useEffect, useRef } from 'react';
-import gsap from 'gsap';
-import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import { useState, useEffect } from 'react';
 import { Calendar } from 'lucide-react';
-
-if (typeof window !== 'undefined') { gsap.registerPlugin(ScrollTrigger); }
+import Link from 'next/link';
 
 export default function Navbar() {
-  const navRef = useRef<HTMLElement>(null);
+  const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
-    const ctx = gsap.context(() => {
-      ScrollTrigger.create({
-        start: 'top -50',
-        end: 99999,
-        toggleClass: { className: 'nav-scrolled', targets: navRef.current }
-      });
-    });
-    return () => ctx.revert();
+    const onScroll = () => setScrolled(window.scrollY > 50);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
   return (
-    <nav ref={navRef} className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-[90%] max-w-5xl rounded-full px-6 py-3 transition-all duration-300 flex items-center justify-between text-white [&.nav-scrolled]:bg-white/70 [&.nav-scrolled]:backdrop-blur-md [&.nav-scrolled]:text-text-primary [&.nav-scrolled]:shadow-sm [&.nav-scrolled]:border [&.nav-scrolled]:border-gray-200">
-      <div className="flex items-center gap-2 font-bold text-xl tracking-tight">
-        <Calendar className="w-6 h-6 text-primary" />
-        <span>WhatsLater</span>
+    <nav className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${
+      scrolled
+        ? 'bg-white/90 backdrop-blur-md shadow-sm'
+        : 'bg-white/50 backdrop-blur-sm'
+    }`}>
+      <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-2 text-accent font-heading font-bold text-lg">
+          <Calendar className="w-5 h-5" />
+          WhatsLater
+        </Link>
+
+        <div className="hidden md:flex items-center gap-8">
+          <a href="#come-funziona" className="text-sm text-text-secondary hover:text-text-primary transition-colors">Come Funziona</a>
+          <a href="#prezzi" className="text-sm text-text-secondary hover:text-text-primary transition-colors">Prezzi</a>
+          <a href="#faq" className="text-sm text-text-secondary hover:text-text-primary transition-colors">FAQ</a>
+        </div>
+
+        <Link
+          href="/dashboard"
+          className="bg-primary text-white px-5 h-12 flex items-center rounded-full text-sm font-semibold hover:bg-primary/90 transition-colors"
+        >
+          Attiva i promemoria gratis
+        </Link>
       </div>
-      <div className="hidden md:flex items-center gap-8 text-sm font-medium">
-        <a href="#come-funziona" className="hover:text-primary transition-colors">Come Funziona</a>
-        <a href="#prezzi" className="hover:text-primary transition-colors">Prezzi</a>
-        <a href="#faq" className="hover:text-primary transition-colors">FAQ</a>
-      </div>
-      <a href="#connetti" className="bg-primary text-white px-5 py-2 rounded-full text-sm font-semibold hover:scale-105 transition-transform shadow-[0_4px_14px_0_rgba(37,211,102,0.39)]">
-        Connetti Ora
-      </a>
     </nav>
   );
 }
