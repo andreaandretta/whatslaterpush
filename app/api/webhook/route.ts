@@ -331,6 +331,12 @@ async function askAI(userMessage: string, contactList: string, pendingContext: a
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome'
   });
+  const currentIso = romeNow.getFullYear() + '-' +
+    String(romeNow.getMonth()+1).padStart(2,'0') + '-' +
+    String(romeNow.getDate()).padStart(2,'0') + 'T' +
+    String(romeNow.getHours()).padStart(2,'0') + ':' +
+    String(romeNow.getMinutes()).padStart(2,'0') + ':' +
+    String(romeNow.getSeconds()).padStart(2,'0');
 
   let pendingBlock = '';
   if (pendingContext) {
@@ -359,11 +365,30 @@ ESEMPI:
 
 ATTENZIONE: "di a X di ricordare a Y" = il messaggio va a X, il contenuto riguarda Y.
 
+ORARI RELATIVI: L'ora attuale ISO è ${currentIso}. Quando l'utente dice un orario relativo, CALCOLA datetime_iso sommando all'ora attuale:
+- "fra un minuto" / "tra un minuto" → ora attuale + 1 minuto
+- "fra 5 minuti" / "tra 5 minuti" → ora attuale + 5 minuti
+- "fra un'ora" / "tra un'ora" → ora attuale + 1 ora
+- "fra 2 ore" / "tra 2 ore" → ora attuale + 2 ore
+- "adesso" / "ora" / "subito" → ora attuale + 1 minuto
+Esempio: se ora sono le 14:32, "fra un minuto" → datetime_iso:"${currentIso.substring(0,11)}14:33:00"
+IMPORTANTE: FAI IL CALCOLO MATEMATICO, non inventare orari.
+
+CORREZIONE ERRORI ORTOGRAFICI: L'utente scrive su WhatsApp, spesso con errori di battitura. Correggi AUTOMATICAMENTE parole simili a indicatori temporali PRIMA di interpretarle:
+- "moani", "dmoani", "domnia", "domna" → "domani"
+- "dpdomani", "dopodmani" → "dopodomani"
+- "stasrea", "stasrea" → "stasera"
+- "stamttina", "stamatina" → "stamattina"
+- "fra un minuo", "fra un minutto" → "fra un minuto"
+- "alel", "all" → "alle"
+REGOLA: se una parola assomiglia a un indicatore temporale, interpretala come tempo, NON come nome di persona.
+"moani" NON è un nome → è "domani". "dmoani" NON è un nome → è "domani".
+
 datetime_iso DEVE essere in ora locale italiana SENZA offset (es: "2026-03-14T15:00:00", MAI "2026-03-14T15:00:00+01:00" o con Z).
 
 JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|list|cancel|status|help|chat","recipient_name":string|null,"datetime_iso":"ISO locale senza offset"|null,"message_text":"RISCRITTO"|null,"cancel_target":null,"reply":"risposta utente"}`;
 
-  const userContent = userMessage + '\n---\nContatti: ' + (contactList || 'nessuno') + '\nOra: ' + currentDateTime + pendingBlock;
+  const userContent = userMessage + '\n---\nContatti: ' + (contactList || 'nessuno') + '\nOra: ' + currentDateTime + ' (ISO: ' + currentIso + ')' + pendingBlock;
 
   try {
     console.log('WEBHOOK: AI call provider=' + ai.provider + ' model=' + ai.model + ' user="' + userMessage + '"');
