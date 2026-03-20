@@ -54,11 +54,11 @@ export default function HowItWorksSection() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
           {steps.map((step, i) => (
-            <div key={i} className="step-card bg-white rounded-2xl p-6 text-center shadow-soft opacity-0" style={{ animationDelay: `${i * 150}ms` }}>
-              <div className="w-14 h-14 mx-auto rounded-full bg-[#25D366]/12 flex items-center justify-center mb-3">
-                <step.icon className="w-7 h-7 text-[#25D366]" />
+            <div key={i} className="step-card bg-white rounded-2xl p-4 sm:p-6 text-center shadow-soft opacity-0" style={{ animationDelay: `${i * 150}ms` }}>
+              <div className="w-11 h-11 sm:w-14 sm:h-14 mx-auto rounded-full bg-[#25D366]/12 flex items-center justify-center mb-2 sm:mb-3">
+                <step.icon className="w-5 h-5 sm:w-7 sm:h-7 text-[#25D366]" />
               </div>
-              <div className="w-6 h-6 mx-auto rounded-full bg-[#25D366] text-white text-xs font-bold flex items-center justify-center mb-3">
+              <div className="w-5 h-5 sm:w-6 sm:h-6 mx-auto rounded-full bg-[#25D366] text-white text-[10px] sm:text-xs font-bold flex items-center justify-center mb-2 sm:mb-3">
                 {step.number}
               </div>
               <h3 className="text-base font-bold text-text-primary mb-1">{step.title}</h3>

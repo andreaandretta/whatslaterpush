@@ -14,7 +14,7 @@ const spaceGrotesk = Space_Grotesk({
 
 export const metadata: Metadata = {
   title: 'WhatsLater - Promemoria WhatsApp automatici',
-  description: 'I tuoi clienti non dimenticano piu l\'appuntamento. Promemoria automatici da WhatsApp, dal tuo numero.',
+  description: 'I tuoi clienti non dimenticano più l\'appuntamento. Promemoria automatici da WhatsApp, dal tuo numero.',
   keywords: ['WhatsApp', 'promemoria', 'appuntamenti', 'automatici', 'professionisti'],
 }
 

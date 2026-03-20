@@ -8,7 +8,7 @@ export default function HeroSection() {
         {/* Text */}
         <div className="text-center md:text-left">
           <h1 className="font-heading text-3xl sm:text-4xl md:text-5xl font-bold text-white leading-tight">
-            I tuoi clienti non dimenticano piu l&apos;appuntamento.
+            I tuoi clienti non dimenticano pi&ugrave; l&apos;appuntamento.
           </h1>
           <p className="mt-4 text-lg text-[#25D366] font-medium leading-relaxed">
             Il promemoria parte da WhatsApp, dal tuo numero, in automatico.
@@ -29,7 +29,7 @@ export default function HeroSection() {
 
         {/* Phone mockup — static WhatsApp chat */}
         <div className="flex justify-center">
-          <div className="w-[260px] bg-[#0b141a] rounded-[2rem] border-2 border-white/10 overflow-hidden p-3">
+          <div className="w-[220px] sm:w-[260px] bg-[#0b141a] rounded-[2rem] border-2 border-white/10 overflow-hidden p-2 sm:p-3">
             <div className="rounded-2xl overflow-hidden">
               {/* Chat header */}
               <div className="bg-[#075E54] px-3 py-2.5 flex items-center gap-2.5">
