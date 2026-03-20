@@ -1,25 +1,25 @@
 'use client';
 import { useEffect, useRef } from 'react';
-import { Link2, MessageSquare, Bell } from 'lucide-react';
+import { LogIn, MessageSquare, Check } from 'lucide-react';
 
 const steps = [
   {
-    icon: Link2,
-    title: 'Connetti WhatsApp',
-    time: '30 secondi',
-    description: 'Collega il tuo numero in 30 secondi',
+    icon: LogIn,
+    number: 1,
+    title: 'Collega il tuo WhatsApp',
+    description: 'Inserisci il codice a 8 cifre su WhatsApp — ci vogliono 30 secondi',
   },
   {
     icon: MessageSquare,
-    title: 'Scrivi il messaggio e l\'orario',
-    time: '',
-    description: 'Manda un messaggio a te stesso con il testo e l\'ora',
+    number: 2,
+    title: 'Scrivi il Comando',
+    description: "Manda un messaggio a te stesso: 'Invia a Marco domani alle 15...'",
   },
   {
-    icon: Bell,
-    title: 'Il tuo cliente riceve il promemoria',
-    time: '',
-    description: 'Il messaggio parte in automatico, dal tuo numero',
+    icon: Check,
+    number: 3,
+    title: 'Consegnato',
+    description: 'Il messaggio parte all\'ora giusta, dal tuo numero, in automatico',
   },
 ];
 
@@ -44,22 +44,25 @@ export default function HowItWorksSection() {
   }, []);
 
   return (
-    <section id="come-funziona" ref={sectionRef} className="py-24 bg-background">
+    <section id="come-funziona" ref={sectionRef} className="py-24 bg-[#ECE5DD] wa-pattern">
       <div className="max-w-5xl mx-auto px-6">
-        <h2 className="font-heading text-3xl sm:text-4xl font-bold text-text-primary text-center mb-16">
-          Come Funziona
-        </h2>
+        <div className="text-center mb-16">
+          <h2 className="font-heading text-3xl sm:text-4xl font-bold text-text-primary">
+            Come Funziona
+          </h2>
+          <p className="text-text-secondary mt-2">3 passi e sei operativo</p>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
           {steps.map((step, i) => (
-            <div key={i} className="step-card text-center opacity-0" style={{ animationDelay: `${i * 150}ms` }}>
-              <div className="w-16 h-16 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
-                <step.icon className="w-8 h-8 text-primary" />
+            <div key={i} className="step-card bg-white rounded-2xl p-6 text-center shadow-soft opacity-0" style={{ animationDelay: `${i * 150}ms` }}>
+              <div className="w-14 h-14 mx-auto rounded-full bg-[#25D366]/12 flex items-center justify-center mb-3">
+                <step.icon className="w-7 h-7 text-[#25D366]" />
               </div>
-              <h3 className="text-lg font-bold text-text-primary mb-1">{step.title}</h3>
-              {step.time && (
-                <span className="text-xs text-primary font-medium">{step.time}</span>
-              )}
-              <p className="text-sm text-text-secondary mt-2">{step.description}</p>
+              <div className="w-6 h-6 mx-auto rounded-full bg-[#25D366] text-white text-xs font-bold flex items-center justify-center mb-3">
+                {step.number}
+              </div>
+              <h3 className="text-base font-bold text-text-primary mb-1">{step.title}</h3>
+              <p className="text-sm text-text-secondary">{step.description}</p>
             </div>
           ))}
         </div>

@@ -6,17 +6,17 @@ export default function StatsBar() {
   ];
 
   return (
-    <section className="bg-text-primary py-10">
+    <section className="bg-[#25D366] py-10">
       <div className="max-w-4xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-8">
         {stats.map((stat, i) => (
           <div
             key={i}
             className={`flex-1 text-center ${
-              i < stats.length - 1 ? 'sm:border-r sm:border-white/20' : ''
+              i < stats.length - 1 ? 'sm:border-r sm:border-white/30' : ''
             }`}
           >
             <div className="text-3xl font-bold text-white">{stat.number}</div>
-            <div className="text-sm text-white/70 mt-1">{stat.label}</div>
+            <div className="text-sm text-white/80 mt-1">{stat.label}</div>
           </div>
         ))}
       </div>

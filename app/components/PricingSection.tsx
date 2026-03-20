@@ -50,24 +50,24 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
   const isPaying = currentPlan === 'personal' || currentPlan === 'business';
 
   return (
-    <section id="prezzi" className="py-24 bg-background">
+    <section id="prezzi" className="py-24 bg-white">
       <div className="max-w-4xl mx-auto px-6 text-center">
         <h2 className="font-heading text-3xl sm:text-4xl font-bold text-text-primary mb-2">Scegli il tuo piano</h2>
         <p className="text-text-secondary mb-10">Inizia gratis, passa a pagamento quando sei pronto.</p>
 
         <div className="grid md:grid-cols-3 gap-6 max-w-3xl mx-auto">
           {/* Free */}
-          <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
+          <div className="bg-white rounded-2xl p-6 border border-[#E9EDEF] shadow-sm">
             <h3 className="text-lg font-bold mb-1">Free</h3>
             <div className="flex items-baseline justify-center gap-1 mb-4">
               <span className="text-3xl font-bold">&euro;0</span>
               <span className="text-text-secondary text-sm">/mese</span>
             </div>
             <ul className="space-y-2 text-sm text-left mb-6">
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" /> 3 messaggi/giorno</li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" /> 5 contatti</li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" /> 7 giorni di storico</li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" /> 1 tentativo di invio</li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-[#667781] mt-0.5 shrink-0" /> 3 messaggi/giorno</li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-[#667781] mt-0.5 shrink-0" /> 5 contatti</li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-[#667781] mt-0.5 shrink-0" /> 7 giorni di storico</li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-[#667781] mt-0.5 shrink-0" /> 1 tentativo di invio</li>
             </ul>
             {currentPlan === 'free' ? (
               <span className="block w-full py-2.5 rounded-xl text-sm font-medium text-gray-500 border border-gray-200 text-center">Piano attuale</span>
@@ -104,7 +104,7 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
           </div>
 
           {/* Business */}
-          <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
+          <div className="bg-white rounded-2xl p-6 border border-[#E9EDEF] shadow-sm">
             <h3 className="text-lg font-bold mb-1">Business</h3>
             <div className="flex items-baseline justify-center gap-1 mb-4">
               <span className="text-3xl font-bold">&euro;19,99</span>
@@ -121,7 +121,7 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
                 Cambia piano
               </button>
             ) : (
-              <button onClick={() => handleCheckout('business')} className="w-full bg-gray-900 text-white py-2.5 rounded-xl font-semibold hover:scale-[1.02] transition-transform shadow-md">
+              <button onClick={() => handleCheckout('business')} className="w-full bg-[#075E54] text-white py-2.5 rounded-xl font-semibold hover:scale-[1.02] transition-transform shadow-md">
                 Passa a Business
               </button>
             )}
