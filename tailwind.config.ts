@@ -9,11 +9,15 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: '#F3F5F7',
+        background: '#FFFFFF',
         surface: '#FFFFFF',
         primary: '#25D366',
         'primary-hover': '#1DA851',
         accent: '#075E54',
+        teal: '#128C7E',
+        'chat-green': '#DCF8C6',
+        'chat-beige': '#ECE5DD',
+        'wa-blue': '#53BDEB',
         'text-primary': '#111B21',
         'text-secondary': '#667781',
         'border-soft': '#E9EDEF',
