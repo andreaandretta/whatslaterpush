@@ -28,18 +28,78 @@ Single endpoint `/api/monitoring/health-check` runs 6 checks every 15 minutes (v
 - `MONITORING_SECRET` — query param auth for health-check and dashboard
 - `RESEND_API_KEY` — Resend API key for email fallback
 
+## WhatsApp Alert Instance
+
+Alerts are sent using the operator's own instance. To find it:
+
+```sql
+SELECT instance_name FROM user_instances WHERE owner_phone = '393442582226' LIMIT 1;
+```
+
+The `sendAlert` function queries this at runtime — no hardcoded instance name needed. Uses the existing `EVOLUTION_API_URL` and `EVOLUTION_API_KEY` env vars.
+
 ---
 
 ## The 6 Checks
 
-| # | Name | Logic | Alert Threshold |
-|---|------|-------|-----------------|
-| 1 | `evolution_api` | `GET {EVOLUTION_API_URL}/instance/fetchInstances` with 8s timeout | Any error or timeout |
-| 2 | `cron_stalled` | Query `scheduled_messages` where `status='pending' AND scheduled_at < NOW() - INTERVAL '25 hours'` | count > 0 |
-| 3 | `webhook_inactive` | Query `scheduled_messages` for newest `created_at`. Alert if no records in last 12 hours AND there are `user_instances` with `connection_status='connected'` | No new messages + active instances |
-| 4 | `supabase_down` | `SELECT 1 FROM user_instances LIMIT 1` | Any query error |
-| 5 | `messages_stalled` | Query `scheduled_messages` where `status='sending' AND updated_at < NOW() - INTERVAL '10 minutes'` | count > 0 |
-| 6 | `failed_spike` | Query `scheduled_messages` where `status='failed' AND updated_at > NOW() - INTERVAL '2 hours'` | count > 5 |
+Each check runs inside its own try/catch — a single check failure must not prevent remaining checks from executing.
+
+### Check 1: `evolution_api`
+
+```typescript
+// GET with 8s timeout + EVOLUTION_API_KEY header
+const res = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
+  headers: { apikey: EVOLUTION_API_KEY },
+  signal: AbortSignal.timeout(8000),
+});
+// critical if !res.ok or timeout
+```
+
+### Check 2: `cron_stalled`
+
+```sql
+SELECT COUNT(*) FROM scheduled_messages
+WHERE status = 'pending' AND scheduled_at < NOW() - INTERVAL '25 hours';
+-- critical if count > 0
+```
+
+### Check 3: `webhook_inactive`
+
+```sql
+-- Step 1: any active instances?
+SELECT COUNT(*) FROM user_instances WHERE connection_status = 'open';
+-- If 0 → ok (no active instances, nothing to monitor)
+
+-- Step 2: newest message created
+SELECT MAX(created_at) AS latest FROM scheduled_messages;
+-- warning if latest < NOW() - INTERVAL '12 hours' AND active_count > 0
+```
+
+Note: `connection_status = 'open'` (not `'connected'`) — matches the value set in `app/api/connect/route.ts`.
+The 12-hour threshold avoids false positives on quiet days/nights. The cron runs every 15 minutes so the operator will be alerted within 15 minutes after the 12-hour window passes.
+
+### Check 4: `supabase_down`
+
+```sql
+SELECT 1 FROM user_instances LIMIT 1;
+-- critical if query throws any error
+```
+
+### Check 5: `messages_stalled`
+
+```sql
+SELECT COUNT(*) FROM scheduled_messages
+WHERE status = 'sending' AND updated_at < NOW() - INTERVAL '10 minutes';
+-- critical if count > 0
+```
+
+### Check 6: `failed_spike`
+
+```sql
+SELECT COUNT(*) FROM scheduled_messages
+WHERE status = 'failed' AND updated_at > NOW() - INTERVAL '2 hours';
+-- warning if count 6-10, critical if count > 10, ok if count <= 5
+```
 
 ### Check Result Structure
 
@@ -55,7 +115,7 @@ interface CheckResult {
 - Check 1, 4: `critical` on failure
 - Check 2, 5: `critical` (messages not being delivered)
 - Check 3: `warning` (possible issue, not confirmed)
-- Check 6: `warning` if count 6-10, `critical` if count > 10
+- Check 6: `warning` if count 6-10, `critical` if count > 10, `ok` if <= 5
 
 ---
 
@@ -72,7 +132,7 @@ Problem detected
 
 ### Anti-spam
 
-- Before sending, query `monitoring_alerts` for last alert with same `check_name`
+- Before sending, query `monitoring_alerts` for last alert with same `check_name` AND `channel IN ('whatsapp', 'email')` (ignore `db_only` — operator never saw those)
 - If last alert was sent less than **1 hour ago** → skip
 - When status returns to `ok` → send **recovery** message and reset cooldown
 
@@ -136,6 +196,9 @@ CREATE TABLE monitoring_alerts (
   channel TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Index for anti-spam cooldown query (check_name + created_at)
+CREATE INDEX idx_monitoring_alerts_cooldown ON monitoring_alerts (check_name, created_at DESC);
 ```
 
 ---
@@ -154,10 +217,11 @@ CREATE TABLE monitoring_alerts (
 2. **`app/api/monitoring/health-check/route.ts`** — GET endpoint:
    - Validates `MONITORING_SECRET`
    - Calls `runAllChecks()`
-   - Upserts results into `monitoring_checks`
+   - For each result: **read current row** from `monitoring_checks` (to get previous status), **then** upsert new result
    - For each non-ok result: calls `sendAlert()` if not in cooldown
-   - For each ok result that was previously non-ok: calls `sendRecovery()`
+   - For each ok result where **previous row** had non-ok status: calls `sendRecovery()`
    - Returns JSON with all check results
+   - Important: read-before-upsert order is critical for recovery detection
 
 3. **`app/monitoring/page.tsx`** — Dashboard:
    - Server component, reads `monitoring_checks` and last 20 `monitoring_alerts`
