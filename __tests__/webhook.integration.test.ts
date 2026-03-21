@@ -499,7 +499,7 @@ describe('Webhook: edge cases', () => {
     expect(res.status).toBeLessThan(500);
   });
 
-  test('handles user not found (phone not in DB)', async () => {
+  test('silently ignores user not found (phone not in DB)', async () => {
     const body = makeMessagePayload({
       instance: 'SchedWhats-Unknown',
       fromMe: true,
@@ -511,6 +511,43 @@ describe('Webhook: edge cases', () => {
     mockSupa.setResponse('user_instances:select', null);
 
     const res = await callWebhook(body);
-    expect(res.status).toBe(404);
+    // Should silently ignore, not return 404
+    expect(res.status).toBe(200);
+  });
+
+  test('cross-user message: user A sends to user B, both have instances — must be ignored', async () => {
+    // Wife (393780858599, instance SchedWhats-3780858599) sends a message
+    // to operator (393442582226, instance SchedWhats-393442582226).
+    // On wife's instance: fromMe=true, remoteJid=operator's number.
+    // findUserStrict(SchedWhats-3780858599, 393442582226) must NOT match.
+    // The webhook must NOT reassign the operator's instance.
+    const body = makeMessagePayload({
+      instance: 'SchedWhats-3780858599',
+      fromMe: true,
+      remoteJid: '393442582226@s.whatsapp.net', // operator's number — NOT self-chat
+      text: 'Ciao amore, ci vediamo stasera?',
+    });
+
+    // findUserStrict returns null — phone 393442582226 is not under SchedWhats-3780858599
+    mockSupa.setResponse('user_instances:select', null);
+
+    const res = await callWebhook(body);
+
+    // Must be silently ignored (200), never processed or reassigned
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+
+    // Verify NO update/upsert was made to user_instances (no reassignment)
+    const updateCalls = mockSupa.calls.filter(
+      c => c.table === 'user_instances' && c.operation === 'update'
+    );
+    expect(updateCalls.length).toBe(0);
+
+    // Verify NO message was inserted into scheduled_messages
+    const insertCalls = mockSupa.calls.filter(
+      c => c.table === 'scheduled_messages' && c.operation === 'insert'
+    );
+    expect(insertCalls.length).toBe(0);
   });
 });

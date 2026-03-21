@@ -213,18 +213,8 @@ async function findUserStrict(instanceName: string, phone: string): Promise<any>
   return null;
 }
 
-async function findUserByPhoneOnly(phone: string): Promise<any> {
-  const variants = phoneVariants(phone);
-  for (const v of variants) {
-    const { data } = await supabase
-      .from('user_instances')
-      .select('id, phone_number, subscription_plan, trial_ends_at, instance_name')
-      .eq('phone_number', v)
-      .maybeSingle();
-    if (data) return data;
-  }
-  return null;
-}
+// findUserByPhoneOnly REMOVED — caused cross-user instance reassignment bug.
+// See commit message for details. Only findUserStrict is used now.
 
 async function handleConnectionUpdate(payload: any): Promise<NextResponse> {
   const instanceName = payload?.instance || '';
@@ -645,38 +635,11 @@ export async function POST(req) {
     let user = await findUserStrict(evoInstance, senderRaw);
 
     if (!user) {
-      const existingUser = await findUserByPhoneOnly(senderRaw);
-      if (existingUser) {
-        console.log(`WEBHOOK: Phone ${senderRaw} found under instance=${existingUser.instance_name} but webhook from ${evoInstance}`);
-        let oldInstanceDead = false;
-        try {
-          const checkRes = await fetch(
-            `${process.env.EVOLUTION_API_URL}/instance/connectionState/${existingUser.instance_name}`,
-            { headers: { 'apikey': process.env.EVOLUTION_API_KEY! } }
-          );
-          if (!checkRes.ok) { oldInstanceDead = true; }
-          else {
-            const checkData = await checkRes.json();
-            const oldState = checkData?.instance?.state || checkData?.state || 'close';
-            oldInstanceDead = (oldState !== 'open');
-          }
-        } catch (e) { oldInstanceDead = true; }
-
-        if (oldInstanceDead) {
-          console.log(`WEBHOOK: Old instance ${existingUser.instance_name} dead. Reassigning to ${evoInstance}`);
-          await supabase.from('user_instances')
-            .update({ instance_name: evoInstance, connection_status: 'open', last_connection_update: new Date().toISOString() })
-            .eq('id', existingUser.id);
-          existingUser.instance_name = evoInstance;
-          user = existingUser;
-        } else {
-          console.error(`WEBHOOK: CONFLICT - phone ${senderRaw} has LIVE instance ${existingUser.instance_name} but msg from ${evoInstance}. REJECTING.`);
-          return NextResponse.json({ error: 'Instance conflict' }, { status: 409 });
-        }
-      } else {
-        console.error(`WEBHOOK: REJECTED - phone ${senderRaw} instance ${evoInstance} not in DB.`);
-        return NextResponse.json({ error: 'User not found' }, { status: 404 });
-      }
+      // No match: instance+phone combo not in DB. Silently ignore.
+      // NEVER auto-reassign instances — it causes cross-user contamination
+      // when user A sends a message to user B and both have WhatsLater instances.
+      console.log(`WEBHOOK: No user for instance=${evoInstance} phone=${senderRaw}. Ignoring.`);
+      return NextResponse.json({ ok: true });
     }
 
     if (user.instance_name !== evoInstance) {
