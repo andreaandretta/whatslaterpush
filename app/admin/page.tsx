@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { Suspense, useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 // --- Types ---
@@ -61,7 +61,15 @@ function fmtDateShort(iso: string) {
 
 // --- Component ---
 
-export default function AdminPage() {
+export default function AdminPageWrapper() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-gray-50 flex items-center justify-center"><div className="animate-spin w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full" /></div>}>
+      <AdminPage />
+    </Suspense>
+  );
+}
+
+function AdminPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const secret = searchParams.get('secret') || '';
