@@ -178,16 +178,23 @@ export async function runAllChecks(): Promise<CheckResult[]> {
 export async function shouldAlert(checkName: string): Promise<boolean> {
   try {
     const supabase = getSupabase();
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    // Check if we already alerted (any channel) within the last hour
     const { data, error } = await supabase
       .from('monitoring_alerts')
       .select('created_at')
       .eq('check_name', checkName)
-      .in('channel', ['whatsapp', 'email'])
+      .gte('created_at', oneHourAgo)
       .order('created_at', { ascending: false })
       .limit(1);
-    if (error || !data || data.length === 0) return true;
+    if (error) {
+      console.error('shouldAlert query error:', error.message);
+      return true;
+    }
+    if (!data || data.length === 0) return true;
+    // Double-check: verify the alert is actually within the last hour (belt-and-suspenders)
     const lastAlert = new Date(data[0].created_at).getTime();
-    return Date.now() - lastAlert > 60 * 60 * 1000; // 1 hour cooldown
+    return Date.now() - lastAlert > 60 * 60 * 1000;
   } catch {
     return true; // if we can't check, better to alert
   }
