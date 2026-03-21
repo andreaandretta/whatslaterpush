@@ -129,10 +129,10 @@ export async function GET(req: NextRequest) {
 
     // P0 FIX: Single JOIN query - each row carries its own instance_name
     // No per-user loop, no global state, no instance confusion possible
-    // Reset messages stuck in 'sending' for more than 2 minutes (crashed cron)
+    // Reset messages stuck in 'processing' for more than 2 minutes (crashed cron)
     await supabase.from('scheduled_messages')
       .update({ status: 'pending' })
-      .eq('status', 'sending')
+      .eq('status', 'processing')
       .lt('updated_at', new Date(Date.now() - 2 * 60 * 1000).toISOString());
 
     const { data: pendingMessages, error: queryErr } = await supabase
@@ -258,7 +258,7 @@ export async function GET(req: NextRequest) {
 
         // Atomic lock: claim message before sending (prevents double-send on overlapping cron runs)
         const { data: claimed } = await supabase.from('scheduled_messages')
-          .update({ status: 'sending' })
+          .update({ status: 'processing' })
           .eq('id', msg.id)
           .eq('status', 'pending')
           .select('id');

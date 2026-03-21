@@ -134,7 +134,7 @@ describe('checkMessagesStalled', () => {
     expect(result.status).toBe('ok');
   });
 
-  test('returns critical when messages stuck in sending', async () => {
+  test('returns critical when messages stuck in processing', async () => {
     mockSupa.setResponse('scheduled_messages:select', null, null, { count: 2 });
     const result = await checkMessagesStalled();
     expect(result.status).toBe('critical');

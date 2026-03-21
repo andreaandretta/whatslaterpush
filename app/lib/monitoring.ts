@@ -117,10 +117,10 @@ export async function checkMessagesStalled(): Promise<CheckResult> {
     const { count, error } = await supabase
       .from('scheduled_messages')
       .select('id', { count: 'exact', head: true })
-      .eq('status', 'sending')
+      .eq('status', 'processing')
       .lt('updated_at', new Date(Date.now() - 10 * 60 * 1000).toISOString());
     if (error) return { name: 'messages_stalled', status: 'critical', message: `Query error: ${error.message}`, checked_at: now };
-    if ((count ?? 0) > 0) return { name: 'messages_stalled', status: 'critical', message: `${count} messaggi bloccati in 'sending'`, checked_at: now };
+    if ((count ?? 0) > 0) return { name: 'messages_stalled', status: 'critical', message: `${count} messaggi bloccati in 'processing'`, checked_at: now };
     return { name: 'messages_stalled', status: 'ok', message: 'Nessun messaggio bloccato', checked_at: now };
   } catch (err: any) {
     return { name: 'messages_stalled', status: 'critical', message: err?.message || 'Errore', checked_at: now };
@@ -203,7 +203,7 @@ const CHECK_DESCRIPTIONS: Record<string, string> = {
   cron_stalled: 'Cron bloccato — messaggi pending da >25h',
   webhook_inactive: 'Webhook inattivo — nessun messaggio recente',
   supabase_down: 'Database Supabase non raggiungibile',
-  messages_stalled: 'Messaggi bloccati in stato "sending"',
+  messages_stalled: 'Messaggi bloccati in stato "processing"',
   failed_spike: 'Picco di messaggi falliti',
 };
 
