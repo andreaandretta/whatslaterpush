@@ -25,9 +25,10 @@ const STATUS_TEXT: Record<string, string> = {
 export default async function MonitoringPage({
   searchParams,
 }: {
-  searchParams: { secret?: string };
+  searchParams: Promise<{ secret?: string }>;
 }) {
-  const secret = searchParams.secret;
+  const params = await searchParams;
+  const secret = params.secret;
   if (!secret || secret !== process.env.MONITORING_SECRET) {
     redirect('/');
   }
