@@ -219,16 +219,25 @@ function buildRecoveryText(check: CheckResult): string {
   return `✅ WhatsLater Risolto\n━━━━━━━━━━━━━━━━\nRisolto: ${CHECK_DESCRIPTIONS[check.name] || check.name}\nOra: ${formatItalianTime()}`;
 }
 
-async function getOperatorInstance(): Promise<string | null> {
+async function getAlertInstance(): Promise<string | null> {
   try {
     const supabase = getSupabase();
+    // Use a DIFFERENT instance from the operator's own phone to avoid self-message
+    // (self-messages via Evolution API return 200 but don't deliver/notify)
     const { data, error } = await supabase
+      .from('user_instances')
+      .select('instance_name')
+      .eq('connection_status', 'open')
+      .neq('phone_number', OPERATOR_PHONE)
+      .limit(1);
+    if (!error && data && data.length > 0) return data[0].instance_name;
+    // Fallback: use operator's own instance if no other available
+    const { data: fallback } = await supabase
       .from('user_instances')
       .select('instance_name')
       .eq('phone_number', OPERATOR_PHONE)
       .limit(1);
-    if (error || !data || data.length === 0) return null;
-    return data[0].instance_name;
+    return fallback?.[0]?.instance_name || null;
   } catch {
     return null;
   }
@@ -236,7 +245,7 @@ async function getOperatorInstance(): Promise<string | null> {
 
 async function sendWhatsApp(text: string): Promise<boolean> {
   try {
-    const instanceName = await getOperatorInstance();
+    const instanceName = await getAlertInstance();
     if (!instanceName) return false;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
