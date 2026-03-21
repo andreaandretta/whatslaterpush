@@ -219,7 +219,7 @@ function formatItalianTime(): string {
 }
 
 function buildAlertText(check: CheckResult): string {
-  return `⚠️ WhatsLater Alert\n━━━━━━━━━━━━━━━━\nProblema: ${CHECK_DESCRIPTIONS[check.name] || check.name}\nDettaglio: ${check.message}\nOra: ${formatItalianTime()}\n━━━━━━━━━━━━━━━━\nControlla: whatslaterpush.vercel.app/monitoring?secret=...`;
+  return `⚠️ WhatsLater Alert\n━━━━━━━━━━━━━━━━\nProblema: ${CHECK_DESCRIPTIONS[check.name] || check.name}\nDettaglio: ${check.message}\nOra: ${formatItalianTime()}\n━━━━━━━━━━━━━━━━\nhttps://whatslaterpush.vercel.app/admin?secret=f80554d8d6eeaba07f430eed835703d7`;
 }
 
 function buildRecoveryText(check: CheckResult): string {
