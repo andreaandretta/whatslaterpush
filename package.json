@@ -8,6 +8,8 @@
         "start": "next start",
         "lint": "next lint",
         "test": "jest",
+        "test:e2e": "playwright test",
+        "test:e2e:ui": "playwright test --ui",
         "db:types": "npx supabase gen types typescript --project-id $SUPABASE_PROJECT_ID --schema public > types/supabase.ts"
     },
     "dependencies": {
@@ -27,6 +29,7 @@
         "zod": "^3.23.8"
     },
     "devDependencies": {
+        "@playwright/test": "^1.58.2",
         "@types/jest": "^30.0.0",
         "@types/node": "^22.1.0",
         "@types/react": "^18.3.3",
