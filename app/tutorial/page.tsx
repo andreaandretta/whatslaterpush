@@ -22,8 +22,8 @@ export default function TutorialPage() {
           {/* Animated demo */}
           <div className="bg-[#ECE5DD] rounded-xl p-4 relative overflow-hidden">
             <div className="flex items-center gap-2 mb-3">
-              <div className="w-8 h-8 rounded-full bg-[#128c7e] flex items-center justify-center text-white text-xs">Tu</div>
-              <span className="text-sm text-gray-600">Chat con WhatsLater</span>
+              <div className="w-8 h-8 rounded-full bg-[#25D366] flex items-center justify-center text-white text-xs font-bold">WL</div>
+              <span className="text-sm text-gray-600">Il tuo assistente WhatsLater</span>
             </div>
             {/* Animated attachment flow */}
             <div className="space-y-3">

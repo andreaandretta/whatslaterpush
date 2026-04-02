@@ -858,11 +858,11 @@ function HowToUseBox() {
       <ol className="space-y-3 text-sm">
         <li className="flex gap-3">
           <span className="bg-primary/10 text-primary w-6 h-6 rounded-full flex items-center justify-center font-bold shrink-0 text-xs">1</span>
-          <span>Apri WhatsApp e cerca la chat <strong>&quot;Te Stesso&quot;</strong></span>
+          <span>Apri WhatsApp e cerca la chat <strong>&quot;WhatsLater&quot;</strong> (la tua chat personale)</span>
         </li>
         <li className="flex gap-3">
           <span className="bg-primary/10 text-primary w-6 h-6 rounded-full flex items-center justify-center font-bold shrink-0 text-xs">2</span>
-          <span>Tocca la graffetta e seleziona <strong>&quot;Contatto&quot;</strong> del destinatario</span>
+          <span>Presenta un cliente: tocca 📎 → <strong>Contatto</strong> (serve solo la prima volta)</span>
         </li>
         <li className="flex gap-3">
           <span className="bg-primary/10 text-primary w-6 h-6 rounded-full flex items-center justify-center font-bold shrink-0 text-xs">3</span>

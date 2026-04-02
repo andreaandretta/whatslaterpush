@@ -12,8 +12,8 @@ const steps = [
   {
     icon: MessageSquare,
     number: 2,
-    title: 'Scrivi il Comando',
-    description: "Manda un messaggio a te stesso: 'Invia a Marco domani alle 15...'",
+    title: 'Scrivi al tuo Assistente',
+    description: "Apri la chat WhatsLater e scrivi: 'Invia a Marco domani alle 15...'",
   },
   {
     icon: Check,

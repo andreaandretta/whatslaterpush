@@ -580,12 +580,11 @@ export async function POST(req) {
               await new Promise(r => setTimeout(r, 1000));
               // Step 3: Welcome message
               await notifyOwner(evoInstance, inst.phone_number,
-                'Benvenuto su WhatsLater! 🎉\n\n' +
-                'Ecco come mandare il tuo primo promemoria in 2 passi:\n\n' +
-                '1️⃣ Inviami il contatto di un tuo cliente (premi 📎 → Contatto)\n' +
-                '2️⃣ Poi scrivi: "Ricorda a [nome] l\'appuntamento di domani alle 15"\n\n' +
-                'Il messaggio partira automaticamente all\'orario che scegli! 📲\n\n' +
-                'Hai bisogno di aiuto? Scrivi AIUTO'
+                'Ciao! Sono il tuo assistente WhatsLater 👋\n\n' +
+                'Da qui puoi programmare messaggi WhatsApp. Ecco come:\n\n' +
+                '1️⃣ *Presenta un cliente* — tocca 📎 → Contatto e inviami la sua scheda (serve solo la prima volta)\n\n' +
+                '2️⃣ *Scrivi il comando* — "Invia a Marco domani alle 15: Ricordati l\'appuntamento!"\n\n' +
+                'Prova ora! Inviami il contatto di un tuo cliente 👇'
               );
               // Mark welcome as sent
               await supabase.from('user_instances')
