@@ -53,6 +53,7 @@ interface DailyReport {
   disk_percent: number;
   messages_sent: number;
   messages_failed: number;
+  active_senders: number;
   new_users: number;
   churned_trials: number;
   daily_revenue: number;
@@ -496,6 +497,7 @@ function AdminPage() {
               <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm text-center">
                 <p className="text-2xl font-bold text-gray-900">{data.latestReport.messages_sent}</p>
                 <p className="text-xs text-gray-500 mt-1">Msg inviati</p>
+                <p className="text-[10px] text-gray-400">da {data.latestReport.active_senders} utenti</p>
               </div>
               <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm text-center">
                 <p className={`text-2xl font-bold ${data.latestReport.messages_failed > 0 ? 'text-red-600' : 'text-gray-900'}`}>

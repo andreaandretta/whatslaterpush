@@ -21,6 +21,7 @@ export interface DailyReportData {
   disk_percent: number;
   messages_sent: number;
   messages_failed: number;
+  active_senders: number;
   new_users: number;
   churned_trials: number;
   daily_revenue: number;
@@ -61,6 +62,14 @@ export async function collectDailyReport(): Promise<DailyReportData> {
     .select('id', { count: 'exact', head: true })
     .eq('status', 'failed')
     .gte('updated_at', yesterdayISO);
+
+  // Distinct senders (by instance_phone) who sent messages in the last 24h
+  const { data: senderRows } = await supabase
+    .from('scheduled_messages')
+    .select('instance_phone')
+    .eq('status', 'sent')
+    .gte('updated_at', yesterdayISO);
+  const activeSenders = new Set((senderRows || []).map((r: any) => r.instance_phone).filter(Boolean)).size;
 
   // --- Users ---
   const { count: newUsersCount } = await supabase
@@ -128,6 +137,7 @@ export async function collectDailyReport(): Promise<DailyReportData> {
     disk_percent,
     messages_sent: sentCount ?? 0,
     messages_failed: failedCount ?? 0,
+    active_senders: activeSenders,
     new_users: newUsersCount ?? 0,
     churned_trials: churnedCount ?? 0,
     daily_revenue: Math.round(daily_revenue * 100) / 100,
@@ -152,7 +162,7 @@ export function formatWhatsAppReport(r: DailyReportData): string {
     `  Disco: ${r.disk_percent}%`,
     '',
     '\u{1F4E8} MESSAGGI (24h)',
-    `  Inviati: ${r.messages_sent}`,
+    `  Inviati: ${r.messages_sent} da ${r.active_senders} utenti`,
     `  Falliti: ${r.messages_failed} (tasso: ${successRate}%)`,
     '',
     '\u{1F465} UTENTI',

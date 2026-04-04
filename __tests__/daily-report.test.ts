@@ -63,6 +63,7 @@ describe('collectDailyReport', () => {
     const report = await collectDailyReport();
     expect(report).toHaveProperty('ram_peak_percent');
     expect(report).toHaveProperty('messages_sent');
+    expect(report).toHaveProperty('active_senders');
     expect(report).toHaveProperty('mrr');
     expect(typeof report.ram_peak_percent).toBe('number');
   });
@@ -78,6 +79,7 @@ describe('formatWhatsAppReport', () => {
       disk_percent: 31,
       messages_sent: 47,
       messages_failed: 2,
+      active_senders: 5,
       new_users: 3,
       churned_trials: 1,
       daily_revenue: 14.98,

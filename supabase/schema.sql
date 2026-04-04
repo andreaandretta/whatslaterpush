@@ -311,6 +311,7 @@ CREATE TABLE daily_reports (
     disk_percent INTEGER,
     messages_sent INTEGER DEFAULT 0,
     messages_failed INTEGER DEFAULT 0,
+    active_senders INTEGER DEFAULT 0,
     new_users INTEGER DEFAULT 0,
     churned_trials INTEGER DEFAULT 0,
     daily_revenue NUMERIC(10,2) DEFAULT 0,
