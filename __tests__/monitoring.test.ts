@@ -41,9 +41,11 @@ import {
   checkSupabaseDown,
   checkMessagesStalled,
   checkFailedSpike,
+  checkDropletRam,
   runAllChecks,
   shouldAlert,
   sendAlert,
+  sendAlertWithChannel,
   sendRecovery,
   CheckResult,
 } from '../app/lib/monitoring';
@@ -94,17 +96,43 @@ describe('checkCronStalled', () => {
 
 describe('checkWebhookInactive', () => {
   test('returns ok when no active instances', async () => {
-    mockSupa.setResponse('user_instances:select', null, null, { count: 0 });
+    mockSupa.setResponse('user_instances:select', []);
     const result = await checkWebhookInactive();
     expect(result.status).toBe('ok');
     expect(result.message).toContain('Nessuna istanza attiva');
   });
 
-  test('returns ok when recent messages exist with active instances', async () => {
-    mockSupa.setResponse('user_instances:select', null, null, { count: 2 });
-    mockSupa.setResponse('scheduled_messages:select', [{ created_at: new Date().toISOString() }]);
+  test('returns ok when all instances have webhooks configured', async () => {
+    mockSupa.setResponse('user_instances:select', [
+      { instance_name: 'SchedWhats-39350' },
+      { instance_name: 'SchedWhats-39340' },
+    ]);
+    fetchMock.setJsonResponse('/webhook/find/SchedWhats-39350', { url: 'https://whatslaterpush.vercel.app/api/webhook' });
+    fetchMock.setJsonResponse('/webhook/find/SchedWhats-39340', { url: 'https://whatslaterpush.vercel.app/api/webhook' });
     const result = await checkWebhookInactive();
     expect(result.status).toBe('ok');
+    expect(result.message).toContain('2 istanze');
+  });
+
+  test('returns warning when some instances miss webhook', async () => {
+    mockSupa.setResponse('user_instances:select', [
+      { instance_name: 'SchedWhats-39350' },
+      { instance_name: 'SchedWhats-39340' },
+    ]);
+    fetchMock.setJsonResponse('/webhook/find/SchedWhats-39350', { url: 'https://whatslaterpush.vercel.app/api/webhook' });
+    fetchMock.setJsonResponse('/webhook/find/SchedWhats-39340', { url: '' });
+    const result = await checkWebhookInactive();
+    expect(result.status).toBe('warning');
+    expect(result.message).toContain('1/2');
+  });
+
+  test('returns critical when all instances miss webhook', async () => {
+    mockSupa.setResponse('user_instances:select', [
+      { instance_name: 'SchedWhats-39350' },
+    ]);
+    fetchMock.setJsonResponse('/webhook/find/SchedWhats-39350', {}, 500);
+    const result = await checkWebhookInactive();
+    expect(result.status).toBe('critical');
   });
 });
 
@@ -166,12 +194,29 @@ describe('checkFailedSpike', () => {
 // --- runAllChecks ---
 
 describe('runAllChecks', () => {
-  test('returns 6 results', async () => {
+  test('returns 7 results', async () => {
     fetchMock.setJsonResponse('/instance/fetchInstances', [{ id: 1 }], 200);
     mockSupa.setResponse('scheduled_messages:select', null, null, { count: 0 });
     mockSupa.setResponse('user_instances:select', [{ id: '1' }], null, { count: 0 });
+    process.env.DO_API_TOKEN = 'test-token';
+    process.env.DO_DROPLET_ID = '12345';
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/memory_free', {
+      data: { result: [{ values: [['1712200000', '1288490189']] }] }
+    });
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/memory_available', {
+      data: { result: [{ values: [['1712200000', '2147483648']] }] }
+    });
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/cpu', {
+      data: { result: [{ metric: { mode: 'idle' }, values: [['1712200000', '82']] }] }
+    });
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/filesystem_free', {
+      data: { result: [{ values: [['1712200000', '17179869184']] }] }
+    });
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/filesystem_size', {
+      data: { result: [{ values: [['1712200000', '26843545600']] }] }
+    });
     const results = await runAllChecks();
-    expect(results).toHaveLength(6);
+    expect(results).toHaveLength(7);
     results.forEach((r) => {
       expect(['ok', 'warning', 'critical']).toContain(r.status);
       expect(r.name).toBeTruthy();
@@ -250,5 +295,86 @@ describe('sendRecovery', () => {
     // Verify the message contains recovery text
     const body = JSON.parse(sendTextCalls[0].options.body as string);
     expect(body.text).toContain('Risolto');
+  });
+});
+
+// --- Check 7: Droplet RAM ---
+
+describe('checkDropletRam', () => {
+  test('returns ok when RAM < 50%', async () => {
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/memory_free', {
+      data: { result: [{ values: [['1712200000', '1288490189']] }] }
+    });
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/memory_available', {
+      data: { result: [{ values: [['1712200000', '2147483648']] }] }
+    });
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/cpu', {
+      data: { result: [{ metric: { mode: 'idle' }, values: [['1712200000', '82']] }] }
+    });
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/filesystem_free', {
+      data: { result: [{ values: [['1712200000', '17179869184']] }] }
+    });
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/filesystem_size', {
+      data: { result: [{ values: [['1712200000', '26843545600']] }] }
+    });
+    process.env.DO_API_TOKEN = 'test-token';
+    process.env.DO_DROPLET_ID = '12345';
+    const result = await checkDropletRam();
+    expect(result.status).toBe('ok');
+  });
+
+  test('returns warning at 50-69% (dashboard only)', async () => {
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/memory_free', {
+      data: { result: [{ values: [['1712200000', '966367642']] }] }
+    });
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/memory_available', {
+      data: { result: [{ values: [['1712200000', '2147483648']] }] }
+    });
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/cpu', {
+      data: { result: [{ metric: { mode: 'idle' }, values: [['1712200000', '82']] }] }
+    });
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/filesystem_free', {
+      data: { result: [{ values: [['1712200000', '17179869184']] }] }
+    });
+    fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/filesystem_size', {
+      data: { result: [{ values: [['1712200000', '26843545600']] }] }
+    });
+    process.env.DO_API_TOKEN = 'test-token';
+    process.env.DO_DROPLET_ID = '12345';
+    const result = await checkDropletRam();
+    expect(result.status).toBe('warning');
+    expect(result.name).toBe('droplet_ram');
+    expect(result.message).toContain('55%');
+  });
+
+  test('returns ok when DO env vars are missing', async () => {
+    delete process.env.DO_API_TOKEN;
+    const result = await checkDropletRam();
+    expect(result.status).toBe('ok');
+    expect(result.message).toContain('non configurato');
+  });
+});
+
+// --- sendAlertWithChannel ---
+
+describe('sendAlertWithChannel', () => {
+  test('sends only to db when channels is ["db"]', async () => {
+    mockSupa.setResponse('monitoring_alerts:insert', { id: '1' });
+    const check: CheckResult = { name: 'test', status: 'warning', message: 'test', checked_at: new Date().toISOString() };
+    await sendAlertWithChannel(check, ['db']);
+    const whatsappCalls = fetchMock.calls.filter(c => c.url.includes('/message/sendText'));
+    const emailCalls = fetchMock.calls.filter(c => c.url.includes('resend.com'));
+    expect(whatsappCalls.length).toBe(0);
+    expect(emailCalls.length).toBe(0);
+  });
+
+  test('sends whatsapp when channels includes "whatsapp"', async () => {
+    mockSupa.setResponse('user_instances:select', [{ instance_name: 'Test-Instance' }]);
+    mockSupa.setResponse('monitoring_alerts:insert', { id: '1' });
+    fetchMock.setJsonResponse('/message/sendText', { key: { id: 'msg1' } });
+    const check: CheckResult = { name: 'test', status: 'warning', message: 'test', checked_at: new Date().toISOString() };
+    await sendAlertWithChannel(check, ['whatsapp']);
+    const whatsappCalls = fetchMock.calls.filter(c => c.url.includes('/message/sendText'));
+    expect(whatsappCalls.length).toBe(1);
   });
 });

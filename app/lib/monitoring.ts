@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { fetchDropletMetrics } from './droplet';
 
 // --- Types ---
 
@@ -68,31 +69,54 @@ export async function checkWebhookInactive(): Promise<CheckResult> {
   try {
     const supabase = getSupabase();
     // Step 1: any active instances?
-    const { count: activeCount, error: e1 } = await supabase
+    const { data: activeInstances, error: e1 } = await supabase
       .from('user_instances')
-      .select('id', { count: 'exact', head: true })
+      .select('instance_name')
       .eq('connection_status', 'open');
     if (e1) return { name: 'webhook_inactive', status: 'critical', message: `Query error: ${e1.message}`, checked_at: now };
-    if ((activeCount ?? 0) === 0) return { name: 'webhook_inactive', status: 'ok', message: 'Nessuna istanza attiva', checked_at: now };
-
-    // Step 2: newest message
-    const { data, error: e2 } = await supabase
-      .from('scheduled_messages')
-      .select('created_at')
-      .order('created_at', { ascending: false })
-      .limit(1);
-    if (e2) return { name: 'webhook_inactive', status: 'critical', message: `Query error: ${e2.message}`, checked_at: now };
-
-    if (!data || data.length === 0) {
-      return { name: 'webhook_inactive', status: 'warning', message: `Nessun messaggio nel DB con ${activeCount} istanze attive`, checked_at: now };
+    if (!activeInstances || activeInstances.length === 0) {
+      return { name: 'webhook_inactive', status: 'ok', message: 'Nessuna istanza attiva', checked_at: now };
     }
 
-    const latest = new Date(data[0].created_at).getTime();
-    const twelveHoursAgo = Date.now() - 12 * 60 * 60 * 1000;
-    if (latest < twelveHoursAgo) {
-      return { name: 'webhook_inactive', status: 'warning', message: `Ultimo messaggio ${new Date(data[0].created_at).toLocaleString('it-IT')} con ${activeCount} istanze attive`, checked_at: now };
+    // Step 2: verify webhook is configured on each active instance via Evolution API
+    const unconfigured: string[] = [];
+    for (const inst of activeInstances) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        try {
+          const res = await fetch(
+            `${process.env.EVOLUTION_API_URL}/webhook/find/${inst.instance_name}`,
+            {
+              headers: { apikey: process.env.EVOLUTION_API_KEY! },
+              signal: controller.signal,
+            }
+          );
+          if (!res.ok) {
+            unconfigured.push(inst.instance_name);
+            continue;
+          }
+          const data = await res.json();
+          // Check if webhook URL is set (handles both v2.0 wrapped and v2.x flat formats)
+          const webhookUrl = data?.url || data?.webhook?.url || '';
+          if (!webhookUrl) {
+            unconfigured.push(inst.instance_name);
+          }
+        } finally {
+          clearTimeout(timeout);
+        }
+      } catch {
+        unconfigured.push(inst.instance_name);
+      }
     }
-    return { name: 'webhook_inactive', status: 'ok', message: 'Webhook attivo', checked_at: now };
+
+    if (unconfigured.length === activeInstances.length) {
+      return { name: 'webhook_inactive', status: 'critical', message: `Webhook non configurato su ${unconfigured.length}/${activeInstances.length} istanze attive`, checked_at: now };
+    }
+    if (unconfigured.length > 0) {
+      return { name: 'webhook_inactive', status: 'warning', message: `Webhook mancante su ${unconfigured.length}/${activeInstances.length}: ${unconfigured.join(', ')}`, checked_at: now };
+    }
+    return { name: 'webhook_inactive', status: 'ok', message: `Webhook configurato su ${activeInstances.length} istanze`, checked_at: now };
   } catch (err: any) {
     return { name: 'webhook_inactive', status: 'critical', message: err?.message || 'Errore', checked_at: now };
   }
@@ -146,6 +170,35 @@ export async function checkFailedSpike(): Promise<CheckResult> {
   }
 }
 
+export async function checkDropletRam(): Promise<CheckResult> {
+  const now = new Date().toISOString();
+  if (!process.env.DO_API_TOKEN || !process.env.DO_DROPLET_ID) {
+    return { name: 'droplet_ram', status: 'ok', message: 'Monitoring DO non configurato', checked_at: now };
+  }
+
+  try {
+    const metrics = await fetchDropletMetrics();
+    if (!metrics) {
+      return { name: 'droplet_ram', status: 'warning', message: 'Impossibile leggere metriche DO', checked_at: now };
+    }
+
+    const ram = metrics.ram_percent;
+
+    if (ram >= 80) {
+      return { name: 'droplet_ram', status: 'critical', message: `RAM al ${ram}% — alert WhatsApp + Email`, checked_at: now };
+    }
+    if (ram >= 70) {
+      return { name: 'droplet_ram', status: 'warning', message: `RAM al ${ram}% — alert WhatsApp`, checked_at: now };
+    }
+    if (ram >= 50) {
+      return { name: 'droplet_ram', status: 'warning', message: `RAM al ${ram}% — solo dashboard`, checked_at: now };
+    }
+    return { name: 'droplet_ram', status: 'ok', message: `RAM al ${ram}%`, checked_at: now };
+  } catch (err: any) {
+    return { name: 'droplet_ram', status: 'critical', message: err?.message || 'Errore', checked_at: now };
+  }
+}
+
 // --- Run All Checks ---
 
 export async function runAllChecks(): Promise<CheckResult[]> {
@@ -156,6 +209,7 @@ export async function runAllChecks(): Promise<CheckResult[]> {
     checkSupabaseDown,
     checkMessagesStalled,
     checkFailedSpike,
+    checkDropletRam,
   ];
   const results: CheckResult[] = [];
   for (const checkFn of checks) {
@@ -212,6 +266,7 @@ const CHECK_DESCRIPTIONS: Record<string, string> = {
   supabase_down: 'Database Supabase non raggiungibile',
   messages_stalled: 'Messaggi bloccati in stato "processing"',
   failed_spike: 'Picco di messaggi falliti',
+  droplet_ram: 'RAM droplet elevata',
 };
 
 function formatItalianTime(): string {
@@ -308,6 +363,24 @@ async function logAlert(check: CheckResult, channel: string): Promise<void> {
   } catch {
     console.error('Failed to log monitoring alert:', check.name);
   }
+}
+
+export async function sendAlertWithChannel(check: CheckResult, channels: ('whatsapp' | 'email' | 'db')[]): Promise<void> {
+  const text = buildAlertText(check);
+
+  if (channels.includes('whatsapp')) {
+    if (await sendWhatsApp(text)) {
+      await logAlert(check, 'whatsapp');
+      if (!channels.includes('email')) return;
+    }
+  }
+  if (channels.includes('email')) {
+    if (await sendEmail(check, text)) {
+      await logAlert(check, 'email');
+      return;
+    }
+  }
+  await logAlert(check, 'db_only');
 }
 
 export async function sendAlert(check: CheckResult): Promise<void> {

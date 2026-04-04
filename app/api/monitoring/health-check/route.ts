@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { runAllChecks, shouldAlert, sendAlert, sendRecovery } from '../../../lib/monitoring';
+import { runAllChecks, shouldAlert, sendAlert, sendAlertWithChannel, sendRecovery } from '../../../lib/monitoring';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,10 +45,22 @@ export async function GET(req: NextRequest) {
     if (check.status !== 'ok') {
       const canAlert = await shouldAlert(check.name);
       if (canAlert) {
-        await sendAlert(check);
+        // Progressive channel escalation for RAM alerts
+        if (check.name === 'droplet_ram') {
+          const ramMatch = check.message.match(/(\d+)%/);
+          const ramPct = ramMatch ? parseInt(ramMatch[1]) : 0;
+          if (ramPct >= 80) {
+            await sendAlertWithChannel(check, ['whatsapp', 'email']);
+          } else if (ramPct >= 70) {
+            await sendAlertWithChannel(check, ['whatsapp']);
+          } else {
+            await sendAlertWithChannel(check, ['db']);
+          }
+        } else {
+          await sendAlert(check);
+        }
       }
     } else if (previousStatus && previousStatus !== 'ok') {
-      // Recovery: was bad, now ok
       await sendRecovery(check);
     }
   }
