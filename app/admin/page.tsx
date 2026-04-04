@@ -29,11 +29,34 @@ interface AdminData {
     monthlyRevenue: number;
   };
   alerts: { id: string; check_name: string; status: string; message: string; channel: string; created_at: string }[];
+  latestReport: DailyReport | null;
 }
 
 interface ChatMessage {
   role: 'user' | 'assistant';
   text: string;
+}
+
+interface DropletData {
+  ram_percent: number;
+  cpu_percent: number;
+  disk_percent: number;
+  uptime_seconds: number;
+  ram_history_24h: { time: string; percent: number }[];
+}
+
+interface DailyReport {
+  report_date: string;
+  ram_peak_percent: number;
+  ram_peak_time: string | null;
+  cpu_avg_percent: number;
+  disk_percent: number;
+  messages_sent: number;
+  messages_failed: number;
+  new_users: number;
+  churned_trials: number;
+  daily_revenue: number;
+  mrr: number;
 }
 
 // --- Helpers ---
@@ -81,15 +104,22 @@ function AdminPage() {
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const [droplet, setDroplet] = useState<DropletData | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch(`/api/admin/data?secret=${encodeURIComponent(secret)}`);
+      const [res, dropletRes] = await Promise.all([
+        fetch(`/api/admin/data?secret=${encodeURIComponent(secret)}`),
+        fetch(`/api/admin/droplet?secret=${encodeURIComponent(secret)}`),
+      ]);
       if (res.status === 401) { router.push('/'); return; }
       if (res.ok) {
         const json = await res.json();
         setData(json);
         setLastUpdate(new Date().toLocaleString('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      }
+      if (dropletRes.ok) {
+        setDroplet(await dropletRes.json());
       }
     } catch { /* silent */ }
     setLoading(false);
@@ -126,6 +156,31 @@ function AdminPage() {
     setChatLoading(false);
   };
 
+  function getBarColor(d: DropletData) {
+    const worst = Math.max(d.ram_percent, d.cpu_percent, d.disk_percent);
+    if (worst >= 80) return { bg: 'bg-red-50', border: 'border-red-500' };
+    if (worst >= 50) return { bg: 'bg-yellow-50', border: 'border-yellow-500' };
+    return { bg: 'bg-green-50', border: 'border-green-500' };
+  }
+
+  function metricColor(pct: number) {
+    if (pct >= 80) return 'text-red-600';
+    if (pct >= 50) return 'text-yellow-600';
+    return 'text-green-600';
+  }
+
+  function barBgColor(pct: number) {
+    if (pct >= 80) return 'bg-red-500';
+    if (pct >= 50) return 'bg-yellow-500';
+    return 'bg-green-500';
+  }
+
+  function fmtUptime(seconds: number) {
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    return `${d}g ${h}h`;
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -152,6 +207,39 @@ function AdminPage() {
           </span>
         </div>
       </header>
+
+        {/* Droplet Top Bar */}
+        {droplet && (
+          <div className={`sticky top-[57px] z-10 ${getBarColor(droplet).bg} border-b-2 ${getBarColor(droplet).border} px-4 sm:px-6 py-2.5`}>
+            <div className="max-w-5xl mx-auto flex items-center gap-6 sm:gap-8 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-semibold text-gray-500">RAM</span>
+                <div className="w-20 h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full ${barBgColor(droplet.ram_percent)}`} style={{ width: `${droplet.ram_percent}%` }} />
+                </div>
+                <span className={`text-xs font-bold ${metricColor(droplet.ram_percent)}`}>{droplet.ram_percent}%</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-semibold text-gray-500">CPU</span>
+                <div className="w-20 h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full ${barBgColor(droplet.cpu_percent)}`} style={{ width: `${droplet.cpu_percent}%` }} />
+                </div>
+                <span className={`text-xs font-bold ${metricColor(droplet.cpu_percent)}`}>{droplet.cpu_percent}%</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-semibold text-gray-500">Disco</span>
+                <div className="w-20 h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full ${barBgColor(droplet.disk_percent)}`} style={{ width: `${droplet.disk_percent}%` }} />
+                </div>
+                <span className={`text-xs font-bold ${metricColor(droplet.disk_percent)}`}>{droplet.disk_percent}%</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-semibold text-gray-500">Uptime</span>
+                <span className="text-xs font-bold text-gray-900">{fmtUptime(droplet.uptime_seconds)}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-8">
         {/* SECTION 1 — SISTEMA */}
@@ -386,6 +474,81 @@ function AdminPage() {
             </div>
           </div>
         </section>
+
+        {/* SECTION 5 — REPORT GIORNALIERO */}
+        {data.latestReport && (
+          <section>
+            <h2 className="text-lg font-bold text-gray-900 mb-3">Report Giornaliero</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+              <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm text-center">
+                <p className={`text-2xl font-bold ${data.latestReport.ram_peak_percent >= 80 ? 'text-red-600' : data.latestReport.ram_peak_percent >= 50 ? 'text-yellow-600' : 'text-green-600'}`}>
+                  {data.latestReport.ram_peak_percent}%
+                </p>
+                <p className="text-xs text-gray-500 mt-1">Picco RAM</p>
+                {data.latestReport.ram_peak_time && (
+                  <p className="text-[10px] text-gray-400">{fmtDate(data.latestReport.ram_peak_time)}</p>
+                )}
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm text-center">
+                <p className="text-2xl font-bold text-gray-900">{data.latestReport.cpu_avg_percent}%</p>
+                <p className="text-xs text-gray-500 mt-1">CPU media</p>
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm text-center">
+                <p className="text-2xl font-bold text-gray-900">{data.latestReport.messages_sent}</p>
+                <p className="text-xs text-gray-500 mt-1">Msg inviati</p>
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm text-center">
+                <p className={`text-2xl font-bold ${data.latestReport.messages_failed > 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                  {data.latestReport.messages_failed}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">Msg falliti</p>
+              </div>
+            </div>
+
+            {/* RAM History 24h chart */}
+            {droplet && droplet.ram_history_24h.length > 0 && (
+              <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm mb-4">
+                <p className="text-sm font-semibold text-gray-700 mb-3">RAM ultime 24h</p>
+                <div className="flex items-end gap-[2px] h-24">
+                  {droplet.ram_history_24h.map((point, i) => (
+                    <div
+                      key={i}
+                      className={`flex-1 rounded-t ${point.percent >= 80 ? 'bg-red-500' : point.percent >= 50 ? 'bg-yellow-500' : 'bg-green-500'}`}
+                      style={{ height: `${point.percent}%`, minWidth: '2px' }}
+                      title={`${fmtDate(point.time)}: ${point.percent}%`}
+                    />
+                  ))}
+                </div>
+                <div className="flex justify-between mt-1">
+                  <span className="text-[10px] text-gray-400">24h fa</span>
+                  <span className="text-[10px] text-gray-400">ora</span>
+                </div>
+              </div>
+            )}
+
+            {/* Business metrics from report */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm text-center">
+                <p className="text-2xl font-bold text-blue-600">{data.latestReport.new_users}</p>
+                <p className="text-xs text-gray-500 mt-1">Nuovi utenti</p>
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm text-center">
+                <p className={`text-2xl font-bold ${data.latestReport.churned_trials > 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                  {data.latestReport.churned_trials}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">Trial scaduti</p>
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm text-center">
+                <p className="text-2xl font-bold text-green-600">&euro;{data.latestReport.daily_revenue.toFixed(2)}</p>
+                <p className="text-xs text-gray-500 mt-1">Revenue ieri</p>
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm text-center">
+                <p className="text-2xl font-bold text-green-600">&euro;{data.latestReport.mrr.toFixed(2)}</p>
+                <p className="text-xs text-gray-500 mt-1">MRR</p>
+              </div>
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );
