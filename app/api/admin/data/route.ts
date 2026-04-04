@@ -121,11 +121,12 @@ export async function GET(req: NextRequest) {
 
   const supabase = getSupabase();
 
-  const [system, business, stripe, alertsRes] = await Promise.all([
+  const [system, business, stripe, alertsRes, dailyReportRes] = await Promise.all([
     runAllChecks(),
     getBusinessData(),
     getStripeData(),
     supabase.from('monitoring_alerts').select('*').order('created_at', { ascending: false }).limit(20),
+    supabase.from('daily_reports').select('*').order('report_date', { ascending: false }).limit(1),
   ]);
 
   return NextResponse.json({
@@ -133,5 +134,6 @@ export async function GET(req: NextRequest) {
     business,
     stripe,
     alerts: alertsRes.data || [],
+    latestReport: dailyReportRes.data?.[0] || null,
   });
 }
