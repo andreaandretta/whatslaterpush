@@ -61,14 +61,21 @@ export async function fetchDropletMetrics(): Promise<DropletMetrics | null> {
       ? Math.round((1 - memFree / memTotal) * 100)
       : 0;
 
+    // CPU values are cumulative counters (seconds), not percentages.
+    // Calculate usage from delta between last two data points.
     let cpu_percent = 0;
     const cpuResults = cpuRes?.data?.result;
     if (Array.isArray(cpuResults)) {
       const idle = cpuResults.find((r: any) => r.metric?.mode === 'idle');
-      if (idle) {
-        const idleValues = idle.values;
-        if (idleValues && idleValues.length > 0) {
-          cpu_percent = Math.round(100 - parseFloat(idleValues[idleValues.length - 1][1]));
+      if (idle && idle.values && idle.values.length >= 2) {
+        const v = idle.values;
+        const idleDelta = parseFloat(v[v.length - 1][1]) - parseFloat(v[v.length - 2][1]);
+        const timeDelta = parseFloat(v[v.length - 1][0]) - parseFloat(v[v.length - 2][0]);
+        if (timeDelta > 0) {
+          // idle is in CPU-seconds; divide by time to get fraction, then invert for usage
+          const idleFraction = idleDelta / timeDelta;
+          cpu_percent = Math.round((1 - idleFraction) * 100);
+          cpu_percent = Math.max(0, Math.min(100, cpu_percent));
         }
       }
     }
