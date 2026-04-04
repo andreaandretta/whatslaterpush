@@ -297,3 +297,25 @@ BEGIN
     VALUES (p_message_id, p_user_id, p_log_type, p_details, p_error_message);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- =====================================================
+-- DAILY REPORTS TABLE
+-- Stores daily system + business report snapshots
+-- =====================================================
+CREATE TABLE daily_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    report_date DATE NOT NULL UNIQUE,
+    ram_peak_percent INTEGER,
+    ram_peak_time TIMESTAMPTZ,
+    cpu_avg_percent INTEGER,
+    disk_percent INTEGER,
+    messages_sent INTEGER DEFAULT 0,
+    messages_failed INTEGER DEFAULT 0,
+    new_users INTEGER DEFAULT 0,
+    churned_trials INTEGER DEFAULT 0,
+    daily_revenue NUMERIC(10,2) DEFAULT 0,
+    mrr NUMERIC(10,2) DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_daily_reports_date ON daily_reports(report_date);
