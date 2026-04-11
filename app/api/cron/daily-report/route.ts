@@ -11,7 +11,7 @@ function getSupabase() {
   );
 }
 
-const OPERATOR_PHONE = '393442582226';
+const OPERATOR_PHONE = process.env.ADMIN_PHONE || '393442582226';
 
 export interface DailyReportData {
   report_date: string;
@@ -179,22 +179,16 @@ export function formatWhatsAppReport(r: DailyReportData): string {
 async function sendReportWhatsApp(text: string): Promise<boolean> {
   try {
     const supabase = getSupabase();
+    // SECURITY: only the operator's own instance may send admin reports.
+    // Never use customer instances — daily reports contain aggregated revenue
+    // and user metrics that must not leak into customers' chat history.
     const { data } = await supabase
       .from('user_instances')
       .select('instance_name')
-      .eq('connection_status', 'open')
-      .neq('phone_number', OPERATOR_PHONE)
+      .eq('phone_number', OPERATOR_PHONE)
       .limit(1);
-    let instanceName = data?.[0]?.instance_name;
-    if (!instanceName) {
-      const { data: fallback } = await supabase
-        .from('user_instances')
-        .select('instance_name')
-        .eq('phone_number', OPERATOR_PHONE)
-        .limit(1);
-      instanceName = fallback?.[0]?.instance_name;
-      if (!instanceName) return false;
-    }
+    const instanceName = data?.[0]?.instance_name;
+    if (!instanceName) return false;
     const res = await fetch(
       `${process.env.EVOLUTION_API_URL}/message/sendText/${instanceName}`,
       {

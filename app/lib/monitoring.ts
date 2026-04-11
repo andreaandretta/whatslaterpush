@@ -256,8 +256,8 @@ export async function shouldAlert(checkName: string): Promise<boolean> {
 
 // --- Alert Cascade ---
 
-const OPERATOR_PHONE = '393442582226';
-const OPERATOR_EMAIL = 'musicizthekey@gmail.com';
+const OPERATOR_PHONE = process.env.ADMIN_PHONE || '393442582226';
+const OPERATOR_EMAIL = process.env.ADMIN_EMAIL || 'musicizthekey@gmail.com';
 
 const CHECK_DESCRIPTIONS: Record<string, string> = {
   evolution_api: 'Evolution API non raggiungibile',
@@ -274,7 +274,7 @@ function formatItalianTime(): string {
 }
 
 function buildAlertText(check: CheckResult): string {
-  return `⚠️ WhatsLater Alert\n━━━━━━━━━━━━━━━━\nProblema: ${CHECK_DESCRIPTIONS[check.name] || check.name}\nDettaglio: ${check.message}\nOra: ${formatItalianTime()}\n━━━━━━━━━━━━━━━━\nhttps://whatslaterpush.vercel.app/admin?secret=f80554d8d6eeaba07f430eed835703d7`;
+  return `⚠️ WhatsLater Alert\n━━━━━━━━━━━━━━━━\nProblema: ${CHECK_DESCRIPTIONS[check.name] || check.name}\nDettaglio: ${check.message}\nOra: ${formatItalianTime()}\n━━━━━━━━━━━━━━━━\nhttps://whatslaterpush.vercel.app/admin`;
 }
 
 function buildRecoveryText(check: CheckResult): string {
@@ -284,22 +284,15 @@ function buildRecoveryText(check: CheckResult): string {
 async function getAlertInstance(): Promise<string | null> {
   try {
     const supabase = getSupabase();
-    // Use a DIFFERENT instance from the operator's own phone to avoid self-message
-    // (self-messages via Evolution API return 200 but don't deliver/notify)
-    const { data, error } = await supabase
-      .from('user_instances')
-      .select('instance_name')
-      .eq('connection_status', 'open')
-      .neq('phone_number', OPERATOR_PHONE)
-      .limit(1);
-    if (!error && data && data.length > 0) return data[0].instance_name;
-    // Fallback: use operator's own instance if no other available
-    const { data: fallback } = await supabase
+    // SECURITY: Only use the operator's own instance as sender. Never route alerts
+    // through customer instances — the alert text may include admin links and
+    // would otherwise leak into customers' WhatsApp sent-message history.
+    const { data } = await supabase
       .from('user_instances')
       .select('instance_name')
       .eq('phone_number', OPERATOR_PHONE)
       .limit(1);
-    return fallback?.[0]?.instance_name || null;
+    return data?.[0]?.instance_name || null;
   } catch {
     return null;
   }

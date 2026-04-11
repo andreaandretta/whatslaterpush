@@ -106,6 +106,23 @@ function escapeIlike(s: string): string {
   return s.replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
+// Guard against AI hallucinating a recipient change. Only accept when the
+// suggested name actually appears in the user's raw text AND differs from the
+// current recipient. Either the full name or its first word must match.
+function shouldUpdateRecipient(suggested: string, current: string | null, raw: string): boolean {
+  if (!suggested) return false;
+  const s = suggested.trim().toLowerCase();
+  const c = (current || '').trim().toLowerCase();
+  if (!s || s === c) return false;
+  const rawLower = raw.toLowerCase();
+  if (rawLower.includes(s)) return true;
+  const firstWord = s.split(/\s+/)[0];
+  if (firstWord.length >= 3 && new RegExp('\\b' + firstWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(rawLower)) {
+    return true;
+  }
+  return false;
+}
+
 async function findContactByName(ownerPhone, name) {
   if (!name) return null;
   const cleanName = name.trim();
@@ -355,6 +372,8 @@ ESEMPI:
 
 ATTENZIONE: "di a X di ricordare a Y" = il messaggio va a X, il contenuto riguarda Y.
 
+MODIFICA DI UN MESSAGGIO GIA CONFERMATO (in lista): se l'utente fa riferimento a un messaggio per indice della lista (es. "il messaggio 1 lo devo inviare oggi alle 7", "cambia il 2 a domani alle 15", "modifica messaggio 3: nuovo testo"), usa action="modify_scheduled" e popola modify_target con l'indice come stringa ("1", "2", ...). Popola datetime_iso e/o message_text con i nuovi valori. NON popolare recipient_name a meno che l'utente dica esplicitamente di cambiare destinatario. Questa action è SOLO per messaggi già in lista (non in attesa di conferma).
+
 ORARI RELATIVI: L'ora attuale ISO è ${currentIso}. Quando l'utente dice un orario relativo, CALCOLA datetime_iso sommando all'ora attuale:
 - "fra un minuto" / "tra un minuto" → ora attuale + 1 minuto
 - "fra 5 minuti" / "tra 5 minuti" → ora attuale + 5 minuti
@@ -376,7 +395,7 @@ REGOLA: se una parola assomiglia a un indicatore temporale, interpretala come te
 
 datetime_iso DEVE essere in ora locale italiana SENZA offset (es: "2026-03-14T15:00:00", MAI "2026-03-14T15:00:00+01:00" o con Z).
 
-JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|list|cancel|status|help|chat","recipient_name":string|null,"datetime_iso":"ISO locale senza offset"|null,"message_text":"RISCRITTO"|null,"cancel_target":null,"reply":"risposta utente"}`;
+JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|modify_scheduled|list|cancel|status|help|chat","recipient_name":string|null,"datetime_iso":"ISO locale senza offset"|null,"message_text":"RISCRITTO"|null,"cancel_target":null,"modify_target":null,"reply":"risposta utente"}`;
 
   const userContent = userMessage + '\n---\nContatti: ' + (contactList || 'nessuno') + '\nOra: ' + currentDateTime + ' (ISO: ' + currentIso + ')' + pendingBlock;
 
@@ -885,6 +904,86 @@ export async function POST(req) {
         return NextResponse.json({ ok: true });
       }
 
+      // ── AI: modify_scheduled (user wants to change an already-confirmed message by index) ──
+      if (aiResult.action === 'modify_scheduled') {
+        const target = aiResult.modify_target;
+        if (!target || !/^\d+$/.test(String(target))) {
+          await notifyOwner(instanceName, ownerPhone,
+            aiResult.reply || 'Quale messaggio vuoi modificare? Scrivi "lista" per vedere la numerazione, poi usa "modifica messaggio 1: ..." o "cambia il 2 a domani alle 15".');
+          return NextResponse.json({ ok: true });
+        }
+        const idx = parseInt(String(target)) - 1;
+        const { data: pending } = await supabase.from('scheduled_messages')
+          .select('id, recipient_name, recipient_number, parsed_message, scheduled_at')
+          .eq('user_instance_id', user.id).eq('status', 'pending')
+          .order('scheduled_at', { ascending: true }).limit(10);
+
+        if (!pending || idx < 0 || idx >= pending.length) {
+          await notifyOwner(instanceName, ownerPhone,
+            aiResult.reply || `Non trovo il messaggio ${target} in coda. Scrivi "lista" per vedere i messaggi programmati.`);
+          return NextResponse.json({ ok: true });
+        }
+
+        const targetMsg = pending[idx];
+        const updates: any = {};
+
+        if (aiResult.datetime_iso) {
+          try {
+            const newDate = parseAIDatetime(aiResult.datetime_iso);
+            const minScheduleTime = new Date(Date.now() + 60 * 1000);
+            if (newDate < minScheduleTime) {
+              await notifyOwner(instanceName, ownerPhone,
+                '⚠️ La data/ora indicata è nel passato. Scrivi un orario futuro.');
+              return NextResponse.json({ ok: true });
+            }
+            updates.scheduled_at = newDate.toISOString();
+          } catch {
+            await notifyOwner(instanceName, ownerPhone, 'Non ho capito la data/ora. Riprova.');
+            return NextResponse.json({ ok: true });
+          }
+        }
+
+        if (aiResult.message_text) {
+          updates.parsed_message = await verifyAndFixMessage(aiResult.message_text, targetMsg.recipient_name || 'il destinatario');
+        }
+
+        // Recipient updates require explicit mention in the raw text (BUG 3 guard)
+        if (aiResult.recipient_name && shouldUpdateRecipient(aiResult.recipient_name, targetMsg.recipient_name, raw)) {
+          const newContact = await findContactByName(ownerPhone, aiResult.recipient_name);
+          if (newContact) {
+            updates.recipient_name = newContact.recipient_name;
+            updates.recipient_number = newContact.recipient_number;
+          }
+        } else if (aiResult.recipient_name) {
+          console.log('WEBHOOK: MODIFY_SCHEDULED skipping recipient update — "' + aiResult.recipient_name + '" not in raw text (current: "' + targetMsg.recipient_name + '")');
+        }
+
+        if (Object.keys(updates).length === 0) {
+          await notifyOwner(instanceName, ownerPhone,
+            aiResult.reply || 'Cosa vuoi modificare del messaggio ' + (idx + 1) + '? Indica il nuovo orario o il nuovo testo.');
+          return NextResponse.json({ ok: true });
+        }
+
+        const { error: updErr } = await supabase.from('scheduled_messages').update(updates).eq('id', targetMsg.id);
+        if (updErr) {
+          await notifyOwner(instanceName, ownerPhone, 'Errore aggiornamento: ' + updErr.message);
+          return NextResponse.json({ error: updErr.message }, { status: 500 });
+        }
+
+        const { data: updated } = await supabase.from('scheduled_messages')
+          .select('recipient_name, recipient_number, parsed_message, scheduled_at')
+          .eq('id', targetMsg.id).maybeSingle();
+
+        if (updated) {
+          await notifyOwner(instanceName, ownerPhone,
+            '✏️ Messaggio ' + (idx + 1) + ' aggiornato!\n' +
+            'A: ' + (updated.recipient_name || updated.recipient_number) + '\n' +
+            'Quando: ' + formatRome(new Date(updated.scheduled_at)) + '\n' +
+            'Testo: "' + updated.parsed_message + '"');
+        }
+        return NextResponse.json({ ok: true });
+      }
+
       // ── AI: modify (user wants to change pending message) ──
       if (aiResult.action === 'modify' && pendingCtx?.status === 'awaiting_confirm') {
         console.log('WEBHOOK: MODIFY handler, AI message_text="' + aiResult.message_text + '" datetime_iso="' + aiResult.datetime_iso + '" recipient="' + aiResult.recipient_name + '"');
@@ -898,12 +997,14 @@ export async function POST(req) {
             updates.scheduled_at = parseAIDatetime(aiResult.datetime_iso).toISOString();
           } catch {}
         }
-        if (aiResult.recipient_name) {
+        if (aiResult.recipient_name && shouldUpdateRecipient(aiResult.recipient_name, pendingCtx.recipient_name, raw)) {
           const newContact = await findContactByName(ownerPhone, aiResult.recipient_name);
           if (newContact) {
             updates.recipient_name = newContact.recipient_name;
             updates.recipient_number = newContact.recipient_number;
           }
+        } else if (aiResult.recipient_name) {
+          console.log('WEBHOOK: MODIFY skipping recipient update — AI suggested "' + aiResult.recipient_name + '" but not present in raw text "' + raw + '" (current: "' + pendingCtx.recipient_name + '")');
         }
 
         if (Object.keys(updates).length > 0) {

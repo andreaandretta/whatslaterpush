@@ -114,7 +114,7 @@ describe('Webhook: connection update', () => {
     expect(disclaimerBody.text).toContain('Dispositivi Collegati');
     // Second call = onboarding
     const onboardingBody = JSON.parse(evoCalls[1].options.body as string);
-    expect(onboardingBody.text).toContain('Benvenuto su WhatsLater');
+    expect(onboardingBody.text).toContain('Sono il tuo assistente WhatsLater');
   });
 
   test('handles disconnect (close state)', async () => {
