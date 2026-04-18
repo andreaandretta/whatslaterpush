@@ -177,3 +177,14 @@ export function makeConnectionPayload(instance: string, state: string) {
     data: { state },
   };
 }
+
+export function setAuthCookieEnv() {
+  process.env.AUTH_COOKIE_SECRET = '0'.repeat(128); // deterministic for tests
+}
+
+export function makeRequestWithCookie(body: any, cookieValue: string, headers: Record<string, string> = {}) {
+  return mockRequest(body, {
+    ...headers,
+    cookie: `sw_session=${cookieValue}`,
+  });
+}
