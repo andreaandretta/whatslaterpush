@@ -152,3 +152,60 @@ describe('POST /api/auth/logout', () => {
     expect(setCookie.toLowerCase()).toContain('httponly');
   });
 });
+
+describe('GET /api/auth/check', () => {
+  test('returns 400 if sessionId missing', async () => {
+    jest.resetModules();
+    jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+    const { GET } = await import('../app/api/auth/check/route');
+    const req = new Request('http://localhost/api/auth/check', { method: 'GET' });
+    const res = await GET(req as any);
+    expect(res.status).toBe(400);
+  });
+
+  test('returns 410 if session not found or expired', async () => {
+    jest.resetModules();
+    jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+    mockSupa.setResponse('pending_auth_sessions:select', null, null);
+    const { GET } = await import('../app/api/auth/check/route');
+    const req = new Request('http://localhost/api/auth/check?sessionId=missing-id', { method: 'GET' });
+    const res = await GET(req as any);
+    expect(res.status).toBe(410);
+  });
+
+  test('returns 200 authenticated:false when status pending', async () => {
+    jest.resetModules();
+    jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+    mockSupa.setResponse('pending_auth_sessions:select',
+      { id: 'sess-1', phone: '393331234567', status: 'pending', instance_name: null, expires_at: new Date(Date.now() + 60000).toISOString() },
+      null,
+    );
+    const { GET } = await import('../app/api/auth/check/route');
+    const req = new Request('http://localhost/api/auth/check?sessionId=sess-1', { method: 'GET' });
+    const res = await GET(req as any);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.authenticated).toBe(false);
+  });
+
+  test('returns 200 authenticated:true + Set-Cookie when authenticated', async () => {
+    jest.resetModules();
+    jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+    process.env.AUTH_COOKIE_SECRET = SECRET;
+    mockSupa.setResponse('pending_auth_sessions:select',
+      { id: 'sess-1', phone: '393331234567', status: 'authenticated', instance_name: 'SchedWhats-393331234567', expires_at: new Date(Date.now() + 60000).toISOString() },
+      null,
+    );
+    const { GET } = await import('../app/api/auth/check/route');
+    const req = new Request('http://localhost/api/auth/check?sessionId=sess-1', { method: 'GET' });
+    const res = await GET(req as any);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.authenticated).toBe(true);
+    const setCookie = res.headers.get('set-cookie') || '';
+    expect(setCookie).toMatch(/sw_session=/);
+    expect(setCookie.toLowerCase()).toContain('httponly');
+    const deleteCall = mockSupa.calls.find(c => c.table === 'pending_auth_sessions' && c.operation === 'delete');
+    expect(deleteCall).toBeTruthy();
+  });
+});
