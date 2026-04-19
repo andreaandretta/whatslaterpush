@@ -52,7 +52,12 @@ export function createMockSupabase() {
 
     chain.maybeSingle = () => {
       call.chain.push({ method: 'maybeSingle', args: [] });
-      return Promise.resolve(originalResponse());
+      // If the mock data is an array, return the first element (simulates real Supabase maybeSingle behavior)
+      const resp = originalResponse();
+      if (Array.isArray(resp.data)) {
+        return Promise.resolve({ ...resp, data: resp.data[0] ?? null });
+      }
+      return Promise.resolve(resp);
     };
 
     chain.single = chain.maybeSingle;
@@ -93,13 +98,13 @@ export interface FetchCall {
 
 export function createFetchMock() {
   const calls: FetchCall[] = [];
-  const handlers = new Map<string, (url: string, opts: RequestInit) => any>();
+  const handlers = new Map<string | RegExp, (url: string, opts: RequestInit) => any>();
 
-  function setHandler(urlPattern: string, handler: (url: string, opts: RequestInit) => any) {
+  function setHandler(urlPattern: string | RegExp, handler: (url: string, opts: RequestInit) => any) {
     handlers.set(urlPattern, handler);
   }
 
-  function setJsonResponse(urlPattern: string, body: any, status = 200) {
+  function setJsonResponse(urlPattern: string | RegExp, body: any, status = 200) {
     handlers.set(urlPattern, () => ({
       ok: status >= 200 && status < 300,
       status,
@@ -115,7 +120,8 @@ export function createFetchMock() {
     calls.push({ url: urlStr, options: opts });
 
     for (const [pattern, handler] of handlers) {
-      if (urlStr.includes(pattern)) {
+      const matches = pattern instanceof RegExp ? pattern.test(urlStr) : urlStr.includes(pattern);
+      if (matches) {
         return handler(urlStr, opts);
       }
     }

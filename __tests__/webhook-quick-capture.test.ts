@@ -139,3 +139,92 @@ describe('UNDO command', () => {
     expect(undoQuery).toBeFalsy();
   });
 });
+
+describe('Smart-confirm skip', () => {
+  test('contact known + explicit HH:MM → status=pending (no awaiting_confirm)', async () => {
+    mockSupa.setResponse('user_instances:select',
+      { id: 'u1', phone_number: '393331234567', instance_name: 'SchedWhats-393331234567', subscription_plan: 'free' }, null);
+    mockSupa.setResponse('pending_auth_sessions:select', null, null);
+    mockSupa.setResponse('pending_contacts:select',
+      [{ recipient_name: 'Mario', recipient_number: '393334445555' }], null);
+    fetchMock.setHandler('api.groq.com', () => ({
+      ok: true, status: 200,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify({
+        action: 'schedule', recipient_name: 'Mario', recipient_number: '393334445555',
+        message_text: 'ciao', datetime_iso: '2026-04-20T09:00:00', confidence: 'high',
+      }) } }] }),
+    }));
+    mockSupa.setResponse('scheduled_messages:insert', [{ id: 'm1' }], null);
+    mockSupa.setResponse('scheduled_messages:select', null, null);
+
+    const payload = makeMessagePayload({
+      instance: 'SchedWhats-393331234567',
+      text: 'Mario alle 9: ciao',
+      fromMe: true,
+      remoteJid: '393331234567@s.whatsapp.net',
+    });
+    await callWebhook(payload);
+
+    const insertCall = mockSupa.calls.find(c => c.table === 'scheduled_messages' && c.operation === 'insert');
+    expect(insertCall).toBeTruthy();
+    const insertedRow = insertCall?.args[0];
+    expect(insertedRow.status).toBe('pending');
+  });
+
+  test('contact NEW + inline phone → status=awaiting_confirm (no skip)', async () => {
+    mockSupa.setResponse('user_instances:select',
+      { id: 'u1', phone_number: '393331234567', instance_name: 'SchedWhats-393331234567', subscription_plan: 'free' }, null);
+    mockSupa.setResponse('pending_auth_sessions:select', null, null);
+    mockSupa.setResponse('pending_contacts:select', null, null); // no contact found
+    fetchMock.setHandler('api.groq.com', () => ({
+      ok: true, status: 200,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify({
+        action: 'schedule', recipient_name: 'Mario Cementi', recipient_number: '393334445555',
+        message_text: 'preventivo?', datetime_iso: '2026-04-21T17:00:00', confidence: 'high',
+      }) } }] }),
+    }));
+    mockSupa.setResponse('scheduled_messages:insert', [{ id: 'm1' }], null);
+    mockSupa.setResponse('scheduled_messages:select', null, null);
+
+    const payload = makeMessagePayload({
+      instance: 'SchedWhats-393331234567',
+      text: 'Invia a Mario Cementi 3334445555 oggi alle 17: preventivo?',
+      fromMe: true,
+      remoteJid: '393331234567@s.whatsapp.net',
+    });
+    await callWebhook(payload);
+
+    const insertCall = mockSupa.calls.find(c => c.table === 'scheduled_messages' && c.operation === 'insert');
+    const insertedRow = insertCall?.args[0];
+    expect(insertedRow.status).toBe('awaiting_confirm');
+  });
+
+  test('contact known + ambiguous time → awaiting_confirm', async () => {
+    mockSupa.setResponse('user_instances:select',
+      { id: 'u1', phone_number: '393331234567', instance_name: 'SchedWhats-393331234567', subscription_plan: 'free' }, null);
+    mockSupa.setResponse('pending_auth_sessions:select', null, null);
+    mockSupa.setResponse('pending_contacts:select',
+      [{ recipient_name: 'Mario', recipient_number: '393334445555' }], null);
+    fetchMock.setHandler('api.groq.com', () => ({
+      ok: true, status: 200,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify({
+        action: 'schedule', recipient_name: 'Mario', recipient_number: '393334445555',
+        message_text: 'ciao', datetime_iso: '2026-04-21T18:00:00', confidence: 'low',
+      }) } }] }),
+    }));
+    mockSupa.setResponse('scheduled_messages:insert', [{ id: 'm1' }], null);
+    mockSupa.setResponse('scheduled_messages:select', null, null);
+
+    const payload = makeMessagePayload({
+      instance: 'SchedWhats-393331234567',
+      text: 'Mario tra un po: ciao',
+      fromMe: true,
+      remoteJid: '393331234567@s.whatsapp.net',
+    });
+    await callWebhook(payload);
+
+    const insertCall = mockSupa.calls.find(c => c.table === 'scheduled_messages' && c.operation === 'insert');
+    const insertedRow = insertCall?.args[0];
+    expect(insertedRow.status).toBe('awaiting_confirm');
+  });
+});

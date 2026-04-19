@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { extractInlineRecipient, extractInlineMessage, extractInlinePhoneAndName, parseAIDatetime, getRomeOffsetMs, nowRome, romeToUtc } from '../../lib/webhook-utils';
 import { getPlanLimits } from '../../lib/plans';
+import { containsAmbiguousTimeKeyword, hasExplicitHHMM } from '../../lib/quick-capture-utils';
 export const dynamic = 'force-dynamic';
 
 const supabase = createClient(
@@ -100,6 +101,19 @@ function formatRome(d) {
 }
 
 // extractInlineRecipient and extractInlineMessage imported from ../../lib/webhook-utils
+
+// ── Smart-confirm: skip awaiting_confirm for known contacts with explicit time ──
+function shouldSkipConfirm(
+  aiResult: any,
+  contactWasKnown: boolean,
+  originalText: string
+): boolean {
+  if (!contactWasKnown) return false;
+  if (aiResult.confidence !== 'high') return false;
+  if (containsAmbiguousTimeKeyword(originalText)) return false;
+  if (!hasExplicitHHMM(originalText)) return false;
+  return true;
+}
 
 // Escape ILIKE wildcards to prevent pattern injection
 function escapeIlike(s: string): string {
@@ -1210,10 +1224,17 @@ export async function POST(req) {
         }
 
         const contact = await findContactByName(ownerPhone, recipientName);
+        // contactWasKnown: true when resolved from pending_contacts / history (findContactByName succeeded)
+        // false when contact comes from inline phone in AI result (new/unknown contact)
+        const contactWasKnown = !!contact;
+
         if (!contact) {
-          await notifyOwner(instanceName, ownerPhone,
-            aiResult.reply || `Non trovo "${recipientName}" in rubrica.\nInvia prima il contatto (📎 → Contatto), poi ripeti il comando.`);
-          return NextResponse.json({ ok: true });
+          // Inline phone fallback: AI provided recipient_number directly (e.g. inline phone in text)
+          if (!aiResult.recipient_number) {
+            await notifyOwner(instanceName, ownerPhone,
+              aiResult.reply || `Non trovo "${recipientName}" in rubrica.\nInvia prima il contatto (📎 → Contatto), poi ripeti il comando.`);
+            return NextResponse.json({ ok: true });
+          }
         }
 
         if (!datetimeStr) {
@@ -1242,12 +1263,12 @@ export async function POST(req) {
           return NextResponse.json({ ok: true });
         }
 
+        const recNum = contact ? contact.recipient_number : aiResult.recipient_number;
+        const recName = contact ? contact.recipient_name : (recipientName || aiResult.recipient_name || 'destinatario');
         const rawMessage = messageText || extractContent(raw, 0, 0);
-        await dbLog('BEFORE_REWRITE', { rawMessage, recipientName: contact.recipient_name });
-        const finalMessage = await verifyAndFixMessage(rawMessage, contact.recipient_name);
+        await dbLog('BEFORE_REWRITE', { rawMessage, recipientName: recName });
+        const finalMessage = await verifyAndFixMessage(rawMessage, recName);
         await dbLog('AFTER_REWRITE', { finalMessage });
-        const recNum = contact.recipient_number;
-        const recName = contact.recipient_name;
 
         // Clean up any pending partial context
         if (pendingCtx) {
@@ -1260,14 +1281,18 @@ export async function POST(req) {
           return NextResponse.json({ ok: true, deduplicated: true });
         }
 
-        const { error: insErr } = await supabase.from('scheduled_messages').insert({
+        // Smart-confirm: skip awaiting_confirm for known contacts with explicit, unambiguous time
+        const skipConfirm = shouldSkipConfirm(aiResult, contactWasKnown, raw);
+        const initialStatus = skipConfirm ? 'pending' : 'awaiting_confirm';
+
+        const { data: insertedMsg, error: insErr } = await supabase.from('scheduled_messages').insert({
           user_instance_id: user.id, instance_phone: ownerPhone,
           recipient_number: recNum, recipient_name: recName,
           caption: raw, parsed_message: finalMessage,
-          scheduled_at: scheduledAt.toISOString(), status: 'awaiting_confirm',
+          scheduled_at: scheduledAt.toISOString(), status: initialStatus,
           retry_count: 0, max_retries: 3,
           wa_message_id: msgId || null,
-        });
+        }).select('id').single();
 
         if (insErr) {
           if (insErr.message?.includes('wa_message_id')) {
@@ -1277,6 +1302,13 @@ export async function POST(req) {
           console.error('WEBHOOK: DB insert error:', insErr.message);
           await notifyOwner(instanceName, ownerPhone, 'Errore salvataggio: ' + insErr.message);
           return NextResponse.json({ error: insErr.message }, { status: 500 });
+        }
+
+        if (skipConfirm) {
+          const when = new Date(scheduledAt).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
+          await notifyOwner(instanceName, ownerPhone,
+            `✅ Schedulato per ${recName} (${when}).\nScrivi UNDO entro 60s per annullare.`);
+          return NextResponse.json({ ok: true, scheduled: scheduledAt.toISOString() });
         }
 
         await notifyOwner(instanceName, ownerPhone,
