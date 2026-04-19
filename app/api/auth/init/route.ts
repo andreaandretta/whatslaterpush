@@ -73,6 +73,13 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
+
+  // Check Evolution API environment variables before proceeding
+  if (!evoUrl || !evoKey) {
+    console.error('[auth/init] FATAL: EVOLUTION_API_URL or EVOLUTION_API_KEY not set');
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+
   const instanceName = `SchedWhats-${cleanPhone}`;
   const sessionId = crypto.randomUUID();
   const supabase = getSupabase();
@@ -126,6 +133,7 @@ export async function POST(req: NextRequest) {
     createRes = await res.json();
   } catch (e) {
     console.error('[auth/init] instance create error:', e);
+    await supabase.from('pending_auth_sessions').delete().eq('id', sessionId);
     return NextResponse.json({ error: 'Errore creazione istanza Evolution API' }, { status: 500 });
   }
 
@@ -156,6 +164,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (!qrCode && !pairingCode) {
+    await supabase.from('pending_auth_sessions').delete().eq('id', sessionId);
     return NextResponse.json(
       { error: 'Impossibile generare QR o codice. Riprova tra qualche secondo.' },
       { status: 500 }
