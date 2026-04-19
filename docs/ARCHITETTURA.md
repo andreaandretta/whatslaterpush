@@ -594,6 +594,66 @@ Webhook → fast-path command → status = "pending"
 Bot conferma: "Messaggio confermato! Sara inviato domani alle 15:00"
 ```
 
+### 5.2.1 Quick Capture (numero inline + dashboard modal)
+
+**Flusso primario — Marco WhatsApp self-chat:**
+
+```
+Marco scrive nella self-chat:
+  "Invia a Mario Cementi 3331234567 oggi alle 17: preventivo?"
+  ↓
+Webhook handler:
+  1. Auth + dedup + self-chat check (esistente)
+  2. extractInlinePhoneAndName(text) → { phone:"393331234567", name:"Mario Cementi" }
+  3. AI prompt esteso riceve phone+name come context + "[Sistema: numero inline rilevato]"
+  4. AI ritorna { action:"schedule", recipient_number, recipient_name, datetime, confidence }
+  5. autoSaveContact(name, number) → salva in pending_contacts (se sotto limite, no overwrite)
+  6. shouldSkipConfirm(aiResult, contactWasKnown, originalText) decide:
+     - contatto noto + ora HH:MM esplicita + confidence='high' → skip
+     - altrimenti → awaiting_confirm
+  7. Se skip: INSERT con status='pending', bot risponde "✅ Schedulato. UNDO entro 60s"
+  8. Se NO skip: INSERT con status='awaiting_confirm', bot chiede "Rispondi OK"
+```
+
+**Flusso secondario — Dashboard modal + deep-link:**
+
+```
+Marco apre /dashboard (cookie C1 valido) → bottone "+ Nuovo follow-up"
+  ↓
+QuickCaptureModal apre con 4 campi (Nome, Numero, Data/ora, Messaggio) + 3 chip preset
+  ↓
+Submit:
+  1. Valida client-side (numero, messaggio, data futura ≥1min)
+  2. Genera frase naturale via formatDatePhrase: "Invia a Mario Cementi 393... oggi alle 17: ..."
+  3. window.location.href = `https://wa.me/<userPhone>?text=<encoded>`
+  ↓
+WhatsApp si apre (mobile native o WhatsApp Web) con frase precompilata nella self-chat
+  ↓
+Marco fa "Invia" → pipeline webhook identica al flusso primario (sopra)
+```
+
+**UNDO command:**
+
+```
+Marco scrive "undo" / "u" / "annulla" / "cancella" entro 60s da una conferma "✅ Schedulato"
+  ↓
+Webhook fast-path (prima dell'AI):
+  - Trova ultimo scheduled_messages WHERE instance_phone=ownerPhone AND status='pending' AND created_at>NOW-60s
+  - UPDATE status='cancelled' (CAS guard: solo se status='pending') → previene race con cron che ha già preso il messaggio
+  - Bot risponde "✅ Annullato" o "Niente da annullare" o "Troppo tardi: il messaggio è già in invio"
+
+Anti-collision: "annulla 3" (con numero) cade nel comando lista esistente (non triggera UNDO).
+```
+
+**Helper coinvolti** (file: `app/lib/quick-capture-utils.ts`, `app/lib/webhook-utils.ts`, `components/QuickCaptureModal.tsx`):
+- `formatDatePhrase(date) → "oggi alle HH:MM" | "domani alle HH:MM" | "il DD/MM alle HH:MM"`
+- `containsAmbiguousTimeKeyword(text)` — detect vague time keywords ("tra un po'", "stasera", ecc.)
+- `hasExplicitHHMM(text)` — detect explicit HH:MM
+- `extractInlinePhoneAndName(text)` — estrae numero + nome inline dal messaggio
+
+**Zero schema DB changes.** Riusa `scheduled_messages` (status pending|awaiting_confirm), `pending_contacts`, `user_instances`.
+```
+
 ### 5.3 Invio Messaggi (Cron)
 
 ```
