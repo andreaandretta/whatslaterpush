@@ -2,12 +2,31 @@
  * Integration tests for cookie auth flow (/api/auth/*).
  */
 import { signCookie } from '../app/lib/auth-cookie';
+import { createMockSupabase, createFetchMock } from './helpers/mocks';
+
+const mockSupa = createMockSupabase();
+const fetchMock = createFetchMock();
+
+jest.mock('@supabase/supabase-js', () => ({
+  createClient: () => mockSupa.client,
+}));
 
 const SECRET = '0'.repeat(128);
 const ORIGINAL_ENV = process.env;
 
 beforeEach(() => {
-  process.env = { ...ORIGINAL_ENV, AUTH_COOKIE_SECRET: SECRET };
+  process.env = {
+    ...ORIGINAL_ENV,
+    AUTH_COOKIE_SECRET: SECRET,
+    SUPABASE_URL: 'https://test.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'test-key',
+    EVOLUTION_API_URL: 'https://evo.test',
+    EVOLUTION_API_KEY: 'evo-key',
+    NEXT_PUBLIC_APP_URL: 'https://whatslaterpush.vercel.app',
+  };
+  mockSupa.calls.length = 0;
+  fetchMock.calls.length = 0;
+  (global as any).fetch = fetchMock.mockFetch;
 });
 
 afterEach(() => {
@@ -31,6 +50,61 @@ function makeReqWithCookie(method: string, cookieValue: string | null) {
 
   return req;
 }
+
+describe('POST /api/auth/init', () => {
+  test('returns 400 if phone missing', async () => {
+    jest.resetModules();
+    jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+    (global as any).fetch = fetchMock.mockFetch;
+    const { POST } = await import('../app/api/auth/init/route');
+    const req = new Request('http://localhost/api/auth/init', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    const res = await POST(req as any);
+    expect(res.status).toBe(400);
+  });
+
+  test('returns 400 if phone invalid', async () => {
+    jest.resetModules();
+    jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+    (global as any).fetch = fetchMock.mockFetch;
+    const { POST } = await import('../app/api/auth/init/route');
+    const req = new Request('http://localhost/api/auth/init', {
+      method: 'POST',
+      body: JSON.stringify({ phone: 'abc' }),
+    });
+    const res = await POST(req as any);
+    expect(res.status).toBe(400);
+  });
+
+  test('on success creates pending session and returns sessionId+QR/pairing', async () => {
+    jest.resetModules();
+    jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+    // Mock Evolution API to return qrcode in /instance/create response
+    fetchMock.setHandler('/instance/create', async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ qrcode: { base64: 'data:image/png;base64,FAKEQR', pairingCode: 'ABCD-1234' } }),
+      text: async () => '{}',
+    }));
+    (global as any).fetch = fetchMock.mockFetch;
+    const { POST } = await import('../app/api/auth/init/route');
+    const req = new Request('http://localhost/api/auth/init', {
+      method: 'POST',
+      body: JSON.stringify({ phone: '393331234567' }),
+    });
+    const res = await POST(req as any);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.sessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.qrCode).toBeTruthy();
+    expect(body.pairingCode).toBeTruthy();
+    // pending_auth_sessions insert should have happened
+    const insertCall = mockSupa.calls.find(c => c.table === 'pending_auth_sessions' && c.operation === 'insert');
+    expect(insertCall).toBeTruthy();
+  });
+});
 
 describe('GET /api/auth/me', () => {
   test('returns 401 when no cookie present', async () => {
