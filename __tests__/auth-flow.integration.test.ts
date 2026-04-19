@@ -63,3 +63,18 @@ describe('GET /api/auth/me', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('POST /api/auth/logout', () => {
+  test('returns 200 and Set-Cookie clearing the session', async () => {
+    jest.resetModules();
+    process.env.AUTH_COOKIE_SECRET = SECRET;
+    const { POST } = await import('../app/api/auth/logout/route');
+    const req = new Request('http://localhost/api/auth/logout', { method: 'POST' });
+    const res = await POST(req as any);
+    expect(res.status).toBe(200);
+    const setCookie = res.headers.get('set-cookie') || '';
+    expect(setCookie).toMatch(/sw_session=/);
+    expect(setCookie.toLowerCase()).toContain('max-age=0');
+    expect(setCookie.toLowerCase()).toContain('httponly');
+  });
+});
