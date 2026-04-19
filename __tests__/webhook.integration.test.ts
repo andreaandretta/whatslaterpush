@@ -551,3 +551,38 @@ describe('Webhook: edge cases', () => {
     expect(insertCalls.length).toBe(0);
   });
 });
+
+// ── CONNECTION_UPDATE marks pending_auth_sessions ─────────────────────────────
+
+describe('CONNECTION_UPDATE marks pending_auth_sessions', () => {
+  test('state=open with matching ownerJid updates pending session', async () => {
+    mockSupa.setResponse('user_instances:update', { data: [{ id: 'u1', phone_number: '393331234567' }], error: null });
+    mockSupa.setResponse('pending_auth_sessions:update', { data: [{ id: 'session-1' }], error: null });
+
+    const payload = makeConnectionPayload({
+      instance: 'SchedWhats-393331234567',
+      state: 'open',
+      ownerJid: '393331234567@s.whatsapp.net',
+    });
+    const res = await callWebhook(payload);
+    expect(res.status).toBe(200);
+
+    const updateCall = mockSupa.calls.find(
+      c => c.table === 'pending_auth_sessions' && c.operation === 'update'
+    );
+    expect(updateCall).toBeTruthy();
+  });
+
+  test('state=close does NOT touch pending_auth_sessions', async () => {
+    mockSupa.setResponse('user_instances:update', { data: [{ id: 'u1', phone_number: '393331234567' }], error: null });
+    const payload = makeConnectionPayload({
+      instance: 'SchedWhats-393331234567',
+      state: 'close',
+    });
+    await callWebhook(payload);
+    const updateCall = mockSupa.calls.find(
+      c => c.table === 'pending_auth_sessions' && c.operation === 'update'
+    );
+    expect(updateCall).toBeFalsy();
+  });
+});

@@ -251,6 +251,29 @@ async function handleConnectionUpdate(payload: any): Promise<NextResponse> {
     .select('id, phone_number');
   if (error) console.error(`WEBHOOK: CONNECTION_UPDATE DB error: ${error.message}`);
   else console.log(`WEBHOOK: CONNECTION_UPDATE saved - instance=${instanceName} status=${connectionStatus} rows=${updated?.length || 0}`);
+
+  // Mark pending auth session as authenticated when WhatsApp pairing succeeds
+  if (connectionStatus === 'open') {
+    const ownerJidRaw = data?.ownerJid || data?.wuid || '';
+    const ownerPhone = String(ownerJidRaw).split('@')[0];
+    if (ownerPhone) {
+      const { data: sessions, error: sErr } = await supabase
+        .from('pending_auth_sessions')
+        .update({ status: 'authenticated', instance_name: instanceName })
+        .eq('phone', ownerPhone)
+        .eq('status', 'pending')
+        .gt('expires_at', new Date().toISOString())
+        .select('id');
+      if (sErr) {
+        console.error(`WEBHOOK: pending_auth_sessions update error: ${sErr.message}`);
+      } else {
+        console.log(`WEBHOOK: pending_auth_sessions marked authenticated count=${sessions?.length || 0} phone=${ownerPhone}`);
+      }
+    } else {
+      console.log(`WEBHOOK: state=open but no ownerJid in payload, skipping auth session update`);
+    }
+  }
+
   return NextResponse.json({ ok: true });
 }
 

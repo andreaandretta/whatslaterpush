@@ -170,11 +170,22 @@ export function makeMessagePayload(opts: {
   };
 }
 
-export function makeConnectionPayload(instance: string, state: string) {
+export function makeConnectionPayload(opts: { instance: string; state: string; ownerJid?: string } | string, state?: string) {
+  // Support both new object form and legacy positional args
+  if (typeof opts === 'string') {
+    return {
+      event: 'connection.update',
+      instance: opts,
+      data: { state: state || '' },
+    };
+  }
   return {
     event: 'connection.update',
-    instance,
-    data: { state },
+    instance: opts.instance,
+    data: {
+      state: opts.state,
+      ...(opts.ownerJid ? { ownerJid: opts.ownerJid } : {}),
+    },
   };
 }
 
