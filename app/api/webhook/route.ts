@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
-import { extractInlineRecipient, extractInlineMessage, parseAIDatetime, getRomeOffsetMs, nowRome, romeToUtc } from '../../lib/webhook-utils';
+import { extractInlineRecipient, extractInlineMessage, extractInlinePhoneAndName, parseAIDatetime, getRomeOffsetMs, nowRome, romeToUtc } from '../../lib/webhook-utils';
 import { getPlanLimits } from '../../lib/plans';
 export const dynamic = 'force-dynamic';
 
@@ -418,9 +418,29 @@ REGOLA: se una parola assomiglia a un indicatore temporale, interpretala come te
 
 datetime_iso DEVE essere in ora locale italiana SENZA offset (es: "2026-03-14T15:00:00", MAI "2026-03-14T15:00:00+01:00" o con Z).
 
-JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|modify_scheduled|list|cancel|status|help|chat","recipient_name":string|null,"datetime_iso":"ISO locale senza offset"|null,"message_text":"RISCRITTO"|null,"cancel_target":null,"modify_target":null,"reply":"risposta utente"}`;
+JSON: {"action":"schedule|ask_time|ask_recipient|confirm|cancel_confirm|modify|modify_scheduled|list|cancel|status|help|chat","recipient_name":string|null,"recipient_number":string|null,"datetime_iso":"ISO locale senza offset"|null,"message_text":"RISCRITTO"|null,"cancel_target":null,"modify_target":null,"reply":"risposta utente","confidence":"high|medium|low"}
 
-  const userContent = userMessage + '\n---\nContatti: ' + (contactList || 'nessuno') + '\nOra: ' + currentDateTime + ' (ISO: ' + currentIso + ')' + pendingBlock;
+## Numero di telefono inline
+
+Se il messaggio dell'utente contiene un numero di telefono diretto nel testo
+(es. "Invia a Mario Cementi 3331234567 alle 17: ..."), usalo come
+recipient_number senza chiedere la vCard. Estrai il nome dal contesto vicino
+al numero e usalo come recipient_name.
+
+## Confidence field (OBBLIGATORIO)
+
+Includi SEMPRE nel JSON un campo "confidence" con uno di questi valori:
+- "high" — ora HH:MM esplicita E destinatario chiaro (numero o contatto noto)
+- "medium" — ora chiara ma destinatario inferito o ambiguo
+- "low" — ora vaga ("tra un po'", "stasera", "presto", "dopo", "più tardi")`;
+
+  const inline = extractInlinePhoneAndName(userMessage);
+  let aiUserText = userMessage;
+  if (inline.phone) {
+    aiUserText = `${inline.textWithoutPhone}\n\n[Sistema: numero inline rilevato — phone="${inline.phone}", name="${inline.name || 'sconosciuto'}". Usa questi come recipient_number/recipient_name nel JSON.]`;
+  }
+
+  const userContent = aiUserText + '\n---\nContatti: ' + (contactList || 'nessuno') + '\nOra: ' + currentDateTime + ' (ISO: ' + currentIso + ')' + pendingBlock;
 
   try {
     console.log('WEBHOOK: AI call provider=' + ai.provider + ' model=' + ai.model + ' user="' + userMessage + '"');
