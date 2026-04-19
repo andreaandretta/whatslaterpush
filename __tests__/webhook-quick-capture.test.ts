@@ -228,3 +228,62 @@ describe('Smart-confirm skip', () => {
     expect(insertedRow.status).toBe('awaiting_confirm');
   });
 });
+
+describe('Auto-save contact', () => {
+  test('inline phone + name → contact saved in pending_contacts', async () => {
+    mockSupa.setResponse('user_instances:select',
+      { id: 'u1', phone_number: '393331234567', instance_name: 'SchedWhats-393331234567', subscription_plan: 'free' }, null);
+    mockSupa.setResponse('pending_auth_sessions:select', null, null);
+    mockSupa.setResponse('pending_contacts:select', null, null);  // no existing contact, count=0
+    mockSupa.setResponse('pending_contacts:insert', [{ id: 'c1' }], null);
+    fetchMock.setHandler('api.groq.com', () => ({
+      ok: true, status: 200,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify({
+        action: 'schedule', recipient_name: 'Mario Cementi', recipient_number: '393334445555',
+        message_text: 'ciao', datetime_iso: '2026-12-31T17:00:00', confidence: 'high',
+      }) } }] }),
+    }));
+    mockSupa.setResponse('scheduled_messages:insert', [{ id: 'm1' }], null);
+    mockSupa.setResponse('scheduled_messages:select', null, null);
+
+    const payload = makeMessagePayload({
+      instance: 'SchedWhats-393331234567',
+      text: 'Invia a Mario Cementi 3334445555 alle 17: ciao',
+      fromMe: true,
+      remoteJid: '393331234567@s.whatsapp.net',
+    });
+    await callWebhook(payload);
+
+    const insertContact = mockSupa.calls.find(c => c.table === 'pending_contacts' && c.operation === 'insert');
+    expect(insertContact).toBeTruthy();
+  });
+
+  test('does NOT overwrite existing contact with different number', async () => {
+    mockSupa.setResponse('user_instances:select',
+      { id: 'u1', phone_number: '393331234567', instance_name: 'SchedWhats-393331234567', subscription_plan: 'free' }, null);
+    mockSupa.setResponse('pending_auth_sessions:select', null, null);
+    // Existing contact "Mario" already saved with DIFFERENT number — use array so getContactList can iterate
+    mockSupa.setResponse('pending_contacts:select',
+      [{ recipient_number: '393331234567', recipient_name: 'Mario' }], null);
+    fetchMock.setHandler('api.groq.com', () => ({
+      ok: true, status: 200,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify({
+        action: 'schedule', recipient_name: 'Mario', recipient_number: '393334445555',
+        message_text: 'ciao', datetime_iso: '2026-12-31T17:00:00', confidence: 'high',
+      }) } }] }),
+    }));
+    mockSupa.setResponse('scheduled_messages:insert', [{ id: 'm1' }], null);
+    mockSupa.setResponse('scheduled_messages:select', null, null);
+
+    const payload = makeMessagePayload({
+      instance: 'SchedWhats-393331234567',
+      text: 'Invia a Mario 3334445555 alle 17: ciao',
+      fromMe: true,
+      remoteJid: '393331234567@s.whatsapp.net',
+    });
+    await callWebhook(payload);
+
+    const insertContact = mockSupa.calls.find(c => c.table === 'pending_contacts' && c.operation === 'insert');
+    expect(insertContact).toBeFalsy();
+  });
+});

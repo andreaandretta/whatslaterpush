@@ -137,6 +137,43 @@ function shouldUpdateRecipient(suggested: string, current: string | null, raw: s
   return false;
 }
 
+async function autoSaveContact(
+  ownerPhone: string,
+  name: string | null,
+  number: string,
+  plan: string
+): Promise<{ saved: boolean; conflict: boolean; conflictNumber?: string }> {
+  if (!name) return { saved: false, conflict: false };
+
+  // Check existing contact with same name (case-insensitive)
+  const { data: existing } = await supabase.from('pending_contacts')
+    .select('recipient_number')
+    .eq('owner_phone', ownerPhone)
+    .ilike('recipient_name', name)
+    .maybeSingle();
+
+  if (existing) {
+    if (existing.recipient_number === number) return { saved: false, conflict: false };
+    return { saved: false, conflict: true, conflictNumber: existing.recipient_number };
+  }
+
+  // Check plan limit
+  const limits = getPlanLimits(plan);
+  const { count } = await supabase.from('pending_contacts')
+    .select('id', { count: 'exact', head: true })
+    .eq('owner_phone', ownerPhone);
+  if ((count || 0) >= limits.maxContacts) {
+    return { saved: false, conflict: false };
+  }
+
+  await supabase.from('pending_contacts').insert({
+    owner_phone: ownerPhone,
+    recipient_name: name,
+    recipient_number: number,
+  });
+  return { saved: true, conflict: false };
+}
+
 async function findContactByName(ownerPhone, name) {
   if (!name) return null;
   const cleanName = name.trim();
@@ -1270,6 +1307,17 @@ export async function POST(req) {
         const finalMessage = await verifyAndFixMessage(rawMessage, recName);
         await dbLog('AFTER_REWRITE', { finalMessage });
 
+        // Auto-save contact when inline phone + name provided (and contact was not already known)
+        let autoSaveResult: { saved: boolean; conflict: boolean; conflictNumber?: string } = { saved: false, conflict: false };
+        if (!contactWasKnown && aiResult.recipient_number && recName && recName !== 'destinatario') {
+          autoSaveResult = await autoSaveContact(
+            ownerPhone,
+            recName,
+            aiResult.recipient_number,
+            user.subscription_plan || 'free'
+          );
+        }
+
         // Clean up any pending partial context
         if (pendingCtx) {
           await supabase.from('scheduled_messages').delete().eq('id', pendingCtx.id);
@@ -1304,17 +1352,21 @@ export async function POST(req) {
           return NextResponse.json({ error: insErr.message }, { status: 500 });
         }
 
+        let autoSaveSuffix = '';
+        if (autoSaveResult.saved) autoSaveSuffix = '\n(salvato in rubrica)';
+        if (autoSaveResult.conflict) autoSaveSuffix = `\n(uso ${recNum} per questa volta — il numero salvato per ${recName} è ${autoSaveResult.conflictNumber})`;
+
         if (skipConfirm) {
           const when = new Date(scheduledAt).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
           await notifyOwner(instanceName, ownerPhone,
-            `✅ Schedulato per ${recName} (${when}).\nScrivi UNDO entro 60s per annullare.`);
+            `✅ Schedulato per ${recName} (${when}).\nScrivi UNDO entro 60s per annullare.${autoSaveSuffix}`);
           return NextResponse.json({ ok: true, scheduled: scheduledAt.toISOString() });
         }
 
         await notifyOwner(instanceName, ownerPhone,
           '✅ Invierò a ' + recName + ' il ' + formatRome(scheduledAt) + ':\n' +
           '"' + finalMessage + '"\n\n' +
-          'Va bene? Scrivi OK per confermare, ANNULLA per cancellare, o dimmi come modificarlo.');
+          'Va bene? Scrivi OK per confermare, ANNULLA per cancellare, o dimmi come modificarlo.' + autoSaveSuffix);
         return NextResponse.json({ ok: true, scheduled: scheduledAt.toISOString() });
       }
 
