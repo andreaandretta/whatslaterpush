@@ -97,9 +97,9 @@ async function setWebhook(name: string): Promise<void> {
     } catch (e) { console.log('[connect] setWebhook error:', e); }
 }
 
-function requireCookieAuth(req: NextRequest): { phone: string; instanceName: string } | null {
+async function requireCookieAuth(req: NextRequest): Promise<{ phone: string; instanceName: string } | null> {
   const raw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
-  const payload = verifyCookie(raw);
+  const payload = await verifyCookie(raw);
   if (!payload) return null;
   return { phone: payload.phone, instanceName: payload.instanceName };
 }
@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
 
   const PROTECTED_ACTIONS = new Set(['status', 'getStatus', 'getPhone', 'disconnect']);
   if (PROTECTED_ACTIONS.has(action)) {
-    const auth = requireCookieAuth(req);
+    const auth = await requireCookieAuth(req);
     if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { instanceName } = body;
     if (instanceName && instanceName !== auth.instanceName) {

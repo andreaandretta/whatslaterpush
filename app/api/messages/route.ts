@@ -12,14 +12,14 @@ function getSupabase() {
   return createClient(url, key);
 }
 
-function getAuthedPhone(req: NextRequest): string | null {
+async function getAuthedPhone(req: NextRequest): Promise<string | null> {
   const raw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
-  const payload = verifyCookie(raw);
+  const payload = await verifyCookie(raw);
   return payload?.phone ?? null;
 }
 
 export async function GET(req: NextRequest) {
-  const phone = getAuthedPhone(req);
+  const phone = await getAuthedPhone(req);
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const supabase = getSupabase();
@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const phone = getAuthedPhone(req);
+  const phone = await getAuthedPhone(req);
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));

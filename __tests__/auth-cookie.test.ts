@@ -12,9 +12,9 @@ afterEach(() => {
 });
 
 describe('signCookie + verifyCookie round-trip', () => {
-  test('sign then verify returns the same payload', () => {
-    const cookie = signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });
-    const payload = verifyCookie(cookie);
+  test('sign then verify returns the same payload', async () => {
+    const cookie = await signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });
+    const payload = await verifyCookie(cookie);
     expect(payload).not.toBeNull();
     expect(payload!.phone).toBe('393331234567');
     expect(payload!.instanceName).toBe('SchedWhats-393331234567');
@@ -22,47 +22,44 @@ describe('signCookie + verifyCookie round-trip', () => {
     expect(payload!.exp).toBeGreaterThan(payload!.iat);
   });
 
-  test('exp is iat + 90 days', () => {
-    const cookie = signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });
-    const p = verifyCookie(cookie)!;
+  test('exp is iat + 90 days', async () => {
+    const cookie = await signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });
+    const p = (await verifyCookie(cookie))!;
     expect(p.exp - p.iat).toBe(90 * 24 * 60 * 60);
   });
 });
 
 describe('verifyCookie security', () => {
-  test('returns null for tampered payload', () => {
-    const cookie = signCookie({ phone: '393331234567', instanceName: 'X' });
+  test('returns null for tampered payload', async () => {
+    const cookie = await signCookie({ phone: '393331234567', instanceName: 'X' });
     const [, sig] = cookie.split('.');
     const tamperedPayload = Buffer.from('{"phone":"VICTIM","instanceName":"X","iat":1,"exp":9999999999}').toString('base64url');
-    expect(verifyCookie(`${tamperedPayload}.${sig}`)).toBeNull();
+    expect(await verifyCookie(`${tamperedPayload}.${sig}`)).toBeNull();
   });
 
-  test('returns null for tampered signature', () => {
-    const cookie = signCookie({ phone: '393331234567', instanceName: 'X' });
+  test('returns null for tampered signature', async () => {
+    const cookie = await signCookie({ phone: '393331234567', instanceName: 'X' });
     const [payload, sig] = cookie.split('.');
     const tamperedSig = sig.slice(0, -2) + 'AA';
-    expect(verifyCookie(`${payload}.${tamperedSig}`)).toBeNull();
+    expect(await verifyCookie(`${payload}.${tamperedSig}`)).toBeNull();
   });
 
-  test('returns null for malformed cookie (no dot)', () => {
-    expect(verifyCookie('justgarbage')).toBeNull();
+  test('returns null for malformed cookie (no dot)', async () => {
+    expect(await verifyCookie('justgarbage')).toBeNull();
   });
 
-  test('returns null for empty/undefined cookie', () => {
-    expect(verifyCookie('')).toBeNull();
-    expect(verifyCookie(undefined)).toBeNull();
+  test('returns null for empty/undefined cookie', async () => {
+    expect(await verifyCookie('')).toBeNull();
+    expect(await verifyCookie(undefined)).toBeNull();
   });
 
-  test('returns null for expired cookie', () => {
-    const expiredPayload = Buffer.from(JSON.stringify({
-      phone: '393331234567',
-      instanceName: 'X',
-      iat: 1000,
-      exp: 2000,
-    })).toString('base64url');
-    const crypto = require('crypto');
-    const sig = crypto.createHmac('sha256', SECRET).update(expiredPayload).digest('base64url');
-    expect(verifyCookie(`${expiredPayload}.${sig}`)).toBeNull();
+  test('returns null for expired cookie', async () => {
+    const expiredPayload = JSON.stringify({ phone: '393331234567', instanceName: 'X', iat: 1000, exp: 2000 });
+    const payloadB64 = Buffer.from(expiredPayload).toString('base64url');
+    const key = await globalThis.crypto.subtle.importKey('raw', new TextEncoder().encode(SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const sigBuf = await globalThis.crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payloadB64));
+    const sigB64 = Buffer.from(new Uint8Array(sigBuf)).toString('base64url');
+    expect(await verifyCookie(`${payloadB64}.${sigB64}`)).toBeNull();
   });
 });
 
@@ -79,8 +76,8 @@ describe('shouldRefresh', () => {
 });
 
 describe('signCookie env requirement', () => {
-  test('throws if AUTH_COOKIE_SECRET missing', () => {
+  test('throws if AUTH_COOKIE_SECRET missing', async () => {
     delete process.env.AUTH_COOKIE_SECRET;
-    expect(() => signCookie({ phone: 'X', instanceName: 'X' })).toThrow(/AUTH_COOKIE_SECRET/);
+    await expect(signCookie({ phone: 'X', instanceName: 'X' })).rejects.toThrow(/AUTH_COOKIE_SECRET/);
   });
 });

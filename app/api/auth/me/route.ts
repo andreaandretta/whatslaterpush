@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const raw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
-  const payload = verifyCookie(raw);
+  const payload = await verifyCookie(raw);
   if (!payload) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

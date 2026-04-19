@@ -1,5 +1,3 @@
-import crypto from 'crypto';
-
 export interface AuthCookiePayload {
   phone: string;
   instanceName: string;
@@ -18,15 +16,35 @@ function getSecret(): string {
   return s;
 }
 
-function b64urlEncode(buf: Buffer): string {
-  return buf.toString('base64url');
+// base64url helpers using built-in atob/btoa (available on Edge + Node 16+)
+function b64urlEncode(bytes: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function b64urlDecode(str: string): Buffer {
-  return Buffer.from(str, 'base64url');
+function b64urlDecode(str: string): Uint8Array {
+  const padded = str.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (str.length % 4)) % 4);
+  const bin = atob(padded);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
 }
 
-export function signCookie(input: { phone: string; instanceName: string }): string {
+async function getHmacKey(secret: string): Promise<CryptoKey> {
+  const enc = new TextEncoder().encode(secret);
+  return globalThis.crypto.subtle.importKey('raw', enc, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+}
+
+// Constant-time compare for two Uint8Arrays of equal length
+function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+export async function signCookie(input: { phone: string; instanceName: string }): Promise<string> {
   const secret = getSecret();
   const now = Math.floor(Date.now() / 1000);
   const payload: AuthCookiePayload = {
@@ -35,38 +53,57 @@ export function signCookie(input: { phone: string; instanceName: string }): stri
     iat: now,
     exp: now + COOKIE_TTL_SECONDS,
   };
-  const payloadB64 = b64urlEncode(Buffer.from(JSON.stringify(payload)));
-  const sig = crypto.createHmac('sha256', secret).update(payloadB64).digest();
+  const payloadJson = JSON.stringify(payload);
+  const payloadBytes = new TextEncoder().encode(payloadJson);
+  const payloadB64 = b64urlEncode(payloadBytes);
+
+  const key = await getHmacKey(secret);
+  const sigBuffer = await globalThis.crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payloadB64));
+  const sig = new Uint8Array(sigBuffer);
   return `${payloadB64}.${b64urlEncode(sig)}`;
 }
 
-export function verifyCookie(raw: string | undefined): AuthCookiePayload | null {
+export async function verifyCookie(raw: string | undefined): Promise<AuthCookiePayload | null> {
   if (!raw || typeof raw !== 'string') return null;
   const parts = raw.split('.');
   if (parts.length !== 2) return null;
   const [payloadB64, sigB64] = parts;
+
   let secret: string;
   try {
     secret = getSecret();
   } catch {
     return null;
   }
-  const expected = crypto.createHmac('sha256', secret).update(payloadB64).digest();
-  let provided: Buffer;
+
+  let providedSig: Uint8Array;
   try {
-    provided = b64urlDecode(sigB64);
+    providedSig = b64urlDecode(sigB64);
   } catch {
     return null;
   }
-  if (provided.length !== expected.length) return null;
-  if (!crypto.timingSafeEqual(provided, expected)) return null;
+
+  let key: CryptoKey;
+  try {
+    key = await getHmacKey(secret);
+  } catch {
+    return null;
+  }
+
+  const expectedBuffer = await globalThis.crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payloadB64));
+  const expectedSig = new Uint8Array(expectedBuffer);
+
+  if (!timingSafeEqualBytes(providedSig, expectedSig)) return null;
 
   let payload: AuthCookiePayload;
   try {
-    payload = JSON.parse(b64urlDecode(payloadB64).toString('utf8'));
+    const payloadBytes = b64urlDecode(payloadB64);
+    const payloadJson = new TextDecoder().decode(payloadBytes);
+    payload = JSON.parse(payloadJson);
   } catch {
     return null;
   }
+
   if (
     typeof payload?.phone !== 'string' ||
     typeof payload?.instanceName !== 'string' ||

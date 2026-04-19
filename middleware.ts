@@ -1,8 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { verifyCookie, signCookie, shouldRefresh, AUTH_COOKIE_NAME, AUTH_COOKIE_MAX_AGE } from './app/lib/auth-cookie';
 
-export const runtime = 'nodejs';
-
 const PUBLIC_PATHS = [
   '/',
   '/connect',
@@ -44,7 +42,7 @@ export async function middleware(request: NextRequest) {
   }
 
   const cookieRaw = request.cookies.get(AUTH_COOKIE_NAME)?.value;
-  const payload = verifyCookie(cookieRaw);
+  const payload = await verifyCookie(cookieRaw);
 
   if (!payload) {
     if (isProtectedPage(pathname)) {
@@ -56,7 +54,7 @@ export async function middleware(request: NextRequest) {
   }
 
   if (shouldRefresh(payload)) {
-    const newCookie = signCookie({ phone: payload.phone, instanceName: payload.instanceName });
+    const newCookie = await signCookie({ phone: payload.phone, instanceName: payload.instanceName });
     const res = NextResponse.next();
     res.cookies.set({
       name: AUTH_COOKIE_NAME,

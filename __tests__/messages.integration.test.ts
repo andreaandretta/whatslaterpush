@@ -53,7 +53,7 @@ describe('GET /api/messages', () => {
     process.env.AUTH_COOKIE_SECRET = SECRET;
     mockSupa.setResponse('user_instances:select', { id: 'u1', subscription_plan: 'free', trial_ends_at: null, connection_status: 'open' }, null);
     mockSupa.setResponse('scheduled_messages:select', [{ id: 'm1', recipient_name: 'Mario' }], null);
-    const cookie = signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });
+    const cookie = await signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });
     const { GET } = await import('../app/api/messages/route');
     const res = await GET(reqWithCookie('GET', 'http://localhost/api/messages', cookie) as any);
     expect(res.status).toBe(200);
@@ -77,7 +77,7 @@ describe('DELETE /api/messages', () => {
     process.env.AUTH_COOKIE_SECRET = SECRET;
     mockSupa.setResponse('scheduled_messages:select', { id: 'm1', instance_phone: '393331234567' }, null);
     mockSupa.setResponse('scheduled_messages:update', [{ id: 'm1' }], null);
-    const cookie = signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });
+    const cookie = await signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });
     const { DELETE } = await import('../app/api/messages/route');
     const res = await DELETE(reqWithCookie('DELETE', 'http://localhost/api/messages', cookie, { id: 'm1' }) as any);
     expect(res.status).toBe(200);

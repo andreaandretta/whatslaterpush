@@ -118,7 +118,7 @@ describe('GET /api/auth/me', () => {
   test('returns phone+instanceName when cookie valid', async () => {
     jest.resetModules();
     process.env.AUTH_COOKIE_SECRET = SECRET;
-    const cookie = signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });
+    const cookie = await signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });
     const { GET } = await import('../app/api/auth/me/route');
     const res = await GET(makeReqWithCookie('GET', cookie) as any);
     expect(res.status).toBe(200);
@@ -130,7 +130,7 @@ describe('GET /api/auth/me', () => {
   test('returns 401 when cookie tampered', async () => {
     jest.resetModules();
     process.env.AUTH_COOKIE_SECRET = SECRET;
-    const cookie = signCookie({ phone: '393331234567', instanceName: 'X' });
+    const cookie = await signCookie({ phone: '393331234567', instanceName: 'X' });
     const tampered = cookie.slice(0, -2) + 'AA';
     const { GET } = await import('../app/api/auth/me/route');
     const res = await GET(makeReqWithCookie('GET', tampered) as any);

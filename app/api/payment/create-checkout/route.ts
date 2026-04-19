@@ -13,7 +13,7 @@ const PRICE_IDS: Record<string, string | undefined> = {
 export async function POST(req: NextRequest) {
   try {
     const cookieRaw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
-    const auth = verifyCookie(cookieRaw);
+    const auth = await verifyCookie(cookieRaw);
     if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const phone = auth.phone;
 

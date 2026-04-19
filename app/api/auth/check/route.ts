@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ authenticated: false });
   }
 
-  const cookieValue = signCookie({
+  const cookieValue = await signCookie({
     phone: session.phone,
     instanceName: session.instance_name || `SchedWhats-${session.phone}`,
   });

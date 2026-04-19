@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const auth = verifyCookie(req.cookies.get(AUTH_COOKIE_NAME)?.value);
+    const auth = await verifyCookie(req.cookies.get(AUTH_COOKIE_NAME)?.value);
     if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const phone = auth.phone;
 
