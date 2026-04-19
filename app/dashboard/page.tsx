@@ -2,32 +2,17 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  Calendar, CheckCircle2, Loader2, Smartphone, LogOut, Trash2, User
+  Calendar, CheckCircle2, Loader2, Smartphone, LogOut, Trash2
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
-import { normalizeItalianPhone } from '../lib/phone';
-import { cn } from '../lib/cn';
 import PricingSection from '../components/PricingSection';
 import FAQSection from '../components/FAQSection';
 import Footer from '../components/Footer';
 
-// --- Storage helpers ---
 const supabaseClient = typeof window !== 'undefined' ? createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 ) : null;
-
-const PHONE_KEY = 'sw_phone';
-const INST_KEY  = 'sw_instance';
-const EXPIRY_KEY = 'sw_expiry';
-
-const getStoredPhone    = () => (typeof window !== 'undefined' ? localStorage.getItem(PHONE_KEY) || '' : '');
-const getStoredInstance = () => (typeof window !== 'undefined' ? localStorage.getItem(INST_KEY)  || '' : '');
-const getStoredExpiry   = () => (typeof window !== 'undefined' ? localStorage.getItem(EXPIRY_KEY) || '' : '');
-const savePhone    = (p: string) => { if (p) localStorage.setItem(PHONE_KEY, p); };
-const saveInstance = (n: string) => { if (n) localStorage.setItem(INST_KEY, n); };
-const saveExpiry   = () => { localStorage.setItem(EXPIRY_KEY, String(Date.now() + 30 * 24 * 3600 * 1000)); };
-const clearPhone   = () => { localStorage.removeItem(PHONE_KEY); localStorage.removeItem(INST_KEY); localStorage.removeItem(EXPIRY_KEY); localStorage.removeItem('sw_onboarding_shown'); };
 
 interface SubscriptionState {
   plan: string;
@@ -48,12 +33,7 @@ interface ScheduledMessage {
 }
 
 export default function DashboardPage() {
-  const [connStatus, setConnStatus]     = useState<'disconnected'|'connecting'|'connected'>('disconnected');
-  const [qrCode, setQrCode]            = useState<string | null>(null);
-  const [pairingCode, setPairingCode]   = useState<string | null>(null);
-  const [instanceName, setInstanceName] = useState(() => getStoredInstance() || '');
-  const [isLoading, setIsLoading]       = useState(false);
-  const [error, setError]               = useState<string | null>(null);
+  const [instanceName, setInstanceName] = useState('');
   const [userPhone, setUserPhone]       = useState('');
   const [messages, setMessages]         = useState<ScheduledMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(true);
@@ -61,89 +41,33 @@ export default function DashboardPage() {
   const [sessionValidated, setSessionValidated] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
-  const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const msgTimer     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // --- Session validation on mount ---
+  // --- Cookie-based auth check on mount ---
   useEffect(() => {
-    const validateSession = async () => {
-      const storedPhone = getStoredPhone();
-      const storedInst  = getStoredInstance();
-      const expiry = getStoredExpiry();
-      if (expiry && Date.now() > parseInt(expiry)) {
-        clearPhone();
-        setSessionValidated(true);
-        return;
-      }
-      if (!storedPhone || !storedInst) {
-        setSessionValidated(true);
-        return;
-      }
-
-      // Try up to 2 times with a delay to handle transient states
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const res = await fetch('/api/connect', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'status', instanceName: storedInst }),
-          });
-          const r = await res.json();
-
-          if (r.status === 'open') {
-            if (r.owner && normalizeItalianPhone(r.owner) !== normalizeItalianPhone(storedPhone)) {
-              clearPhone();
-              setSessionValidated(true);
-              return;
-            }
-            setUserPhone(normalizeItalianPhone(storedPhone));
-            setInstanceName(storedInst);
-            setConnStatus('connected');
-            saveExpiry();
-            fetchMessagesForPhone(storedPhone);
-            setSessionValidated(true);
-            return;
-          }
-
-          if (r.status === 'not_found') {
-            // Instance doesn't exist at all — clear session
-            clearPhone();
-            setSessionValidated(true);
-            return;
-          }
-
-          // Transient states: 'close', 'connecting', etc.
-          // On first attempt, wait and retry before giving up
-          if (attempt === 0) {
-            console.log('[dashboard] status=' + r.status + ', retrying in 3s...');
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            continue;
-          }
-
-          // After retry, still not open — keep session but show disconnected
-          // User can reconnect without losing their phone/instance data
-          setUserPhone(normalizeItalianPhone(storedPhone));
-          setInstanceName(storedInst);
-          setConnStatus('disconnected');
-        } catch {
-          // On network error, keep session data — don't logout
-          if (attempt === 1) {
-            setUserPhone(normalizeItalianPhone(storedPhone));
-            setInstanceName(storedInst);
-            setConnStatus('disconnected');
-          }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/auth/me');
+        if (cancelled) return;
+        if (res.status === 401 || !res.ok) {
+          window.location.href = '/connect';
+          return;
         }
+        const data = await res.json();
+        setUserPhone(data.phone);
+        setInstanceName(data.instanceName);
+        setSessionValidated(true);
+      } catch {
+        if (!cancelled) window.location.href = '/connect';
       }
-      setSessionValidated(true);
-    };
-    validateSession();
+    })();
+    return () => { cancelled = true; };
   }, []);
 
-  const fetchMessagesForPhone = useCallback(async (phone?: string) => {
-    const ph = phone || userPhone || getStoredPhone();
-    if (!ph) { setMessagesLoading(false); return; }
+  const fetchMessages = useCallback(async () => {
     try {
-      const res = await fetch('/api/messages?phone=' + encodeURIComponent(ph));
+      const res = await fetch('/api/messages');
       if (res.status === 403) {
         const err = await res.json();
         setSubscription({ plan: err.subscription_plan || 'expired', trial_ends_at: err.trial_ends_at, expired: true });
@@ -162,18 +86,18 @@ export default function DashboardPage() {
     } finally {
       setMessagesLoading(false);
     }
-  }, [userPhone]);
+  }, []);
 
   useEffect(() => {
-    if (connStatus === 'connected' && userPhone) {
-      fetchMessagesForPhone(userPhone);
+    if (sessionValidated) {
+      fetchMessages();
       if (msgTimer.current) clearInterval(msgTimer.current);
-      msgTimer.current = setInterval(() => fetchMessagesForPhone(userPhone), 30000);
+      msgTimer.current = setInterval(fetchMessages, 30000);
     }
     return () => { if (msgTimer.current) clearInterval(msgTimer.current); };
-  }, [connStatus, userPhone, fetchMessagesForPhone]);
+  }, [sessionValidated, fetchMessages]);
 
-  // Supabase Realtime
+  // Supabase Realtime — listen for connection status changes
   useEffect(() => {
     if (!supabaseClient || !instanceName) return;
     const channel = supabaseClient
@@ -186,116 +110,24 @@ export default function DashboardPage() {
           table: 'user_instances',
           filter: `instance_name=eq.${instanceName}`
         },
-        (payload: { new?: { connection_status?: string } }) => {
-          const newStatus = payload.new?.connection_status;
-          if (newStatus === 'open' && connStatus !== 'connected') {
-            setConnStatus('connected');
-            setQrCode(null);
-            setPairingCode(null);
-            if (refreshTimer.current) { clearInterval(refreshTimer.current); refreshTimer.current = null; }
-            const phoneToUse = userPhone || getStoredPhone();
-            if (phoneToUse) {
-              setUserPhone(normalizeItalianPhone(phoneToUse));
-              fetchMessagesForPhone(phoneToUse);
-            }
-          } else if (newStatus === 'close' && connStatus !== 'disconnected') {
-            setConnStatus('disconnected');
-          }
+        () => {
+          // Refresh messages on any instance update
+          fetchMessages();
         }
       )
       .subscribe();
 
     return () => { supabaseClient.removeChannel(channel); };
-  }, [instanceName, connStatus, userPhone, fetchMessagesForPhone]);
-
-  const handleConnect = async (rawPhone: string) => {
-    setIsLoading(true);
-    setError(null);
-    setQrCode(null);
-    setPairingCode(null);
-    try {
-      const res = await fetch('/api/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'getCodeAndPairing', phone: rawPhone }),
-      });
-      const r = await res.json();
-      if (r.error) { setError(r.error); setIsLoading(false); return; }
-      if (r.instanceName) { setInstanceName(r.instanceName); saveInstance(r.instanceName); }
-      if (r.qrCode) { setQrCode(r.qrCode.startsWith('data:') ? r.qrCode : 'data:image/png;base64,' + r.qrCode); }
-      if (r.pairingCode) setPairingCode(r.pairingCode);
-      setConnStatus('connecting');
-
-      if (refreshTimer.current) clearInterval(refreshTimer.current);
-      const instName = r.instanceName;
-      const pollStart = Date.now();
-      refreshTimer.current = setInterval(async () => {
-        // Timeout after 35 seconds
-        if (Date.now() - pollStart > 35000) {
-          clearInterval(refreshTimer.current!);
-          setConnStatus('disconnected');
-          setQrCode(null);
-          setPairingCode(null);
-          setError('Il collegamento e scaduto. Clicca qui per ricollegarti — ci vogliono 30 secondi');
-          return;
-        }
-        try {
-          const sr = await fetch('/api/connect', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'status', instanceName: instName }),
-          });
-          const s = await sr.json();
-          if (s.status === 'open') {
-            clearInterval(refreshTimer.current!);
-            saveExpiry();
-            setConnStatus('connected');
-            setQrCode(null);
-            setPairingCode(null);
-            const phone = normalizeItalianPhone(s.owner || rawPhone.replace(/\D/g, ''));
-            savePhone(phone);
-            setUserPhone(normalizeItalianPhone(phone));
-            await fetch('/api/connect', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'setWebhook', instanceName: instName }),
-            });
-            fetchMessagesForPhone(phone);
-          }
-        } catch {
-          // ignore poll errors
-        }
-      }, 3000);
-    } catch {
-      setError('Qualcosa non ha funzionato. Riprova tra un momento — se il problema continua scrivi a supporto@whatslaterpush.vercel.app');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  }, [instanceName, fetchMessages]);
 
   const handleLogout = async () => {
-    if (refreshTimer.current) clearInterval(refreshTimer.current);
     if (msgTimer.current) clearInterval(msgTimer.current);
-    const inst = getStoredInstance() || instanceName;
-    if (inst) {
-      try {
-        await fetch('/api/connect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'disconnect', instanceName: inst }),
-        });
-      } catch {
-        // ignore
-      }
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // ignore
     }
-    clearPhone();
-    setUserPhone('');
-    setMessages([]);
-    setConnStatus('disconnected');
-    setQrCode(null);
-    setPairingCode(null);
-    setInstanceName('');
-    setSubscription({ plan: 'unknown', trial_ends_at: null, expired: false });
+    window.location.href = '/';
   };
 
   const handleDelete = async (id: string) => {
@@ -303,9 +135,9 @@ export default function DashboardPage() {
       await fetch('/api/messages', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, phone: userPhone }),
+        body: JSON.stringify({ id }),
       });
-      fetchMessagesForPhone();
+      fetchMessages();
     } catch {
       // ignore
     }
@@ -370,38 +202,19 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-background text-text-primary font-sans">
       {/* Dashboard Navbar */}
-      <DashboardNavbar connStatus={connStatus} userPhone={userPhone} onLogout={handleLogout} />
+      <DashboardNavbar userPhone={userPhone} onLogout={handleLogout} />
 
       <main className="pt-24 pb-12 px-4 max-w-4xl mx-auto space-y-8">
-        {/* Connection Zone */}
-        <ConnectionZone
-          connStatus={connStatus}
-          qrCode={qrCode}
-          pairingCode={pairingCode}
-          isLoading={isLoading}
-          error={error}
-          userPhone={userPhone}
-          onConnect={handleConnect}
-          onDisconnect={handleLogout}
-        />
+        {/* Connected status card */}
+        <ConnectedCard userPhone={userPhone} />
 
-        {/* Banner */}
-        {connStatus === 'connected' && (
-          <DashboardBanner
-            connectionStatus={connStatus}
-            subscriptionPlan={subscription.plan}
-            trialEndsAt={subscription.trial_ends_at}
-            messages={messages}
-          />
-        )}
-
-        {/* Plan Badge - only when connected */}
-        {connStatus === 'connected' && userPhone && subscription.plan !== 'unknown' && (
+        {/* Plan Badge */}
+        {userPhone && subscription.plan !== 'unknown' && (
           <PlanBadge subscription={subscription} />
         )}
 
-        {/* Messages Section - only when connected */}
-        {connStatus === 'connected' && userPhone && (
+        {/* Messages Section */}
+        {userPhone && (
           <MessagesSection
             messages={messages}
             messagesLoading={messagesLoading}
@@ -412,8 +225,8 @@ export default function DashboardPage() {
           />
         )}
 
-        {/* How To Use Box - inline for new users, FAB for returning */}
-        {connStatus === 'connected' && (() => {
+        {/* How To Use Box — inline for new users, FAB for returning */}
+        {(() => {
           const hasNoMessages = messages.length === 0;
           return hasNoMessages ? (
             <HowToUseBox />
@@ -452,59 +265,37 @@ export default function DashboardPage() {
   );
 }
 
-// --- Dashboard Banner ---
-function DashboardBanner({
-  connectionStatus,
-  subscriptionPlan,
-  trialEndsAt,
-  messages,
-}: {
-  connectionStatus: string;
-  subscriptionPlan: string;
-  trialEndsAt: string | null;
-  messages: ScheduledMessage[];
-}) {
-  const dailyLimits: Record<string, number> = { free: 3, trial: 10, personal: 20, business: 50 };
-  const dailyLimit = dailyLimits[subscriptionPlan] || 3;
-
-  // Priority 1: Disconnected
-  if (connectionStatus !== 'connected') {
-    return (
-      <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
-        WhatsApp scollegato — ricollegati per inviare i promemoria
+// --- Connected Status Card ---
+function ConnectedCard({ userPhone }: { userPhone: string }) {
+  const waUrl = `https://wa.me/${userPhone}`;
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+            <CheckCircle2 className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h3 className="font-bold">WhatsApp Connesso</h3>
+            {userPhone && <p className="text-sm text-text-secondary">+{userPhone}</p>}
+          </div>
+        </div>
+        <a
+          href={waUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm"
+        >
+          <Smartphone className="w-4 h-4" />
+          Apri WhatsApp
+        </a>
       </div>
-    );
-  }
-
-  // Priority 2: Daily limit
-  const today = new Date().toISOString().slice(0, 10);
-  const sentToday = messages.filter(
-    (m) => m.status === 'sent' && m.scheduled_at?.startsWith(today)
-  ).length;
-  if (sentToday >= dailyLimit) {
-    return (
-      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
-        Hai usato {sentToday}/{dailyLimit} messaggi oggi — riparte domani o passa a Personal
-      </div>
-    );
-  }
-
-  // Priority 3: Trial
-  if (subscriptionPlan === 'trial' && trialEndsAt) {
-    const daysLeft = Math.max(0, Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / 86400000));
-    return (
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
-        Trial: {daysLeft} giorni rimasti — Passa a Personal per continuare
-      </div>
-    );
-  }
-
-  return null;
+    </div>
+  );
 }
 
 // --- Dashboard Navbar ---
-function DashboardNavbar({ connStatus, userPhone, onLogout }: {
-  connStatus: string;
+function DashboardNavbar({ userPhone, onLogout }: {
   userPhone: string;
   onLogout: () => void;
 }) {
@@ -516,7 +307,7 @@ function DashboardNavbar({ connStatus, userPhone, onLogout }: {
           <span>WhatsLater</span>
         </div>
         <div className="flex items-center gap-3">
-          {connStatus === 'connected' && (
+          {userPhone && (
             <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-green-100 text-green-700 border border-green-200">
               <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
               Connesso
@@ -532,214 +323,6 @@ function DashboardNavbar({ connStatus, userPhone, onLogout }: {
         </div>
       </div>
     </nav>
-  );
-}
-
-// --- Connection Zone ---
-function ConnectionZone({ connStatus, qrCode, pairingCode, isLoading, error, userPhone, onConnect, onDisconnect }: {
-  connStatus: string;
-  qrCode: string | null;
-  pairingCode: string | null;
-  isLoading: boolean;
-  error: string | null;
-  userPhone: string;
-  onConnect: (phone: string) => void;
-  onDisconnect: () => void;
-}) {
-  const [phone, setPhone] = useState('');
-  const [phoneError, setPhoneError] = useState('');
-  const [copied, setCopied] = useState(false);
-  const [showQr, setShowQr] = useState(false);
-  const [platform, setPlatform] = useState<'android' | 'iphone'>(
-    typeof navigator !== 'undefined' && /iPhone|iPad/i.test(navigator.userAgent) ? 'iphone' : 'android'
-  );
-
-  const handleCopy = () => {
-    if (pairingCode) {
-      navigator.clipboard.writeText(pairingCode).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      });
-    }
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    let clean = phone.replace(/\D/g, '');
-    if (clean.startsWith('0039')) clean = clean.substring(4);
-    else if (clean.startsWith('39') && clean.length > 12) clean = clean.substring(2);
-    if (clean.length < 10) {
-      setPhoneError('Inserisci il tuo numero di telefono (es: 3401234567)');
-      return;
-    }
-    setPhoneError('');
-    onConnect(clean);
-  };
-
-  // Connected state
-  if (connStatus === 'connected') {
-    const waUrl = `https://wa.me/${userPhone}`;
-    return (
-      <>
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                <CheckCircle2 className="w-5 h-5 text-primary" />
-              </div>
-              <div>
-                <h3 className="font-bold">WhatsApp Connesso</h3>
-                {userPhone && <p className="text-sm text-text-secondary">+{userPhone}</p>}
-              </div>
-            </div>
-            <a
-              href={waUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm"
-            >
-              <Smartphone className="w-4 h-4" />
-              Apri WhatsApp
-            </a>
-          </div>
-        </div>
-      </>
-    );
-  }
-
-  // Disconnected / connecting state
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-      <div className="p-6 md:p-8">
-        <h2 className="text-2xl font-bold text-text-primary mb-2 text-center">Connetti WhatsApp</h2>
-        <p className="text-text-secondary text-sm text-center mb-6">
-          Collega il tuo WhatsApp in 30 secondi
-        </p>
-
-        <form onSubmit={handleSubmit} className="max-w-sm mx-auto flex flex-col gap-4 mb-6">
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Il tuo numero di telefono
-            </label>
-            <input
-              type="tel"
-              placeholder="Es: 3401234567"
-              className="w-full bg-background border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-shadow text-base"
-              value={phone}
-              onChange={(e) => { setPhone(e.target.value); setPhoneError(''); }}
-              disabled={connStatus === 'connecting'}
-            />
-            <p className="text-xs text-gray-500 mt-1">Inserisci il tuo numero di telefono</p>
-          </div>
-          {(phoneError || error) && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-center">
-              <p className="text-sm text-red-600">{phoneError || error}</p>
-              {error?.includes('scaduta') && (
-                <button
-                  onClick={() => { if (phone) onConnect(phone); }}
-                  className="mt-3 bg-primary text-white px-5 py-2 rounded-xl font-semibold text-sm hover:bg-primary/90 transition-colors"
-                >
-                  Riprova
-                </button>
-              )}
-            </div>
-          )}
-          {connStatus !== 'connecting' && (
-            <button
-              type="submit"
-              disabled={isLoading || !phone}
-              className={cn(
-                "bg-primary text-white px-6 py-3 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all",
-                (isLoading || !phone) && "opacity-60 cursor-not-allowed"
-              )}
-            >
-              {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Smartphone className="w-5 h-5" />}
-              {isLoading ? 'Connessione in corso...' : 'Collega WhatsApp'}
-            </button>
-          )}
-        </form>
-
-        {/* Pairing Code (primary) + QR (secondary) */}
-        {(qrCode || pairingCode) && (
-          <div className="flex flex-col items-center gap-6">
-            {/* Platform guide */}
-            <div className="w-full max-w-sm">
-              <div className="flex gap-2 mb-3 justify-center">
-                <button
-                  onClick={() => setPlatform('android')}
-                  className={`px-3 py-1 rounded-full text-xs ${platform === 'android' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-400'}`}
-                >
-                  Android
-                </button>
-                <button
-                  onClick={() => setPlatform('iphone')}
-                  className={`px-3 py-1 rounded-full text-xs ${platform === 'iphone' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-400'}`}
-                >
-                  iPhone
-                </button>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-400 justify-center flex-wrap">
-                {platform === 'android' ? (
-                  <>
-                    <span className="bg-gray-100 rounded px-2 py-1">⋮</span>
-                    <span>&rarr;</span>
-                    <span className="bg-gray-100 rounded px-2 py-1">Dispositivi collegati</span>
-                    <span>&rarr;</span>
-                    <span className="bg-gray-100 rounded px-2 py-1">Collega un dispositivo</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="bg-gray-100 rounded px-2 py-1">Impostazioni</span>
-                    <span>&rarr;</span>
-                    <span className="bg-gray-100 rounded px-2 py-1">Dispositivi collegati</span>
-                    <span>&rarr;</span>
-                    <span className="bg-gray-100 rounded px-2 py-1">Collega un dispositivo</span>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Pairing code — primary */}
-            {pairingCode && (
-              <div className="flex flex-col items-center gap-3 w-full max-w-sm">
-                <p className="text-sm font-semibold text-gray-700">Inserisci questo codice su WhatsApp</p>
-                <div className="text-4xl md:text-5xl font-sans font-bold tracking-widest text-text-primary bg-background py-5 px-8 rounded-3xl border border-gray-200 shadow-inner w-full text-center">
-                  {pairingCode.length >= 8 ? pairingCode.slice(0, 4) + '-' + pairingCode.slice(4, 8) : pairingCode}
-                </div>
-                <button
-                  onClick={handleCopy}
-                  className="mt-2 flex items-center gap-2 mx-auto px-4 py-2 rounded-lg bg-white/80 hover:bg-white text-green-700 text-sm font-medium transition-all shadow-sm border border-green-200 hover:border-green-400"
-                >
-                  {copied ? 'Copiato!' : 'Copia Codice'}
-                </button>
-              </div>
-            )}
-
-            {/* QR code — secondary toggle */}
-            {qrCode && (
-              <div className="flex flex-col items-center gap-3">
-                <button
-                  onClick={() => setShowQr(!showQr)}
-                  className="text-xs text-primary hover:underline"
-                >
-                  {showQr ? 'Nascondi QR code' : 'Preferisci inquadrare un codice? Clicca qui'}
-                </button>
-                {showQr && (
-                  <div className="w-56 h-56 bg-white border-4 border-primary/20 rounded-3xl p-3 shadow-lg relative flex items-center justify-center overflow-hidden">
-                    <img src={qrCode} alt="QR Code" className="w-full h-full object-contain relative z-10" />
-                    <div className="absolute inset-0 bg-gradient-to-b from-transparent via-primary/10 to-transparent h-1/2 animate-[scan_2s_ease-in-out_infinite] z-20 pointer-events-none"></div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="flex items-center gap-2 text-primary font-medium bg-primary/10 px-5 py-2.5 rounded-full">
-              <Loader2 className="w-4 h-4 animate-spin" /> Apri WhatsApp sul telefono e inserisci il codice 👆
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
   );
 }
 
