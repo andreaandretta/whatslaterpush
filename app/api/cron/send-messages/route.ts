@@ -93,6 +93,16 @@ export async function GET(req: NextRequest) {
       console.log('CRON: Cleaned up ' + staleCleanup.length + ' stale awaiting records');
     }
 
+    // Clean up expired pending_auth_sessions (TTL 10min + 1h grace)
+    const oneHourPastExpiry = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { data: authCleanup } = await supabase.from('pending_auth_sessions')
+      .delete()
+      .lt('expires_at', oneHourPastExpiry)
+      .select('id');
+    if (authCleanup?.length) {
+      console.log('CRON: Cleaned up ' + authCleanup.length + ' expired pending_auth_sessions');
+    }
+
     // Midnight reset: reset daily counters for all users
     const { data: resetResult } = await supabase
       .from('user_instances')
