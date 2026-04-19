@@ -521,6 +521,33 @@ async function verifyAndFixMessage(messageText: string, recipientName: string): 
   return messageText;
 }
 
+async function handleUndoCommand(
+  ownerPhone: string,
+  instanceName: string
+): Promise<NextResponse> {
+  const sixtySecondsAgo = new Date(Date.now() - 60 * 1000).toISOString();
+  const { data: latest } = await supabase
+    .from('scheduled_messages')
+    .select('id, recipient_name, scheduled_at')
+    .eq('instance_phone', ownerPhone)
+    .eq('status', 'pending')
+    .gt('created_at', sixtySecondsAgo)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!latest) {
+    await notifyOwner(instanceName, ownerPhone, 'Niente da annullare (timeout 60s scaduto o nessuna programmazione recente).');
+    return NextResponse.json({ ok: true });
+  }
+
+  await supabase.from('scheduled_messages').update({ status: 'cancelled' }).eq('id', latest.id);
+  const recipient = latest.recipient_name || 'destinatario';
+  const when = new Date(latest.scheduled_at).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
+  await notifyOwner(instanceName, ownerPhone, `✅ Annullato il messaggio per ${recipient} (${when}).`);
+  return NextResponse.json({ ok: true });
+}
+
 async function getContactList(ownerPhone: string): Promise<string> {
   // Get contacts from pending_contacts
   const { data: contacts } = await supabase
@@ -799,14 +826,43 @@ export async function POST(req) {
       // No awaiting_confirm — fall through to AI
     }
 
-    // ── FAST-PATH: ANNULLA cancels pending message ──
-    if (/^(no|annulla|cancella)$/i.test(rawLower)) {
-      const { data: awaiting } = await supabase.from('scheduled_messages')
+    // ── FAST-PATH: UNDO cancels last pending message within 60s window ──
+    // "undo"/"u" always trigger UNDO. "annulla"/"cancella" (bare or non-numeric suffix)
+    // trigger UNDO only when there is no awaiting_confirm to resolve first.
+    {
+      const isUndo = (
+        rawLower === 'undo' ||
+        rawLower === 'u' ||
+        rawLower === 'annulla ultimo' ||
+        rawLower === 'annulla messaggio' ||
+        (rawLower.startsWith('annulla ') && !/^annulla\s+\d+$/.test(rawLower))
+      );
+      const isAnnullaBare = rawLower === 'annulla' || rawLower === 'cancella';
+      if (isUndo || isAnnullaBare) {
+        // For bare "annulla"/"cancella": let awaiting_confirm fast-path handle it first
+        if (isAnnullaBare) {
+          const { data: awaitingFirst } = await supabase.from('scheduled_messages')
+            .select('id, recipient_name')
+            .eq('instance_phone', ownerPhone).eq('status', 'awaiting_confirm')
+            .order('created_at', { ascending: false }).limit(1).maybeSingle();
+          if (awaitingFirst) {
+            await supabase.from('scheduled_messages').delete().eq('id', awaitingFirst.id);
+            await notifyOwner(instanceName, ownerPhone, '❌ Messaggio annullato.');
+            return NextResponse.json({ ok: true });
+          }
+        }
+        return await handleUndoCommand(ownerPhone, instanceName);
+      }
+    }
+
+    // ── FAST-PATH: NO cancels awaiting_confirm message ──
+    if (/^(no)$/i.test(rawLower)) {
+      const { data: awaitingNo } = await supabase.from('scheduled_messages')
         .select('id, recipient_name')
         .eq('instance_phone', ownerPhone).eq('status', 'awaiting_confirm')
         .order('created_at', { ascending: false }).limit(1).maybeSingle();
-      if (awaiting) {
-        await supabase.from('scheduled_messages').delete().eq('id', awaiting.id);
+      if (awaitingNo) {
+        await supabase.from('scheduled_messages').delete().eq('id', awaitingNo.id);
         await notifyOwner(instanceName, ownerPhone, '❌ Messaggio annullato.');
         return NextResponse.json({ ok: true });
       }
