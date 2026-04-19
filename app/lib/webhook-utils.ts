@@ -36,6 +36,65 @@ export function extractInlineMessage(text: string): string | null {
   return null;
 }
 
+import { validatePhone } from './phone';
+
+/**
+ * Estrae numero di telefono e nome inline dal testo.
+ * Esempio: "Invia a Mario Cementi 3331234567 alle 17: msg"
+ *   → { phone: "393331234567", name: "Mario Cementi", textWithoutPhone: "Invia a Mario Cementi  alle 17: msg" }
+ *
+ * Regole:
+ * - Numero: cattura sequenze di cifre/separatori con >=7 cifre dopo pulizia.
+ *   Una sequenza che sembra una data (DD/MM/YYYY) viene scartata.
+ * - Nome: 1-3 parole maiuscole CONTIGUE che precedono immediatamente il numero.
+ */
+export function extractInlinePhoneAndName(text: string): {
+  phone: string | null;
+  name: string | null;
+  textWithoutPhone: string;
+} {
+  // Pattern data DD/MM/YYYY o DD/MM/YY — scartato
+  const datePattern = /^\d{1,2}\/\d{1,2}\/\d{2,4}$/;
+
+  // Pattern numero: opzionale +, poi cifre con possibili spazi/trattini/parentesi/punti, min 7 cifre dopo pulizia
+  const phonePattern = /(\+?\d[\d\s\-().]{6,})/g;
+
+  let foundPhone: string | null = null;
+  let foundMatch: string | null = null;
+  let foundIdx: number = -1;
+
+  let match;
+  while ((match = phonePattern.exec(text)) !== null) {
+    const raw = match[1].trim();
+    // Skip if this candidate IS a date
+    if (datePattern.test(raw)) continue;
+    // Strip non-digits except leading +
+    const digitsOnly = raw.replace(/[^\d+]/g, '');
+    const normalized = validatePhone(digitsOnly);
+    if (normalized) {
+      foundPhone = normalized;
+      foundMatch = match[1];
+      foundIdx = match.index;
+      break;
+    }
+  }
+
+  if (!foundPhone || !foundMatch) {
+    return { phone: null, name: null, textWithoutPhone: text };
+  }
+
+  const before = text.substring(0, foundIdx);
+
+  // Nome: 1-3 parole maiuscole contigue immediatamente prima del numero
+  const nameMatch = before.match(/((?:[A-ZÀ-Ü][\wÀ-ÿ]+)(?:\s+[A-ZÀ-Ü][\wÀ-ÿ]+){0,2})\s*$/);
+  const name = nameMatch ? nameMatch[1].trim() : null;
+
+  // Rimuove il numero dal testo
+  const textWithoutPhone = text.substring(0, foundIdx) + text.substring(foundIdx + foundMatch.length);
+
+  return { phone: foundPhone, name, textWithoutPhone };
+}
+
 // ── Smart datetime parsing: handles offset-aware and offset-naive ISO strings ──
 export function parseAIDatetime(datetimeStr: string): Date {
   const aiDate = new Date(datetimeStr);

@@ -136,3 +136,53 @@ describe('escapeIlike — ILIKE wildcard injection prevention', () => {
     expect(escapeIlike('')).toBe('');
   });
 });
+
+import { extractInlinePhoneAndName } from '../app/lib/webhook-utils';
+
+describe('extractInlinePhoneAndName', () => {
+  test('extracts phone and name from "Invia a Mario Cementi 3331234567 alle 17"', () => {
+    const r = extractInlinePhoneAndName('Invia a Mario Cementi 3331234567 alle 17: msg');
+    expect(r.phone).toBe('393331234567');
+    expect(r.name).toBe('Mario Cementi');
+    expect(r.textWithoutPhone).not.toContain('3331234567');
+  });
+
+  test('extracts spaced phone "333 1234567"', () => {
+    const r = extractInlinePhoneAndName('Mario 333 1234567 ora ciao');
+    expect(r.phone).toBe('393331234567');
+    expect(r.name).toBe('Mario');
+  });
+
+  test('handles no name (just phone)', () => {
+    const r = extractInlinePhoneAndName('scrivi a 393331234567 alle 17 ciao');
+    expect(r.phone).toBe('393331234567');
+    expect(r.name).toBeNull();
+  });
+
+  test('returns null phone when no number present', () => {
+    const r = extractInlinePhoneAndName('Mario alle 17 ciao');
+    expect(r.phone).toBeNull();
+    expect(r.name).toBeNull();
+  });
+
+  test('handles international number "+44 7700 900123"', () => {
+    const r = extractInlinePhoneAndName('John +44 7700 900123 alle 9');
+    expect(r.phone).toBe('447700900123');
+    expect(r.name).toBe('John');
+  });
+
+  test('does NOT match a date "12/03/2026" as phone', () => {
+    const r = extractInlinePhoneAndName('Mario 12/03/2026 alle 9 ciao');
+    expect(r.phone).toBeNull();
+  });
+
+  test('extracts up to 3 capitalized words as name', () => {
+    const r = extractInlinePhoneAndName('Invia a Marco Antonio Rossi 3331234567 alle 9');
+    expect(r.name).toBe('Marco Antonio Rossi');
+  });
+
+  test('does NOT match plain digits sequence < 7 chars as phone', () => {
+    const r = extractInlinePhoneAndName('Mario 123456 alle 9');
+    expect(r.phone).toBeNull();
+  });
+});
