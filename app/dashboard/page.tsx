@@ -2,9 +2,11 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  Calendar, CheckCircle2, Loader2, Smartphone, LogOut, Trash2
+  Calendar, CheckCircle2, Loader2, Smartphone, LogOut, Trash2, Plus
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
+import { Button } from '@/components/Button';
+import QuickCaptureModal from '@/components/QuickCaptureModal';
 import PricingSection from '../components/PricingSection';
 import FAQSection from '../components/FAQSection';
 import Footer from '../components/Footer';
@@ -40,6 +42,7 @@ export default function DashboardPage() {
   const [subscription, setSubscription] = useState<SubscriptionState>({ plan: 'unknown', trial_ends_at: null, expired: false });
   const [sessionValidated, setSessionValidated] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
 
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -208,6 +211,17 @@ export default function DashboardPage() {
         {/* Connected status card */}
         <ConnectedCard userPhone={userPhone} />
 
+
+        {/* Quick Capture Button */}
+        <div className="mb-4">
+          <Button
+            variant="primary"
+            onClick={() => setQuickCaptureOpen(true)}
+            className="w-full sm:w-auto"
+          >
+            <Plus className="w-5 h-5 mr-2" /> Nuovo follow-up
+          </Button>
+        </div>
         {/* Plan Badge */}
         {userPhone && subscription.plan !== 'unknown' && (
           <PlanBadge subscription={subscription} />
@@ -257,6 +271,13 @@ export default function DashboardPage() {
         {(showPricing || subscription.plan === 'personal' || subscription.plan === 'business') && (
           <PricingSection currentPlan={subscription.plan} userPhone={userPhone} />
         )}
+
+        {/* QuickCaptureModal */}
+        <QuickCaptureModal
+          open={quickCaptureOpen}
+          onClose={() => setQuickCaptureOpen(false)}
+          userPhone={userPhone}
+        />
       </main>
 
       <FAQSection />
