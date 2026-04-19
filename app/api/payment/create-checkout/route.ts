@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
+import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,6 +12,16 @@ const PRICE_IDS: Record<string, string | undefined> = {
 
 export async function POST(req: NextRequest) {
   try {
+    const cookieRaw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
+    const auth = verifyCookie(cookieRaw);
+    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const phone = auth.phone;
+
+    const { plan } = await req.json();
+    if (!plan) return NextResponse.json({ error: 'plan required' }, { status: 400 });
+    const priceId = PRICE_IDS[plan];
+    if (!priceId) return NextResponse.json({ error: 'Invalid plan: ' + plan }, { status: 400 });
+
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
       apiVersion: '2023-10-16' as any,
     });
@@ -18,17 +29,6 @@ export async function POST(req: NextRequest) {
       process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
-
-    const { phone, plan } = await req.json();
-
-    if (!phone || !plan) {
-      return NextResponse.json({ error: 'phone and plan required' }, { status: 400 });
-    }
-
-    const priceId = PRICE_IDS[plan];
-    if (!priceId) {
-      return NextResponse.json({ error: 'Invalid plan: ' + plan }, { status: 400 });
-    }
 
     // Find or create Stripe customer
     const { data: user } = await supabase

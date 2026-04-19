@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
+import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = verifyCookie(req.cookies.get(AUTH_COOKIE_NAME)?.value);
+    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const phone = auth.phone;
+
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
       apiVersion: '2023-10-16' as any,
     });
@@ -13,11 +18,6 @@ export async function POST(req: NextRequest) {
       process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
-
-    const { phone } = await req.json();
-    if (!phone) {
-      return NextResponse.json({ error: 'phone required' }, { status: 400 });
-    }
 
     const { data: user } = await supabase
       .from('user_instances')
