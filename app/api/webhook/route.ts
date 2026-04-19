@@ -541,7 +541,19 @@ async function handleUndoCommand(
     return NextResponse.json({ ok: true });
   }
 
-  await supabase.from('scheduled_messages').update({ status: 'cancelled' }).eq('id', latest.id);
+  const { data: updated } = await supabase
+    .from('scheduled_messages')
+    .update({ status: 'cancelled' })
+    .eq('id', latest.id)
+    .eq('status', 'pending')   // CAS guard: only cancel if still pending
+    .select('id')
+    .maybeSingle();
+
+  if (!updated) {
+    await notifyOwner(instanceName, ownerPhone, 'Troppo tardi: il messaggio è già in invio.');
+    return NextResponse.json({ ok: true });
+  }
+
   const recipient = latest.recipient_name || 'destinatario';
   const when = new Date(latest.scheduled_at).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
   await notifyOwner(instanceName, ownerPhone, `✅ Annullato il messaggio per ${recipient} (${when}).`);

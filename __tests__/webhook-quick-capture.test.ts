@@ -1,7 +1,7 @@
 /**
  * Integration tests for Quick Capture flow in /api/webhook.
  */
-import { createMockSupabase, createFetchMock, mockRequest, makeMessagePayload } from './helpers/mocks';
+import { createMockSupabase, createFetchMock, mockRequest, makeMessagePayload, FetchCall } from './helpers/mocks';
 
 const mockSupa = createMockSupabase();
 jest.mock('@supabase/supabase-js', () => ({
@@ -62,6 +62,57 @@ describe('UNDO command', () => {
 
     const updateCall = mockSupa.calls.find(c => c.table === 'scheduled_messages' && c.operation === 'update');
     expect(updateCall).toBeTruthy();
+  });
+
+  test('replies "Niente da annullare" when no recent pending message', async () => {
+    mockSupa.setResponse('user_instances:select',
+      { id: 'u1', phone_number: '393331234567', instance_name: 'SchedWhats-393331234567', subscription_plan: 'free' }, null);
+    mockSupa.setResponse('pending_auth_sessions:select', null, null);
+    // No recent pending message
+    mockSupa.setResponse('scheduled_messages:select', null, null);
+
+    const payload = makeMessagePayload({
+      instance: 'SchedWhats-393331234567',
+      text: 'undo',
+      fromMe: true,
+      remoteJid: '393331234567@s.whatsapp.net',
+    });
+    const res = await callWebhook(payload);
+    expect(res.status).toBe(200);
+
+    // Verify NO update happened (since no row to cancel)
+    const updateCall = mockSupa.calls.find(c => c.table === 'scheduled_messages' && c.operation === 'update');
+    expect(updateCall).toBeFalsy();
+
+    // Verify notifyOwner was called via Evolution API fetch
+    const notifyCalls = fetchMock.calls.filter((c: FetchCall) => /sendText/.test(c.url));
+    expect(notifyCalls.length).toBeGreaterThan(0);
+  });
+
+  test('CAS prevents cancelling already-sending message', async () => {
+    mockSupa.setResponse('user_instances:select',
+      { id: 'u1', phone_number: '393331234567', instance_name: 'SchedWhats-393331234567', subscription_plan: 'free' }, null);
+    mockSupa.setResponse('pending_auth_sessions:select', null, null);
+    // SELECT returns a pending row...
+    mockSupa.setResponse('scheduled_messages:select',
+      { id: 'msg-1', recipient_name: 'Mario', scheduled_at: new Date(Date.now() + 3600000).toISOString() }, null);
+    // ...but UPDATE returns null (CAS lost — row already moved to 'sending')
+    mockSupa.setResponse('scheduled_messages:update', null, null);
+
+    const payload = makeMessagePayload({
+      instance: 'SchedWhats-393331234567',
+      text: 'undo',
+      fromMe: true,
+      remoteJid: '393331234567@s.whatsapp.net',
+    });
+    const res = await callWebhook(payload);
+    expect(res.status).toBe(200);
+
+    // Bot should reply with "Troppo tardi" (sent via Evolution API sendText)
+    const notifyCalls = fetchMock.calls.filter((c: FetchCall) => /sendText/.test(c.url));
+    const lastCall = notifyCalls[notifyCalls.length - 1];
+    const body = lastCall ? JSON.parse(lastCall.options.body as string) : {};
+    expect((body.text || '').toLowerCase()).toContain('troppo tardi');
   });
 
   test('does NOT trigger UNDO for "annulla 3" (existing list command)', async () => {
