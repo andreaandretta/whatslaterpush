@@ -121,15 +121,16 @@ export default function QuickCaptureModal({ open, onClose, userPhone }: QuickCap
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Mario Cementi" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-text-primary mb-1">Numero (con prefisso)</label>
+            <label className="block text-sm font-medium text-text-primary mb-1">Numero</label>
             <Input
               type="tel"
               inputMode="tel"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
-              placeholder="393331234567"
+              placeholder="3331234567"
               required
             />
+            <p className="text-xs text-text-secondary mt-1">Per numeri italiani puoi omettere il prefisso. Esteri: usa &quot;+&quot; (es. +44 7700 900123).</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1">Quando</label>

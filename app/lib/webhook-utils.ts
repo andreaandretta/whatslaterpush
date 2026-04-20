@@ -68,11 +68,33 @@ export function extractInlinePhoneAndName(text: string): {
     const raw = match[1].trim();
     // Skip if this candidate IS a date
     if (datePattern.test(raw)) continue;
-    // Strip non-digits except leading +
-    const digitsOnly = raw.replace(/[^\d+]/g, '');
-    const normalized = validatePhone(digitsOnly);
-    if (normalized) {
-      foundPhone = normalized;
+
+    // Handle stray-leading-digit pattern: "1 393275654257", "03 333...", etc.
+    // If raw starts with 1-2 digits (no +) followed by whitespace, ALSO try the
+    // tail-only candidate and prefer it when it yields a recognizable Italian
+    // or international number.
+    const strayLead = /^\d{1,2}\s+/;
+    const tailCandidate = strayLead.test(raw) ? raw.replace(strayLead, '') : null;
+
+    const tryValidate = (s: string) => validatePhone(s.replace(/[^\d+]/g, ''));
+    const fullNorm = tryValidate(raw);
+    const tailNorm = tailCandidate ? tryValidate(tailCandidate) : null;
+
+    // Pick the best candidate. Preference order:
+    //   1. tail as Italian mobile (12 digits starting with 39) — handles stray leading digit
+    //      like "1 393275654257" where the "1" is typo/dirty input, not a country code
+    //   2. full as Italian mobile (no stripping needed)
+    //   3. full (preserves valid international prefixes like "44 7700..." UK)
+    //   4. tail (last resort)
+    const isItalianMobile = (n: string | null) => !!n && n.startsWith('39') && n.length === 12;
+    let chosen: string | null = null;
+    if (isItalianMobile(tailNorm)) chosen = tailNorm;
+    else if (isItalianMobile(fullNorm)) chosen = fullNorm;
+    else if (fullNorm) chosen = fullNorm;
+    else if (tailNorm) chosen = tailNorm;
+
+    if (chosen) {
+      foundPhone = chosen;
       foundMatch = match[1];
       foundIdx = match.index;
       break;

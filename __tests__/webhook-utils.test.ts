@@ -185,4 +185,19 @@ describe('extractInlinePhoneAndName', () => {
     const r = extractInlinePhoneAndName('Mario 123456 alle 9');
     expect(r.phone).toBeNull();
   });
+
+  test('strips stray leading digit: "Rebecca 1 393275654257" → 393275654257', () => {
+    // Regression: real bug where user typed "1" before actual number.
+    // Parser must prefer the Italian mobile interpretation over the 13-digit blob.
+    const r = extractInlinePhoneAndName('Invia a REBECCA 1 393275654257 oggi alle 16:33: ciao');
+    expect(r.phone).toBe('393275654257');
+    expect(r.name).toBe('REBECCA');
+  });
+
+  test('preserves valid UK prefix without +: "John 44 7700 900123" → 447700900123', () => {
+    // Must NOT strip "44 " because it's a valid UK country code and the tail
+    // is not Italian — stripping would corrupt a legitimate international number.
+    const r = extractInlinePhoneAndName('John 44 7700 900123 alle 9');
+    expect(r.phone).toBe('447700900123');
+  });
 });
