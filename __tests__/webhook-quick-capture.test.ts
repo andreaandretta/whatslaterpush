@@ -151,7 +151,7 @@ describe('Smart-confirm skip', () => {
       ok: true, status: 200,
       json: async () => ({ choices: [{ message: { content: JSON.stringify({
         action: 'schedule', recipient_name: 'Mario', recipient_number: '393334445555',
-        message_text: 'ciao', datetime_iso: '2026-04-20T09:00:00', confidence: 'high',
+        message_text: 'ciao', datetime_iso: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString().slice(0, 19), confidence: 'high',
       }) } }] }),
     }));
     mockSupa.setResponse('scheduled_messages:insert', [{ id: 'm1' }], null);
@@ -180,7 +180,7 @@ describe('Smart-confirm skip', () => {
       ok: true, status: 200,
       json: async () => ({ choices: [{ message: { content: JSON.stringify({
         action: 'schedule', recipient_name: 'Mario Cementi', recipient_number: '393334445555',
-        message_text: 'preventivo?', datetime_iso: '2026-04-21T17:00:00', confidence: 'high',
+        message_text: 'preventivo?', datetime_iso: new Date(Date.now() + 49 * 60 * 60 * 1000).toISOString().slice(0, 19), confidence: 'high',
       }) } }] }),
     }));
     mockSupa.setResponse('scheduled_messages:insert', [{ id: 'm1' }], null);
@@ -209,7 +209,7 @@ describe('Smart-confirm skip', () => {
       ok: true, status: 200,
       json: async () => ({ choices: [{ message: { content: JSON.stringify({
         action: 'schedule', recipient_name: 'Mario', recipient_number: '393334445555',
-        message_text: 'ciao', datetime_iso: '2026-04-21T18:00:00', confidence: 'low',
+        message_text: 'ciao', datetime_iso: new Date(Date.now() + 50 * 60 * 60 * 1000).toISOString().slice(0, 19), confidence: 'low',
       }) } }] }),
     }));
     mockSupa.setResponse('scheduled_messages:insert', [{ id: 'm1' }], null);
