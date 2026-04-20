@@ -30,7 +30,7 @@ export default function Navbar() {
         </div>
 
         <Link
-          href="/dashboard"
+          href="/connect"
           className="bg-primary text-white px-5 h-12 flex items-center rounded-full text-sm font-semibold border border-white/20 hover:bg-primary-hover transition-colors"
         >
           <span className="hidden sm:inline">Programma i messaggi gratis</span>

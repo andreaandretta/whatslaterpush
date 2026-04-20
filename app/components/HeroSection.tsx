@@ -18,7 +18,7 @@ export default function HeroSection() {
           </p>
           <div className="mt-8">
             <Link
-              href="/dashboard"
+              href="/connect"
               className="inline-flex items-center justify-center bg-primary text-white px-8 h-14 rounded-full text-base font-bold shadow-lg shadow-primary/30 hover:bg-primary-hover transition-colors"
             >
               Inizia a programmare i messaggi

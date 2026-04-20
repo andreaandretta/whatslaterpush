@@ -106,7 +106,7 @@ export default function TutorialPage() {
         {/* CTA */}
         <div className="text-center space-y-4">
           <a
-            href="/dashboard"
+            href="/connect"
             className="inline-block bg-[#25D366] text-white px-8 py-4 rounded-2xl font-bold text-lg hover:scale-[1.02] transition-transform shadow-lg"
           >
             Inizia ora — Connetti WhatsApp
