@@ -42,3 +42,6 @@ next-env.d.ts
 
 # MCP config (contains secrets)
 .mcp.json
+
+# Local design-mockup screenshots (regenerable via Playwright)
+screenshots/*.png
