@@ -654,6 +654,20 @@ Anti-collision: "annulla 3" (con numero) cade nel comando lista esistente (non t
 **Zero schema DB changes.** Riusa `scheduled_messages` (status pending|awaiting_confirm), `pending_contacts`, `user_instances`.
 ```
 
+### 5.2.2 UX /connect (redesign 2026-04-22)
+
+La pagina `/connect` è stata ridisegnata per brand continuity con la landing:
+
+- **Sfondo teal gradient + pattern** (utility `.connect-bg` in `globals.css`) — stesso look della landing page
+- **Navbar slim** con logo WhatsLater
+- **Stepper 3-step** sempre visibile (`components/ConnectStepper.tsx`) che tiene l'utente orientato nelle 4 fasi (input → pairing → connecting → error)
+- **Pairing phase** include QR 192px in cornice verde, pairing-code alternativo, 3 passi numerati per trovare "Dispositivi collegati" in WhatsApp, countdown "scade in 10 min"
+- **Error phase** mostra lo step dove è fallito (stepper rosso) + copy empatico + bottone Riprova + link "Torna al sito"
+
+Nessun cambiamento backend. Auth cookie HMAC (C1) e logica di polling/webhook rimangono identici.
+
+Riferimenti visivi: `screenshots/connect-final.html` (mockup di riferimento) e `docs/superpowers/specs/2026-04-22-connect-page-redesign-design.md` (spec).
+
 ### 5.3 Invio Messaggi (Cron)
 
 ```
