@@ -56,6 +56,23 @@
       transform: translateY(0);
     }
   }
+
+  /* Connect page background */
+  .connect-bg {
+    background:
+      radial-gradient(circle at 20% 20%, rgba(37, 211, 102, 0.10) 0%, transparent 45%),
+      radial-gradient(circle at 80% 70%, rgba(18, 140, 126, 0.15) 0%, transparent 45%),
+      linear-gradient(135deg, #075E54 0%, #0a4f47 100%);
+    position: relative;
+  }
+  .connect-bg::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.06) 1px, transparent 0);
+    background-size: 28px 28px;
+    pointer-events: none;
+  }
 }
 
 /* Selection styles */
