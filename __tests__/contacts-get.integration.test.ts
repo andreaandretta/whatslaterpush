@@ -1,0 +1,86 @@
+/**
+ * Integration tests for GET /api/contacts.
+ * Mocks Supabase + evolutionClient.findContacts.
+ */
+import { createMockSupabase, mockRequest } from './helpers/mocks';
+import { signCookie, AUTH_COOKIE_NAME } from '../app/lib/auth-cookie';
+
+const mockSupa = createMockSupabase();
+jest.mock('@supabase/supabase-js', () => ({
+  createClient: () => mockSupa.client,
+}));
+
+const findContactsMock = jest.fn();
+jest.mock('../lib/evolution/client', () => ({
+  evolutionClient: { findContacts: findContactsMock },
+}));
+
+const ORIGINAL_ENV = process.env;
+const USER_PHONE = '393331234567';
+const INSTANCE = 'SchedWhats-' + USER_PHONE;
+
+beforeEach(() => {
+  mockSupa.calls.length = 0;
+  findContactsMock.mockReset();
+  process.env = {
+    ...ORIGINAL_ENV,
+    SUPABASE_URL: 'https://test.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'test-key',
+    AUTH_COOKIE_SECRET: 'a'.repeat(128),
+  };
+  mockSupa.setResponse('user_instances:select', {
+    id: 'user-uuid-1', instance_name: INSTANCE, phone_number: USER_PHONE,
+  });
+});
+
+afterEach(() => { process.env = ORIGINAL_ENV; });
+
+async function callGet(opts: { authed?: boolean } = { authed: true }) {
+  jest.resetModules();
+  jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+  jest.mock('../lib/evolution/client', () => ({ evolutionClient: { findContacts: findContactsMock } }));
+  const { GET } = await import('../app/api/contacts/route');
+
+  const cookies: Record<string, string> = {};
+  if (opts.authed) {
+    const value = await signCookie({ phone: USER_PHONE, instanceName: INSTANCE });
+    cookies[AUTH_COOKIE_NAME] = value;
+  }
+  const req: any = mockRequest({}, {});
+  req.cookies = { get: (name: string) => cookies[name] ? { value: cookies[name] } : undefined };
+  return GET(req);
+}
+
+describe('GET /api/contacts', () => {
+  test('401 without cookie', async () => {
+    const res = await callGet({ authed: false });
+    expect(res.status).toBe(401);
+  });
+
+  test('returns filtered + sorted contacts', async () => {
+    findContactsMock.mockResolvedValue([
+      { remoteJid: '393339998877@s.whatsapp.net', pushName: 'Anna', name: 'Anna Rossi' },
+      { remoteJid: '1234@g.us', pushName: 'Family Group', name: null },
+      { remoteJid: 'broadcast@broadcast', pushName: null, name: null },
+      { remoteJid: `${USER_PHONE}@s.whatsapp.net`, pushName: 'Me', name: 'Me' },
+      { remoteJid: '393331112233@s.whatsapp.net', pushName: 'Marco', name: null },
+      { remoteJid: 'invalid@s.whatsapp.net', pushName: 'NoNum', name: null },
+    ]);
+
+    const res = await callGet();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.contacts).toEqual([
+      { number: '393339998877', name: 'Anna Rossi', pushName: 'Anna' },
+      { number: '393331112233', name: 'Marco', pushName: 'Marco' },
+    ]);
+  });
+
+  test('502 when Evolution throws', async () => {
+    findContactsMock.mockRejectedValue(new Error('Evolution API error: 500 - down'));
+    const res = await callGet();
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.error).toBe('evolution_unavailable');
+  });
+});
