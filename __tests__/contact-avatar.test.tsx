@@ -17,14 +17,14 @@ describe('ContactAvatar', () => {
     expect(screen.getByText('A')).toBeInTheDocument();
   });
 
-  test('falls back to last 2 digits of number when name missing', () => {
+  test('falls back to last 3 digits of number when name missing', () => {
     render(<ContactAvatar number="393339998877" />);
-    expect(screen.getByText('77')).toBeInTheDocument();
+    expect(screen.getByText('877')).toBeInTheDocument();
   });
 
-  test('falls back to last 2 digits when name is empty string', () => {
+  test('falls back to last 3 digits when name is empty string', () => {
     render(<ContactAvatar name="" number="393331234567" />);
-    expect(screen.getByText('67')).toBeInTheDocument();
+    expect(screen.getByText('567')).toBeInTheDocument();
   });
 
   test('assigns deterministic color from number hash', () => {

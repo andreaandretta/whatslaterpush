@@ -32,7 +32,7 @@ function computeInitials(name: string | undefined, number: string): string {
     return words[0][0].toUpperCase();
   }
   const digits = number.replace(/\D/g, '');
-  return digits.slice(-2);
+  return digits.slice(-3);
 }
 
 function hashNumber(number: string): number {
