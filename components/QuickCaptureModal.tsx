@@ -5,27 +5,12 @@ import { X, Plus } from 'lucide-react';
 import { Button } from './Button';
 import { Input } from './Input';
 import { formatDatePhrase } from '../app/lib/quick-capture-utils';
+import { validatePhone } from '../app/lib/phone';
 
 interface QuickCaptureModalProps {
   open: boolean;
   onClose: () => void;
   userPhone: string;  // Marco's own phone (from /api/auth/me)
-}
-
-function normalizeClientPhone(raw: string): string | null {
-  if (!raw) return null;
-  let cleaned = raw.replace(/[\s\-().]/g, '');
-  if (cleaned.startsWith('+')) {
-    const digits = cleaned.slice(1);
-    if (!/^\d{7,}$/.test(digits)) return null;
-    return digits;
-  }
-  if (!/^\d{7,}$/.test(cleaned)) return null;
-  // Italian default: if starts with 3 (mobile), prepend 39
-  if (cleaned.startsWith('3') && !cleaned.startsWith('39')) {
-    cleaned = '39' + cleaned;
-  }
-  return cleaned;
 }
 
 function toDatetimeLocal(d: Date): string {
@@ -65,7 +50,7 @@ export default function QuickCaptureModal({ open, onClose, userPhone }: QuickCap
     e.preventDefault();
     setError(null);
 
-    const cleanPhone = normalizeClientPhone(phone);
+    const cleanPhone = validatePhone(phone);
     if (!cleanPhone) {
       setError('Numero non valido (es: 393331234567 o +447700900123)');
       return;
