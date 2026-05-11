@@ -9,6 +9,7 @@ import { Button } from '@/components/Button';
 import QuickCaptureModal from '@/components/QuickCaptureModal';
 import ContactPickerModal from '@/components/ContactPickerModal';
 import ScheduleModal from '@/components/ScheduleModal';
+import { ContactAvatar } from '@/components/ContactAvatar';
 import PricingSection from '../components/PricingSection';
 import FAQSection from '../components/FAQSection';
 import Footer from '../components/Footer';
@@ -163,38 +164,39 @@ export default function DashboardPage() {
     cancelled:         { color: '#9CA3AF', label: 'Annullato' },
   };
 
-  function formatCountdown(scheduledAt: string): { text: string; urgent: boolean } {
+  function formatScheduled(scheduledAt: string): { date: string; time: string; urgent: boolean } {
     const target = new Date(scheduledAt);
     const now = new Date();
     const diffMs = target.getTime() - now.getTime();
     const diffMin = Math.round(diffMs / 60000);
-    const diffHours = Math.round(diffMs / 3600000);
-
-    if (diffMs < 0) return { text: 'scaduto', urgent: false };
-
-    if (diffMin < 60) {
-      return { text: `tra ${diffMin} minuti`, urgent: diffMin < 10 };
-    }
 
     const hh = target.getHours().toString().padStart(2, '0');
     const mm = target.getMinutes().toString().padStart(2, '0');
     const time = `${hh}:${mm}`;
 
-    if (diffHours < 24) {
-      return { text: `oggi alle ${time}`, urgent: false };
-    }
-    if (diffHours < 48) {
-      return { text: `domani alle ${time}`, urgent: false };
+    if (diffMs < 0) return { date: 'scaduto', time, urgent: false };
+
+    if (diffMin < 60) {
+      return { date: `tra ${diffMin}min`, time, urgent: diffMin < 10 };
     }
 
-    const days = ['domenica','lunedi','martedi','mercoledi','giovedi','venerdi','sabato'];
-    if (diffHours < 168) {
-      return { text: `${days[target.getDay()]} alle ${time}`, urgent: false };
+    const sameDay = target.toDateString() === now.toDateString();
+    if (sameDay) return { date: 'oggi', time, urgent: false };
+
+    const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+    if (target.toDateString() === tomorrow.toDateString()) return { date: 'domani', time, urgent: false };
+
+    const targetMidnight = new Date(target); targetMidnight.setHours(0, 0, 0, 0);
+    const nowMidnight = new Date(now); nowMidnight.setHours(0, 0, 0, 0);
+    const diffDays = Math.floor((targetMidnight.getTime() - nowMidnight.getTime()) / 86400000);
+    if (diffDays < 7) {
+      const days = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+      return { date: days[target.getDay()], time, urgent: false };
     }
 
     const dd = target.getDate().toString().padStart(2, '0');
     const mo = (target.getMonth() + 1).toString().padStart(2, '0');
-    return { text: `${dd}/${mo} alle ${time}`, urgent: false };
+    return { date: `${dd}/${mo}`, time, urgent: false };
   }
 
   const showPricing = subscription.plan === 'trial' || subscription.plan === 'free' || subscription.expired;
@@ -246,7 +248,7 @@ export default function DashboardPage() {
             messagesLoading={messagesLoading}
             subscription={subscription}
             onDelete={handleDelete}
-            formatCountdown={formatCountdown}
+            formatScheduled={formatScheduled}
             statusConfig={statusConfig}
           />
         )}
@@ -378,18 +380,18 @@ function DashboardNavbar({ userPhone, onLogout }: {
 }
 
 // --- Messages Section ---
-function MessagesSection({ messages, messagesLoading, subscription, onDelete, formatCountdown, statusConfig }: {
+function MessagesSection({ messages, messagesLoading, subscription, onDelete, formatScheduled, statusConfig }: {
   messages: ScheduledMessage[];
   messagesLoading: boolean;
   subscription: SubscriptionState;
   onDelete: (id: string) => void;
-  formatCountdown: (d: string) => { text: string; urgent: boolean };
+  formatScheduled: (d: string) => { date: string; time: string; urgent: boolean };
   statusConfig: Record<string, { color: string; label: string }>;
 }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold text-text-primary">Promemoria</h2>
+        <h2 className="text-xl font-bold text-text-primary">Messaggi programmati</h2>
         <span className="text-sm text-text-secondary bg-white px-3 py-1 rounded-full border border-gray-100">
           {messages.length} messagg{messages.length !== 1 ? 'i' : 'io'}
         </span>
@@ -407,37 +409,46 @@ function MessagesSection({ messages, messagesLoading, subscription, onDelete, fo
         </div>
       ) : messages.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center">
-          <p className="text-gray-500">Nessun promemoria programmato. Apri WhatsApp e invia il primo!</p>
+          <p className="text-gray-500">Nessun messaggio programmato. Inizia con &quot;Nuovo contatto&quot;.</p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {messages.map((msg) => {
-            const countdown = formatCountdown(msg.scheduled_at);
+            const sched = formatScheduled(msg.scheduled_at);
             const status = statusConfig[msg.status] || { color: '#9CA3AF', label: msg.status };
+            const cancellable = msg.status === 'pending' || msg.status.startsWith('awaiting_');
             return (
-              <div key={msg.id} className="flex items-center justify-between p-4 rounded-xl bg-white border border-gray-100 shadow-sm">
+              <div key={msg.id} className="flex items-center gap-3 p-3 rounded-xl bg-white border border-gray-100 shadow-sm">
+                <ContactAvatar name={msg.recipient_name} number={msg.recipient_number || ''} />
                 <div className="flex-1 min-w-0">
-                  <div className="text-base font-bold text-text-primary truncate">{msg.recipient_name || msg.recipient_number || '?'}</div>
-                  <div className="text-sm text-gray-500 truncate">{(msg.parsed_message || '').substring(0, 50)}</div>
-                  <div className={`text-sm mt-1 ${countdown.urgent ? 'text-red-400' : 'text-primary'}`}>
-                    {countdown.text}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-bold text-text-primary truncate">
+                      {msg.recipient_name || `+${msg.recipient_number || '?'}`}
+                    </div>
+                    <div className={`text-xs shrink-0 ${sched.urgent ? 'text-red-500' : 'text-text-secondary'}`}>
+                      {sched.date}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm text-text-secondary truncate">
+                      {(msg.parsed_message || '').substring(0, 60)}
+                    </div>
+                    <div className="text-xs text-text-secondary flex items-center gap-1.5 shrink-0">
+                      <span>{sched.time}</span>
+                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: status.color }} />
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 ml-3">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: status.color }} />
-                    <span className="text-xs text-gray-400">{status.label}</span>
-                  </div>
-                  {(msg.status === 'pending' || msg.status.startsWith('awaiting_')) && (
-                    <button
-                      onClick={() => { if (confirm('Vuoi annullare questo invio?')) onDelete(msg.id) }}
-                      className="p-2 text-gray-400 hover:text-red-400 transition-colors"
-                      title="Annulla invio"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
+                {cancellable && (
+                  <button
+                    onClick={() => { if (confirm('Vuoi annullare questo invio?')) onDelete(msg.id) }}
+                    className="p-2 text-gray-400 hover:text-red-400 transition-colors"
+                    title="Annulla invio"
+                    aria-label="Annulla invio"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             );
           })}
