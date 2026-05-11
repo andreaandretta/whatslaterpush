@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getPlanLimits } from '../../lib/plans';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
+import { validatePhone } from '../../lib/phone';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,4 +77,103 @@ export async function DELETE(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ success: true });
+}
+
+export async function POST(req: NextRequest) {
+  const phone = await getAuthedPhone(req);
+  if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const body = await req.json().catch(() => ({}));
+  const { recipient_number: rawNumber, recipient_name, message, scheduled_at } = body || {};
+
+  if (typeof rawNumber !== 'string' || rawNumber.includes('@g.us') || rawNumber.includes('@broadcast')) {
+    return NextResponse.json({ error: 'invalid_phone' }, { status: 400 });
+  }
+
+  const normalized = validatePhone(rawNumber);
+  if (!normalized) return NextResponse.json({ error: 'invalid_phone' }, { status: 400 });
+
+  if (normalized === phone) {
+    return NextResponse.json({ error: 'self_target' }, { status: 400 });
+  }
+
+  if (typeof message !== 'string' || message.trim().length === 0 || message.length > 3500) {
+    return NextResponse.json({ error: 'invalid_message' }, { status: 400 });
+  }
+
+  if (typeof scheduled_at !== 'string') {
+    return NextResponse.json({ error: 'invalid_datetime' }, { status: 400 });
+  }
+  const scheduledDate = new Date(scheduled_at);
+  if (isNaN(scheduledDate.getTime()) || scheduledDate.getTime() < Date.now() + 60_000) {
+    return NextResponse.json({ error: 'invalid_datetime' }, { status: 400 });
+  }
+
+  const supabase = getSupabase();
+  const { data: user } = await supabase
+    .from('user_instances')
+    .select('id, subscription_plan')
+    .eq('phone_number', phone)
+    .single();
+
+  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+
+  const plan = user.subscription_plan || 'free';
+  const limits = getPlanLimits(plan);
+
+  const { data: pendingContacts } = await supabase
+    .from('pending_contacts')
+    .select('recipient_number')
+    .eq('owner_phone', phone);
+
+  const { data: scheduledContacts } = await supabase
+    .from('scheduled_messages')
+    .select('recipient_number')
+    .eq('instance_phone', phone)
+    .neq('status', 'cancelled');
+
+  const knownSet = new Set<string>();
+  for (const row of pendingContacts || []) if (row.recipient_number) knownSet.add(row.recipient_number);
+  for (const row of scheduledContacts || []) if (row.recipient_number) knownSet.add(row.recipient_number);
+
+  if (!knownSet.has(normalized) && knownSet.size >= limits.maxContacts) {
+    return NextResponse.json({
+      error: 'plan_contacts_limit_exceeded',
+      plan,
+      limit: limits.maxContacts,
+    }, { status: 403 });
+  }
+
+  const cleanMessage = message.trim();
+  const cleanName = typeof recipient_name === 'string' && recipient_name.trim().length > 0
+    ? recipient_name.trim().slice(0, 100)
+    : null;
+
+  const { data: inserted, error: insErr } = await supabase
+    .from('scheduled_messages')
+    .insert({
+      user_instance_id: user.id,
+      instance_phone: phone,
+      recipient_number: normalized,
+      recipient_name: cleanName,
+      caption: cleanMessage,
+      parsed_message: cleanMessage,
+      scheduled_at: scheduledDate.toISOString(),
+      status: 'pending',
+      retry_count: 0,
+      max_retries: 3,
+      wa_message_id: null,
+    })
+    .select('id, scheduled_at')
+    .single();
+
+  if (insErr) {
+    return NextResponse.json({ error: insErr.message }, { status: 500 });
+  }
+
+  return NextResponse.json({
+    id: inserted.id,
+    scheduled_at: inserted.scheduled_at,
+    status: 'pending',
+  });
 }
