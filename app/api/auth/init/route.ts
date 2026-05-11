@@ -120,6 +120,9 @@ export async function POST(req: NextRequest) {
         number: cleanPhone,
         qrcode: true,
         integration: 'WHATSAPP-BAILEYS',
+        syncFullHistory: true,
+        alwaysOnline: true,
+        groupsIgnore: false,
         webhook: {
           enabled: true,
           url: `${appUrl}/api/webhook`,
