@@ -42,9 +42,7 @@ export async function GET(req: NextRequest) {
     evolutionClient.findChats(user.instance_name),
   ]);
   if (contactsRes.status === 'fulfilled') rawFromContacts = contactsRes.value || [];
-  else console.log('CONTACTS-DEBUG findContacts_error=' + (contactsRes.reason?.message || 'unknown'));
   if (chatsRes.status === 'fulfilled') rawFromChats = chatsRes.value || [];
-  else console.log('CONTACTS-DEBUG findChats_error=' + (chatsRes.reason?.message || 'unknown'));
 
   if (contactsRes.status === 'rejected' && chatsRes.status === 'rejected') {
     const msg = (contactsRes.reason?.message || chatsRes.reason?.message || '') as string;
@@ -54,40 +52,25 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'evolution_unavailable' }, { status: 502 });
   }
 
-  console.log('CONTACTS-DEBUG findContacts_count=' + rawFromContacts.length
-    + ' findChats_count=' + rawFromChats.length + ' phone=' + phone);
-
-  // Use chats as primary source (richer for Baileys-synced instances). If
-  // empty, fall back to findContacts so we don't break instances where chats
-  // is empty but contacts is populated.
+  // Prefer findChats (richer for Baileys-synced instances), fall back to
+  // findContacts when chats is empty.
   const rawContacts: any[] = rawFromChats.length > 0 ? rawFromChats : rawFromContacts;
-
-  const dropped = { noJid: 0, groups: 0, broadcasts: 0, invalidPhone: 0, self: 0 };
-  const phoneLengthHist: Record<string, number> = {};
   const out: OutContact[] = [];
 
   for (const c of rawContacts || []) {
     const jid: string = c?.remoteJid || '';
-    if (!jid) { dropped.noJid++; continue; }
-    if (jid.includes('@g.us')) { dropped.groups++; continue; }
-    if (jid.includes('@broadcast')) { dropped.broadcasts++; continue; }
+    if (!jid || jid.includes('@g.us') || jid.includes('@broadcast')) continue;
 
     const numericPart = jid.split('@')[0];
-    const cleanLen = numericPart.replace(/\D/g, '').length;
-    phoneLengthHist[String(cleanLen)] = (phoneLengthHist[String(cleanLen)] || 0) + 1;
-
     const normalized = validatePhone(numericPart);
-    if (!normalized) { dropped.invalidPhone++; continue; }
-    if (normalized === phone) { dropped.self++; continue; }
+    if (!normalized) continue;
+    if (normalized === phone) continue;
 
     const displayName = (c.name && c.name.trim()) || (c.pushName && c.pushName.trim()) || `+${normalized}`;
     const entry: OutContact = { number: normalized, name: displayName };
     if (c.pushName) entry.pushName = c.pushName;
     out.push(entry);
   }
-
-  console.log('CONTACTS-DEBUG dropped=' + JSON.stringify(dropped) + ' out_count=' + out.length);
-  console.log('CONTACTS-DEBUG phone_length_hist=' + JSON.stringify(phoneLengthHist));
 
   out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
 
