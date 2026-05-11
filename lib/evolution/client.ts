@@ -199,6 +199,22 @@ class EvolutionClient {
       method: 'GET',
     })
   }
+
+  /**
+   * Fetch all contacts known to this WhatsApp instance.
+   * Returns Evolution's raw contact objects (caller is responsible for filtering/mapping).
+   */
+  async findContacts(instanceName: string): Promise<Array<{
+    remoteJid?: string
+    pushName?: string | null
+    name?: string | null
+    profilePicUrl?: string | null
+  }>> {
+    return this.request(`/chat/findContacts/${instanceName}`, {
+      method: 'POST',
+      body: JSON.stringify({ where: {} }),
+    })
+  }
 }
 
 // Export singleton instance
