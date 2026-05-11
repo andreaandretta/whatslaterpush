@@ -2,11 +2,13 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  Calendar, CheckCircle2, Loader2, Smartphone, LogOut, Trash2, Plus
+  Calendar, CheckCircle2, Loader2, Smartphone, LogOut, Trash2, Plus, UserPlus
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { Button } from '@/components/Button';
 import QuickCaptureModal from '@/components/QuickCaptureModal';
+import ContactPickerModal from '@/components/ContactPickerModal';
+import ScheduleModal from '@/components/ScheduleModal';
 import PricingSection from '../components/PricingSection';
 import FAQSection from '../components/FAQSection';
 import Footer from '../components/Footer';
@@ -43,6 +45,9 @@ export default function DashboardPage() {
   const [sessionValidated, setSessionValidated] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+  const [contactPickerOpen, setContactPickerOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [selectedContact, setSelectedContact] = useState<{ number: string; name?: string } | null>(null);
 
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -212,10 +217,17 @@ export default function DashboardPage() {
         <ConnectedCard userPhone={userPhone} />
 
 
-        {/* Quick Capture Button */}
-        <div className="mb-4">
+        {/* Action buttons */}
+        <div className="mb-4 flex flex-wrap gap-2">
           <Button
             variant="primary"
+            onClick={() => setContactPickerOpen(true)}
+            className="w-full sm:w-auto"
+          >
+            <UserPlus className="w-5 h-5 mr-2" /> Nuovo contatto
+          </Button>
+          <Button
+            variant="outline"
             onClick={() => setQuickCaptureOpen(true)}
             className="w-full sm:w-auto"
           >
@@ -277,6 +289,24 @@ export default function DashboardPage() {
           open={quickCaptureOpen}
           onClose={() => setQuickCaptureOpen(false)}
           userPhone={userPhone}
+        />
+
+        <ContactPickerModal
+          open={contactPickerOpen}
+          onClose={() => setContactPickerOpen(false)}
+          onSelect={(contact) => {
+            setSelectedContact(contact);
+            setContactPickerOpen(false);
+            setScheduleOpen(true);
+          }}
+        />
+
+        <ScheduleModal
+          open={scheduleOpen}
+          onClose={() => { setScheduleOpen(false); setSelectedContact(null); }}
+          onBack={() => { setScheduleOpen(false); setContactPickerOpen(true); }}
+          contact={selectedContact}
+          onScheduled={fetchMessages}
         />
       </main>
 
