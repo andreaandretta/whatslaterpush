@@ -215,6 +215,25 @@ class EvolutionClient {
       body: JSON.stringify({ where: {} }),
     })
   }
+
+  /**
+   * Fetch all chats known to this WhatsApp instance. Used as a fallback source
+   * of "people the user has talked to" when findContacts returns very few rows
+   * (Baileys only populates the Contact table from incoming events, not from
+   * the phone's address book).
+   */
+  async findChats(instanceName: string): Promise<Array<{
+    remoteJid?: string
+    pushName?: string | null
+    name?: string | null
+    labelName?: string | null
+    profilePicUrl?: string | null
+  }>> {
+    return this.request(`/chat/findChats/${instanceName}`, {
+      method: 'POST',
+      body: JSON.stringify({ where: {} }),
+    })
+  }
 }
 
 // Export singleton instance

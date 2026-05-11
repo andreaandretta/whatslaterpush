@@ -35,18 +35,32 @@ export async function GET(req: NextRequest) {
 
   if (!user?.instance_name) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
-  let rawContacts: any[];
-  try {
-    rawContacts = await evolutionClient.findContacts(user.instance_name);
-  } catch (e: any) {
-    const msg = e?.message || '';
+  let rawFromContacts: any[] = [];
+  let rawFromChats: any[] = [];
+  const [contactsRes, chatsRes] = await Promise.allSettled([
+    evolutionClient.findContacts(user.instance_name),
+    evolutionClient.findChats(user.instance_name),
+  ]);
+  if (contactsRes.status === 'fulfilled') rawFromContacts = contactsRes.value || [];
+  else console.log('CONTACTS-DEBUG findContacts_error=' + (contactsRes.reason?.message || 'unknown'));
+  if (chatsRes.status === 'fulfilled') rawFromChats = chatsRes.value || [];
+  else console.log('CONTACTS-DEBUG findChats_error=' + (chatsRes.reason?.message || 'unknown'));
+
+  if (contactsRes.status === 'rejected' && chatsRes.status === 'rejected') {
+    const msg = (contactsRes.reason?.message || chatsRes.reason?.message || '') as string;
     if (msg.includes('timeout') || msg.includes('aborted')) {
       return NextResponse.json({ error: 'evolution_timeout' }, { status: 504 });
     }
     return NextResponse.json({ error: 'evolution_unavailable' }, { status: 502 });
   }
 
-  console.log('CONTACTS-DEBUG raw_count=' + (rawContacts?.length ?? 0) + ' phone=' + phone);
+  console.log('CONTACTS-DEBUG findContacts_count=' + rawFromContacts.length
+    + ' findChats_count=' + rawFromChats.length + ' phone=' + phone);
+
+  // Use chats as primary source (richer for Baileys-synced instances). If
+  // empty, fall back to findContacts so we don't break instances where chats
+  // is empty but contacts is populated.
+  const rawContacts: any[] = rawFromChats.length > 0 ? rawFromChats : rawFromContacts;
 
   const dropped = { noJid: 0, groups: 0, broadcasts: 0, invalidPhone: 0, self: 0 };
   const phoneLengthHist: Record<string, number> = {};

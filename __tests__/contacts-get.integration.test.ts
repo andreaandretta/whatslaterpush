@@ -11,8 +11,9 @@ jest.mock('@supabase/supabase-js', () => ({
 }));
 
 const findContactsMock = jest.fn();
+const findChatsMock = jest.fn();
 jest.mock('../lib/evolution/client', () => ({
-  evolutionClient: { findContacts: findContactsMock },
+  evolutionClient: { findContacts: findContactsMock, findChats: findChatsMock },
 }));
 
 const ORIGINAL_ENV = process.env;
@@ -22,6 +23,10 @@ const INSTANCE = 'SchedWhats-' + USER_PHONE;
 beforeEach(() => {
   mockSupa.calls.length = 0;
   findContactsMock.mockReset();
+  findChatsMock.mockReset();
+  // Default: both empty → tests must override what they need
+  findContactsMock.mockResolvedValue([]);
+  findChatsMock.mockResolvedValue([]);
   process.env = {
     ...ORIGINAL_ENV,
     SUPABASE_URL: 'https://test.supabase.co',
@@ -38,7 +43,7 @@ afterEach(() => { process.env = ORIGINAL_ENV; });
 async function callGet(opts: { authed?: boolean } = { authed: true }) {
   jest.resetModules();
   jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
-  jest.mock('../lib/evolution/client', () => ({ evolutionClient: { findContacts: findContactsMock } }));
+  jest.mock('../lib/evolution/client', () => ({ evolutionClient: { findContacts: findContactsMock, findChats: findChatsMock } }));
   const { GET } = await import('../app/api/contacts/route');
 
   const cookies: Record<string, string> = {};
@@ -76,11 +81,29 @@ describe('GET /api/contacts', () => {
     ]);
   });
 
-  test('502 when Evolution throws', async () => {
+  test('502 when both Evolution endpoints throw', async () => {
     findContactsMock.mockRejectedValue(new Error('Evolution API error: 500 - down'));
+    findChatsMock.mockRejectedValue(new Error('Evolution API error: 500 - down'));
     const res = await callGet();
     expect(res.status).toBe(502);
     const body = await res.json();
     expect(body.error).toBe('evolution_unavailable');
+  });
+
+  test('prefers findChats when it returns data', async () => {
+    findContactsMock.mockResolvedValue([
+      { remoteJid: '393339998877@s.whatsapp.net', pushName: 'Anna', name: 'Anna Rossi' },
+    ]);
+    findChatsMock.mockResolvedValue([
+      { remoteJid: '393331112233@s.whatsapp.net', pushName: 'Marco', name: 'Marco Bianchi' },
+      { remoteJid: '393335554444@s.whatsapp.net', pushName: 'Luca', name: 'Luca Verdi' },
+    ]);
+    const res = await callGet();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.contacts).toEqual([
+      { number: '393335554444', name: 'Luca Verdi', pushName: 'Luca' },
+      { number: '393331112233', name: 'Marco Bianchi', pushName: 'Marco' },
+    ]);
   });
 });
