@@ -13,11 +13,13 @@ jest.mock('@supabase/supabase-js', () => ({
 const findContactsMock = jest.fn();
 const findChatsMock = jest.fn();
 const fetchAllGroupsMock = jest.fn();
+const whatsappNumbersMock = jest.fn();
 jest.mock('../lib/evolution/client', () => ({
   evolutionClient: {
     findContacts: findContactsMock,
     findChats: findChatsMock,
     fetchAllGroups: fetchAllGroupsMock,
+    whatsappNumbers: whatsappNumbersMock,
   },
 }));
 
@@ -30,10 +32,12 @@ beforeEach(() => {
   findContactsMock.mockReset();
   findChatsMock.mockReset();
   fetchAllGroupsMock.mockReset();
+  whatsappNumbersMock.mockReset();
   // Default: all empty → tests must override what they need
   findContactsMock.mockResolvedValue([]);
   findChatsMock.mockResolvedValue([]);
   fetchAllGroupsMock.mockResolvedValue([]);
+  whatsappNumbersMock.mockResolvedValue([]);
   process.env = {
     ...ORIGINAL_ENV,
     SUPABASE_URL: 'https://test.supabase.co',
@@ -50,7 +54,7 @@ afterEach(() => { process.env = ORIGINAL_ENV; });
 async function callGet(opts: { authed?: boolean } = { authed: true }) {
   jest.resetModules();
   jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
-  jest.mock('../lib/evolution/client', () => ({ evolutionClient: { findContacts: findContactsMock, findChats: findChatsMock, fetchAllGroups: fetchAllGroupsMock } }));
+  jest.mock('../lib/evolution/client', () => ({ evolutionClient: { findContacts: findContactsMock, findChats: findChatsMock, fetchAllGroups: fetchAllGroupsMock, whatsappNumbers: whatsappNumbersMock } }));
   const { GET } = await import('../app/api/contacts/route');
 
   const cookies: Record<string, string> = {};
@@ -134,6 +138,70 @@ describe('GET /api/contacts', () => {
       { number: '393339998877', name: '+393339998877' },
       { number: '393331112233', name: 'Marco Bianchi', pushName: 'Marco' },
     ]);
+  });
+
+  test('enriches group-only contacts with pushName via whatsappNumbers', async () => {
+    findChatsMock.mockResolvedValue([
+      // Already has a real name — must NOT be looked up
+      { remoteJid: '393331112233@s.whatsapp.net', pushName: 'Marco', name: 'Marco Bianchi' },
+    ]);
+    fetchAllGroupsMock.mockResolvedValue([
+      {
+        id: '123@g.us',
+        participants: [
+          { id: '393335554444@s.whatsapp.net' },
+          { id: '393339998877@s.whatsapp.net' },
+          { id: '393336667788@s.whatsapp.net' },
+        ],
+      },
+    ]);
+    whatsappNumbersMock.mockResolvedValue([
+      // Server gives a pushName → use it as display name AND keep pushName field
+      { jid: '393335554444@s.whatsapp.net', number: '393335554444', exists: true, pushName: 'Luca' },
+      // Server gives a name → use it as display name (no pushName field set)
+      { jid: '393339998877@s.whatsapp.net', number: '393339998877', exists: true, name: 'Anna Rossi' },
+      // Server returns nothing useful → fall back stays in place
+      { jid: '393336667788@s.whatsapp.net', number: '393336667788', exists: true },
+    ]);
+
+    const res = await callGet();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    // Marco was already named → not in the batch
+    expect(whatsappNumbersMock).toHaveBeenCalledTimes(1);
+    const [instanceArg, numbersArg] = whatsappNumbersMock.mock.calls[0];
+    expect(instanceArg).toBe(INSTANCE);
+    expect(numbersArg.sort()).toEqual(['393335554444', '393336667788', '393339998877']);
+
+    expect(body.contacts).toEqual([
+      { number: '393336667788', name: '+393336667788' },
+      { number: '393339998877', name: 'Anna Rossi' },
+      { number: '393335554444', name: 'Luca', pushName: 'Luca' },
+      { number: '393331112233', name: 'Marco Bianchi', pushName: 'Marco' },
+    ]);
+  });
+
+  test('continues serving contacts when whatsappNumbers fails', async () => {
+    fetchAllGroupsMock.mockResolvedValue([
+      { id: '123@g.us', participants: [{ id: '393335554444@s.whatsapp.net' }] },
+    ]);
+    whatsappNumbersMock.mockRejectedValue(new Error('Evolution API error: 500 - down'));
+    const res = await callGet();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.contacts).toEqual([
+      { number: '393335554444', name: '+393335554444' },
+    ]);
+  });
+
+  test('skips whatsappNumbers entirely when every contact already has a name', async () => {
+    findChatsMock.mockResolvedValue([
+      { remoteJid: '393331112233@s.whatsapp.net', pushName: 'Marco', name: 'Marco Bianchi' },
+    ]);
+    const res = await callGet();
+    expect(res.status).toBe(200);
+    expect(whatsappNumbersMock).not.toHaveBeenCalled();
   });
 
   test('continues serving contacts when fetchAllGroups fails', async () => {

@@ -236,6 +236,31 @@ class EvolutionClient {
   }
 
   /**
+   * Batch-check which numbers are on WhatsApp and pull back whatever
+   * name/pushName the server has cached for them. Used to enrich contacts
+   * we discovered only through group membership (those have no name).
+   */
+  async whatsappNumbers(
+    instanceName: string,
+    numbers: string[]
+  ): Promise<Array<{
+    exists?: boolean
+    jid?: string
+    number?: string
+    name?: string | null
+    pushName?: string | null
+    verifiedName?: string | null
+  }>> {
+    return this.request(`/chat/whatsappNumbers/${instanceName}`, {
+      method: 'POST',
+      body: JSON.stringify({ numbers }),
+      // Evolution can be slow on large batches — bound it so /api/contacts
+      // never hangs longer than ~10s on this enrichment step.
+      signal: AbortSignal.timeout(10000),
+    })
+  }
+
+  /**
    * Fetch all groups the instance participates in. When `getParticipants` is
    * true the response includes a `participants` array per group, which is a
    * useful supplementary source of personal contacts (Baileys' Contact table

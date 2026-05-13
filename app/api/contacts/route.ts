@@ -95,6 +95,46 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Enrich the group-only contacts (those whose display name is still the
+  // "+number" fallback) with the pushName/name that WhatsApp has cached for
+  // them. Doing it one-by-one via /chat/fetchProfile would be hundreds of
+  // calls; /chat/whatsappNumbers accepts a batch and returns name fields
+  // when the server has them.
+  const unnamed: string[] = [];
+  for (const [num, entry] of byNumber) {
+    if (entry.name === `+${num}`) unnamed.push(num);
+  }
+
+  if (unnamed.length > 0) {
+    const BATCH_SIZE = 100;
+    const batches: string[][] = [];
+    for (let i = 0; i < unnamed.length; i += BATCH_SIZE) {
+      batches.push(unnamed.slice(i, i + BATCH_SIZE));
+    }
+
+    const results = await Promise.allSettled(
+      batches.map((b) => evolutionClient.whatsappNumbers(user.instance_name, b))
+    );
+
+    for (const r of results) {
+      if (r.status !== 'fulfilled') continue;
+      for (const item of r.value || []) {
+        const jidPart = (item.jid || '').split('@')[0].split(':')[0];
+        const numericPart = jidPart || (item.number || '').replace(/\D/g, '');
+        const normalized = validatePhone(numericPart);
+        if (!normalized) continue;
+        const entry = byNumber.get(normalized);
+        if (!entry) continue;
+        const name = (item.name && item.name.trim())
+          || (item.pushName && item.pushName.trim())
+          || (item.verifiedName && item.verifiedName.trim());
+        if (!name) continue;
+        entry.name = name;
+        if (item.pushName) entry.pushName = item.pushName;
+      }
+    }
+  }
+
   const out: OutContact[] = Array.from(byNumber.values());
   out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
 
