@@ -234,6 +234,26 @@ class EvolutionClient {
       body: JSON.stringify({ where: {} }),
     })
   }
+
+  /**
+   * Fetch all groups the instance participates in. When `getParticipants` is
+   * true the response includes a `participants` array per group, which is a
+   * useful supplementary source of personal contacts (Baileys' Contact table
+   * misses people the user only knows through a shared group).
+   */
+  async fetchAllGroups(
+    instanceName: string,
+    getParticipants: boolean = false
+  ): Promise<Array<{
+    id?: string
+    subject?: string | null
+    participants?: Array<{ id?: string; admin?: string | null }>
+  }>> {
+    const qs = getParticipants ? '?getParticipants=true' : ''
+    return this.request(`/group/fetchAllGroups/${instanceName}${qs}`, {
+      method: 'GET',
+    })
+  }
 }
 
 // Export singleton instance

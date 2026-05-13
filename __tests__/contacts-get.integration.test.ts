@@ -12,8 +12,13 @@ jest.mock('@supabase/supabase-js', () => ({
 
 const findContactsMock = jest.fn();
 const findChatsMock = jest.fn();
+const fetchAllGroupsMock = jest.fn();
 jest.mock('../lib/evolution/client', () => ({
-  evolutionClient: { findContacts: findContactsMock, findChats: findChatsMock },
+  evolutionClient: {
+    findContacts: findContactsMock,
+    findChats: findChatsMock,
+    fetchAllGroups: fetchAllGroupsMock,
+  },
 }));
 
 const ORIGINAL_ENV = process.env;
@@ -24,9 +29,11 @@ beforeEach(() => {
   mockSupa.calls.length = 0;
   findContactsMock.mockReset();
   findChatsMock.mockReset();
-  // Default: both empty → tests must override what they need
+  fetchAllGroupsMock.mockReset();
+  // Default: all empty → tests must override what they need
   findContactsMock.mockResolvedValue([]);
   findChatsMock.mockResolvedValue([]);
+  fetchAllGroupsMock.mockResolvedValue([]);
   process.env = {
     ...ORIGINAL_ENV,
     SUPABASE_URL: 'https://test.supabase.co',
@@ -43,7 +50,7 @@ afterEach(() => { process.env = ORIGINAL_ENV; });
 async function callGet(opts: { authed?: boolean } = { authed: true }) {
   jest.resetModules();
   jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
-  jest.mock('../lib/evolution/client', () => ({ evolutionClient: { findContacts: findContactsMock, findChats: findChatsMock } }));
+  jest.mock('../lib/evolution/client', () => ({ evolutionClient: { findContacts: findContactsMock, findChats: findChatsMock, fetchAllGroups: fetchAllGroupsMock } }));
   const { GET } = await import('../app/api/contacts/route');
 
   const cookies: Record<string, string> = {};
@@ -88,6 +95,58 @@ describe('GET /api/contacts', () => {
     expect(res.status).toBe(502);
     const body = await res.json();
     expect(body.error).toBe('evolution_unavailable');
+  });
+
+  test('adds group participants not already in chats and strips :N device suffix', async () => {
+    findChatsMock.mockResolvedValue([
+      { remoteJid: '393331112233@s.whatsapp.net', pushName: 'Marco', name: 'Marco Bianchi' },
+    ]);
+    fetchAllGroupsMock.mockResolvedValue([
+      {
+        id: '123@g.us',
+        subject: 'Famiglia',
+        participants: [
+          // already known via chats — must not duplicate, must not overwrite name
+          { id: '393331112233@s.whatsapp.net' },
+          // new participant via device-suffixed JID — must be normalized
+          { id: '393335554444:7@s.whatsapp.net' },
+          // group JID inside participants — must be filtered
+          { id: '999@g.us' },
+          // self — must be filtered
+          { id: `${USER_PHONE}@s.whatsapp.net` },
+        ],
+      },
+      {
+        id: '456@g.us',
+        subject: 'Lavoro',
+        participants: [
+          // duplicate of one already added from previous group → dedup
+          { id: '393335554444@s.whatsapp.net' },
+          { id: '393339998877@s.whatsapp.net' },
+        ],
+      },
+    ]);
+    const res = await callGet();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.contacts).toEqual([
+      { number: '393335554444', name: '+393335554444' },
+      { number: '393339998877', name: '+393339998877' },
+      { number: '393331112233', name: 'Marco Bianchi', pushName: 'Marco' },
+    ]);
+  });
+
+  test('continues serving contacts when fetchAllGroups fails', async () => {
+    findChatsMock.mockResolvedValue([
+      { remoteJid: '393331112233@s.whatsapp.net', pushName: 'Marco', name: 'Marco Bianchi' },
+    ]);
+    fetchAllGroupsMock.mockRejectedValue(new Error('Evolution API error: 500 - down'));
+    const res = await callGet();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.contacts).toEqual([
+      { number: '393331112233', name: 'Marco Bianchi', pushName: 'Marco' },
+    ]);
   });
 
   test('prefers findChats when it returns data', async () => {

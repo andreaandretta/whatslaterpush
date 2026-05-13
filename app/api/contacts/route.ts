@@ -37,12 +37,15 @@ export async function GET(req: NextRequest) {
 
   let rawFromContacts: any[] = [];
   let rawFromChats: any[] = [];
-  const [contactsRes, chatsRes] = await Promise.allSettled([
+  let rawGroups: any[] = [];
+  const [contactsRes, chatsRes, groupsRes] = await Promise.allSettled([
     evolutionClient.findContacts(user.instance_name),
     evolutionClient.findChats(user.instance_name),
+    evolutionClient.fetchAllGroups(user.instance_name, true),
   ]);
   if (contactsRes.status === 'fulfilled') rawFromContacts = contactsRes.value || [];
   if (chatsRes.status === 'fulfilled') rawFromChats = chatsRes.value || [];
+  if (groupsRes.status === 'fulfilled') rawGroups = groupsRes.value || [];
 
   if (contactsRes.status === 'rejected' && chatsRes.status === 'rejected') {
     const msg = (contactsRes.reason?.message || chatsRes.reason?.message || '') as string;
@@ -55,23 +58,44 @@ export async function GET(req: NextRequest) {
   // Prefer findChats (richer for Baileys-synced instances), fall back to
   // findContacts when chats is empty.
   const rawContacts: any[] = rawFromChats.length > 0 ? rawFromChats : rawFromContacts;
-  const out: OutContact[] = [];
+  const byNumber = new Map<string, OutContact>();
+
+  // JIDs can include a device suffix like `393401234567:5@s.whatsapp.net` — we
+  // must strip the `:N` before normalising, otherwise the digits get folded
+  // into the phone number.
+  const jidToNumber = (jid: string): string | null => {
+    if (!jid || jid.includes('@g.us') || jid.includes('@broadcast')) return null;
+    const numericPart = (jid.split('@')[0] || '').split(':')[0];
+    const normalized = validatePhone(numericPart);
+    if (!normalized || normalized === phone) return null;
+    return normalized;
+  };
 
   for (const c of rawContacts || []) {
-    const jid: string = c?.remoteJid || '';
-    if (!jid || jid.includes('@g.us') || jid.includes('@broadcast')) continue;
-
-    const numericPart = jid.split('@')[0];
-    const normalized = validatePhone(numericPart);
+    const normalized = jidToNumber(c?.remoteJid || '');
     if (!normalized) continue;
-    if (normalized === phone) continue;
+    if (byNumber.has(normalized)) continue;
 
     const displayName = (c.name && c.name.trim()) || (c.pushName && c.pushName.trim()) || `+${normalized}`;
     const entry: OutContact = { number: normalized, name: displayName };
     if (c.pushName) entry.pushName = c.pushName;
-    out.push(entry);
+    byNumber.set(normalized, entry);
   }
 
+  // Supplement with group participants — Baileys' Contact table only sees
+  // people who have messaged the user directly, so anyone the user shares a
+  // group with but has never DM'd would otherwise be missing.
+  for (const g of rawGroups || []) {
+    const participants = Array.isArray(g?.participants) ? g.participants : [];
+    for (const p of participants) {
+      const normalized = jidToNumber(p?.id || '');
+      if (!normalized) continue;
+      if (byNumber.has(normalized)) continue;
+      byNumber.set(normalized, { number: normalized, name: `+${normalized}` });
+    }
+  }
+
+  const out: OutContact[] = Array.from(byNumber.values());
   out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
 
   return NextResponse.json({ contacts: out });
