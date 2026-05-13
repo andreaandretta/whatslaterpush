@@ -74,13 +74,17 @@ export async function GET(req: NextRequest) {
   const supabase = createClient(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
   const startTime = Date.now();
   try {
-    // Auth: accept CRON_SECRET via query param OR Vercel's automatic cron header
-    const { searchParams } = new URL(req.url);
-    const secret = searchParams.get('secret');
-    const isVercelCron = req.headers.get('x-vercel-cron') === '1';
-    const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret) return NextResponse.json({ error: 'CRON_SECRET not configured' }, { status: 500 });
-    if (!isVercelCron && secret !== cronSecret) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // Auth: accept CRON_SECRET via `Authorization: Bearer` header OR ?secret= query string
+    if (!process.env.CRON_SECRET) return NextResponse.json({ error: 'CRON_SECRET not configured' }, { status: 500 });
+
+    const url = new URL(req.url);
+    const queryToken = url.searchParams.get('secret');
+    const headerToken = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+    const provided = headerToken ?? queryToken;
+
+    if (provided !== process.env.CRON_SECRET) {
+      return new Response('Unauthorized', { status: 401 });
+    }
 
     // Clean up stale awaiting_* records older than 1 hour
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();

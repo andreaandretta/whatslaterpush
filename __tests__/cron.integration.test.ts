@@ -60,7 +60,7 @@ function makePendingMsg(overrides: any = {}) {
 }
 
 // Helper to call the GET handler
-async function callCronRoute(secret = 'test-secret') {
+async function callCronRoute(secret: string | null = 'test-secret', opts: { authHeader?: string } = {}) {
   // Clear module cache to re-evaluate with fresh mocks
   jest.resetModules();
   jest.mock('@supabase/supabase-js', () => ({
@@ -69,10 +69,18 @@ async function callCronRoute(secret = 'test-secret') {
   (global as any).fetch = fetchMock.mockFetch;
 
   const { GET } = await import('../app/api/cron/send-messages/route');
-  const url = `https://whatslaterpush.vercel.app/api/cron/send-messages?secret=${secret}`;
+  const url = secret === null
+    ? `https://whatslaterpush.vercel.app/api/cron/send-messages`
+    : `https://whatslaterpush.vercel.app/api/cron/send-messages?secret=${secret}`;
   const req = {
     url,
-    headers: { get: (name: string) => name === 'x-vercel-cron' ? null : null },
+    headers: {
+      get: (name: string) => {
+        const n = name.toLowerCase();
+        if (n === 'authorization') return opts.authHeader ?? null;
+        return null;
+      },
+    },
   } as any;
   return GET(req);
 }
@@ -80,9 +88,19 @@ async function callCronRoute(secret = 'test-secret') {
 describe('Cron integration: auth', () => {
   test('returns 401 with wrong secret', async () => {
     const res = await callCronRoute('wrong-secret');
-    const body = await res.json();
     expect(res.status).toBe(401);
-    expect(body.error).toBe('Unauthorized');
+    expect(await res.text()).toBe('Unauthorized');
+  });
+
+  test('accepts CRON_SECRET via Authorization: Bearer header', async () => {
+    mockSupa.setResponse('scheduled_messages:select', []);
+    const res = await callCronRoute(null, { authHeader: 'Bearer test-secret' });
+    expect(res.status).toBe(200);
+  });
+
+  test('rejects Authorization: Bearer with wrong token', async () => {
+    const res = await callCronRoute(null, { authHeader: 'Bearer nope' });
+    expect(res.status).toBe(401);
   });
 });
 
