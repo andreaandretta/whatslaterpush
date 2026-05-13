@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { X, Search, UserPlus, ChevronDown, ChevronUp, AlertCircle, Loader2 } from 'lucide-react';
 import { validatePhone } from '../app/lib/phone';
 import { Button } from './Button';
@@ -39,13 +39,15 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   const [manualName, setManualName] = useState('');
   const [manualNumber, setManualNumber] = useState('');
   const [manualError, setManualError] = useState<string | null>(null);
-  // Tracks which contact numbers have entered the viewport at least once.
-  // Once a row is observed, we keep its photo loading flag forever so the
-  // <img> stays mounted even if the user scrolls past — IntersectionObserver
-  // is purely an "opt-in to network request" trigger, not a mount gate.
-  const [visiblePhones, setVisiblePhones] = useState<Set<string>>(() => new Set());
-  const observerRef = useRef<IntersectionObserver | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // How many of the *currently filtered* rows should fetch their profile
+  // photo. Starts at 50 (~the first two screens worth) and grows in chunks
+  // as the user scrolls toward the bottom. A previous attempt used an
+  // IntersectionObserver but suffered from a ref/effect ordering race that
+  // left it inert in production.
+  const INITIAL_PHOTO_LIMIT = 50;
+  const PHOTO_BATCH_INCREMENT = 25;
+  const LOAD_MORE_THRESHOLD_PX = 400;
+  const [photoLimit, setPhotoLimit] = useState(INITIAL_PHOTO_LIMIT);
 
   useEffect(() => {
     if (!open) return;
@@ -55,7 +57,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     setManualName('');
     setManualNumber('');
     setManualError(null);
-    setVisiblePhones(new Set());
+    setPhotoLimit(INITIAL_PHOTO_LIMIT);
 
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), 8000);
@@ -83,49 +85,6 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     if (state.kind === 'error') setManualOpen(true);
   }, [state.kind]);
 
-  // Set up the IntersectionObserver once the list is rendered. Reuse a single
-  // observer for all rows — much cheaper than one per item.
-  useEffect(() => {
-    if (!open || state.kind !== 'list') return;
-    const root = scrollRef.current;
-    if (!root || typeof IntersectionObserver === 'undefined') return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const newlyVisible: string[] = [];
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          const phone = (entry.target as HTMLElement).dataset.phone;
-          if (phone) newlyVisible.push(phone);
-          // Once revealed, stop observing — we never need to unload a photo.
-          observer.unobserve(entry.target);
-        }
-        if (newlyVisible.length > 0) {
-          setVisiblePhones((prev) => {
-            const next = new Set(prev);
-            for (const p of newlyVisible) next.add(p);
-            return next;
-          });
-        }
-      },
-      { root, rootMargin: '100px 0px', threshold: 0.01 }
-    );
-
-    observerRef.current = observer;
-    return () => {
-      observer.disconnect();
-      observerRef.current = null;
-    };
-  }, [open, state.kind]);
-
-  // Callback ref attached to each row — registers it with the observer.
-  const registerRow = useCallback((el: HTMLButtonElement | null) => {
-    if (!el) return;
-    const observer = observerRef.current;
-    if (!observer) return;
-    observer.observe(el);
-  }, []);
-
   const filtered = useMemo(() => {
     if (state.kind !== 'list') return [];
     const q = search.trim().toLowerCase();
@@ -134,6 +93,22 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
       c.name.toLowerCase().includes(q) || c.number.includes(q)
     );
   }, [state, search]);
+
+  // Reset the photo limit whenever the rendered subset changes (search edit
+  // or the initial contact list landing). Without this, after a search the
+  // first 50 of the new filtered list would not auto-load photos.
+  useEffect(() => {
+    setPhotoLimit(INITIAL_PHOTO_LIMIT);
+  }, [search, state.kind]);
+
+  function handleScroll(e: React.UIEvent<HTMLDivElement>) {
+    const t = e.currentTarget;
+    if (t.scrollHeight - t.scrollTop - t.clientHeight > LOAD_MORE_THRESHOLD_PX) return;
+    setPhotoLimit((prev) => {
+      if (prev >= filtered.length) return prev;
+      return Math.min(prev + PHOTO_BATCH_INCREMENT, filtered.length);
+    });
+  }
 
   function handleManualSubmit() {
     setManualError(null);
@@ -186,7 +161,11 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
           </div>
         </div>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto" style={{ backgroundColor: '#111B21' }}>
+        <div
+          className="flex-1 overflow-y-auto"
+          style={{ backgroundColor: '#111B21' }}
+          onScroll={handleScroll}
+        >
           <button
             type="button"
             onClick={() => setManualOpen(!manualOpen)}
@@ -280,21 +259,19 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             </div>
           )}
 
-          {state.kind === 'list' && filtered.map((c) => {
+          {state.kind === 'list' && filtered.map((c, idx) => {
             const formattedPhone = formatPhone(c.number);
             const hasRealName = !!c.name && c.name.trim() !== '' && c.name !== `+${c.number}`;
             // When there's no real name, send name=undefined so downstream
             // (ScheduleModal, avatar) shows the formatted phone instead of
             // a confusing "+digits" string.
             const onSelectName = hasRealName ? c.name : undefined;
-            const photoSrc = visiblePhones.has(c.number)
+            const photoSrc = idx < photoLimit
               ? `/api/contacts/${c.number}/photo`
               : undefined;
             return (
               <button
                 key={c.number}
-                ref={registerRow}
-                data-phone={c.number}
                 type="button"
                 onClick={() => onSelect({ number: c.number, name: onSelectName })}
                 className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-[#1F2C34]"
