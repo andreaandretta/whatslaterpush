@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 interface ContactAvatarProps {
   name?: string;
   number: string;
   size?: 'sm' | 'md' | 'lg';
   className?: string;
+  photoSrc?: string;
 }
 
 const PALETTE = [
@@ -41,17 +42,39 @@ function hashNumber(number: string): number {
   return h;
 }
 
-export function ContactAvatar({ name, number, size = 'md', className = '' }: ContactAvatarProps) {
+export function ContactAvatar({ name, number, size = 'md', className = '', photoSrc }: ContactAvatarProps) {
   const initials = computeInitials(name, number);
   const color = PALETTE[hashNumber(number) % PALETTE.length];
   const sizeClass = SIZES[size];
 
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  // Reset state when src changes so a previous failure doesn't stick when the
+  // parent eventually decides to load the photo for this contact.
+  useEffect(() => {
+    setLoaded(false);
+    setFailed(false);
+  }, [photoSrc]);
+
+  const showImage = !!photoSrc && !failed;
+
   return (
     <div
-      className={`${color} ${sizeClass} rounded-full flex items-center justify-center text-white font-semibold shrink-0 ${className}`}
+      className={`${color} ${sizeClass} rounded-full flex items-center justify-center text-white font-semibold shrink-0 relative overflow-hidden ${className}`}
       aria-hidden="true"
     >
-      {initials}
+      <span className={loaded && showImage ? 'opacity-0' : 'opacity-100'}>{initials}</span>
+      {showImage && (
+        <img
+          src={photoSrc}
+          alt=""
+          loading="lazy"
+          onLoad={() => setLoaded(true)}
+          onError={() => setFailed(true)}
+          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+        />
+      )}
     </div>
   );
 }

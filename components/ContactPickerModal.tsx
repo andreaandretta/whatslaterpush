@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { X, Search, UserPlus, ChevronDown, ChevronUp, AlertCircle, Loader2 } from 'lucide-react';
 import { validatePhone } from '../app/lib/phone';
 import { Button } from './Button';
@@ -39,6 +39,13 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   const [manualName, setManualName] = useState('');
   const [manualNumber, setManualNumber] = useState('');
   const [manualError, setManualError] = useState<string | null>(null);
+  // Tracks which contact numbers have entered the viewport at least once.
+  // Once a row is observed, we keep its photo loading flag forever so the
+  // <img> stays mounted even if the user scrolls past — IntersectionObserver
+  // is purely an "opt-in to network request" trigger, not a mount gate.
+  const [visiblePhones, setVisiblePhones] = useState<Set<string>>(() => new Set());
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -48,6 +55,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     setManualName('');
     setManualNumber('');
     setManualError(null);
+    setVisiblePhones(new Set());
 
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), 8000);
@@ -74,6 +82,49 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   useEffect(() => {
     if (state.kind === 'error') setManualOpen(true);
   }, [state.kind]);
+
+  // Set up the IntersectionObserver once the list is rendered. Reuse a single
+  // observer for all rows — much cheaper than one per item.
+  useEffect(() => {
+    if (!open || state.kind !== 'list') return;
+    const root = scrollRef.current;
+    if (!root || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const newlyVisible: string[] = [];
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const phone = (entry.target as HTMLElement).dataset.phone;
+          if (phone) newlyVisible.push(phone);
+          // Once revealed, stop observing — we never need to unload a photo.
+          observer.unobserve(entry.target);
+        }
+        if (newlyVisible.length > 0) {
+          setVisiblePhones((prev) => {
+            const next = new Set(prev);
+            for (const p of newlyVisible) next.add(p);
+            return next;
+          });
+        }
+      },
+      { root, rootMargin: '100px 0px', threshold: 0.01 }
+    );
+
+    observerRef.current = observer;
+    return () => {
+      observer.disconnect();
+      observerRef.current = null;
+    };
+  }, [open, state.kind]);
+
+  // Callback ref attached to each row — registers it with the observer.
+  const registerRow = useCallback((el: HTMLButtonElement | null) => {
+    if (!el) return;
+    const observer = observerRef.current;
+    if (!observer) return;
+    observer.observe(el);
+  }, []);
 
   const filtered = useMemo(() => {
     if (state.kind !== 'list') return [];
@@ -127,7 +178,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto">
           <button
             type="button"
             onClick={() => setManualOpen(!manualOpen)}
@@ -206,14 +257,23 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             // (ScheduleModal, avatar) shows the formatted phone instead of
             // a confusing "+digits" string.
             const onSelectName = hasRealName ? c.name : undefined;
+            const photoSrc = visiblePhones.has(c.number)
+              ? `/api/contacts/${c.number}/photo`
+              : undefined;
             return (
               <button
                 key={c.number}
+                ref={registerRow}
+                data-phone={c.number}
                 type="button"
                 onClick={() => onSelect({ number: c.number, name: onSelectName })}
                 className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-left"
               >
-                <ContactAvatar name={hasRealName ? c.name : undefined} number={c.number} />
+                <ContactAvatar
+                  name={hasRealName ? c.name : undefined}
+                  number={c.number}
+                  photoSrc={photoSrc}
+                />
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold text-text-primary truncate">
                     {hasRealName ? c.name : formattedPhone}

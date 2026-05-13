@@ -261,6 +261,31 @@ class EvolutionClient {
   }
 
   /**
+   * Fetch a single contact's profile (picture, status, business info).
+   * Returns Evolution's raw profile payload — `profilePictureUrl` is the
+   * field we care about for avatars.
+   */
+  async fetchProfile(
+    instanceName: string,
+    number: string
+  ): Promise<{
+    wuid?: string
+    name?: string | null
+    numberExists?: boolean
+    picture?: string | null
+    profilePictureUrl?: string | null
+    status?: { status?: string | null; setAt?: string | null } | null
+    isBusiness?: boolean
+  }> {
+    const clean = number.replace(/\D/g, '')
+    return this.request(`/chat/fetchProfile/${instanceName}`, {
+      method: 'POST',
+      body: JSON.stringify({ number: clean }),
+      signal: AbortSignal.timeout(8000),
+    })
+  }
+
+  /**
    * Fetch all groups the instance participates in. When `getParticipants` is
    * true the response includes a `participants` array per group, which is a
    * useful supplementary source of personal contacts (Baileys' Contact table
