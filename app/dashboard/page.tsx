@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  Calendar, CheckCircle2, Loader2, Smartphone, LogOut, Trash2, Plus, UserPlus
+  Calendar, CheckCircle2, Loader2, Smartphone, LogOut, Trash2, Plus
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { Button } from '@/components/Button';
@@ -226,7 +226,7 @@ export default function DashboardPage() {
             onClick={() => setContactPickerOpen(true)}
             className="w-full sm:w-auto"
           >
-            <UserPlus className="w-5 h-5 mr-2" /> Nuovo contatto
+            ✉️ Manda messaggio
           </Button>
           <Button
             variant="outline"
