@@ -33,19 +33,29 @@ export async function GET(
 
   if (!user?.instance_name) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
+  // TEMP DEBUG: photos aren't appearing in production — log raw Evolution
+  // response shape so we can see whether profilePictureUrl is even present.
+  console.log(`PHOTO: request target=${target} instance=${user.instance_name}`);
+
   let pictureUrl: string | null = null;
   try {
     const profile = await evolutionClient.fetchProfile(user.instance_name, target);
+    console.log(`PHOTO: fetchProfile response for ${target}:`, JSON.stringify(profile));
     pictureUrl = profile?.profilePictureUrl || profile?.picture || null;
+    console.log(`PHOTO: pictureUrl for ${target} = ${pictureUrl ? pictureUrl : '<MISSING>'} (profilePictureUrl=${profile?.profilePictureUrl ?? 'undef'}, picture=${profile?.picture ?? 'undef'})`);
   } catch (e: any) {
     const msg = (e?.message || '') as string;
+    console.log(`PHOTO: fetchProfile error for ${target}: ${msg}`);
     if (msg.includes('timeout') || msg.includes('aborted')) {
       return NextResponse.json({ error: 'evolution_timeout' }, { status: 504 });
     }
     return NextResponse.json({ error: 'evolution_unavailable' }, { status: 502 });
   }
 
-  if (!pictureUrl) return NextResponse.json({ error: 'no_photo' }, { status: 404 });
+  if (!pictureUrl) {
+    console.log(`PHOTO: no pictureUrl for ${target} — returning 404 no_photo`);
+    return NextResponse.json({ error: 'no_photo' }, { status: 404 });
+  }
 
   // Proxy the actual image bytes so the browser can use this as <img src>
   // without CORS issues against pps.whatsapp.net.
