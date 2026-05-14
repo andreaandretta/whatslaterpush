@@ -47,6 +47,9 @@ export async function GET(req: NextRequest) {
   if (chatsRes.status === 'fulfilled') rawFromChats = chatsRes.value || [];
   if (groupsRes.status === 'fulfilled') rawGroups = groupsRes.value || [];
 
+  console.log('SAMPLE_CHAT', JSON.stringify(rawFromChats?.[0], null, 2));
+  console.log('SAMPLE_CONTACT', JSON.stringify(rawFromContacts?.[0], null, 2));
+
   if (contactsRes.status === 'rejected' && chatsRes.status === 'rejected') {
     const msg = (contactsRes.reason?.message || chatsRes.reason?.message || '') as string;
     if (msg.includes('timeout') || msg.includes('aborted')) {
