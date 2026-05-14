@@ -24,6 +24,16 @@ export async function GET(
   const target = validatePhone(params.phone || '');
   if (!target) return NextResponse.json({ error: 'invalid_phone' }, { status: 400 });
 
+  // Skip fetchProfile for non-Italian numbers. Evolution's fetchProfile
+  // returns 502 for ~all foreign JIDs in production (likely those numbers
+  // aren't in WhatsApp's cache for our instance) and the bursts of failed
+  // requests destabilise the whole server. Italian numbers are the vast
+  // majority of real contacts for this app's user base; everyone else just
+  // gets the initials avatar.
+  if (!target.startsWith('39')) {
+    return NextResponse.json({ error: 'no_photo' }, { status: 404 });
+  }
+
   const supabase = getSupabase();
   const { data: user } = await supabase
     .from('user_instances')
