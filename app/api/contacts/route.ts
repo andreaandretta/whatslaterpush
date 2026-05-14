@@ -19,6 +19,14 @@ interface OutContact {
   pushName?: string;
 }
 
+// Baileys hardcodes "Você" (PT-BR for "You") as the sender pushName on
+// outgoing/self messages when no proper profile name is available. Other
+// localizations may leak through as well — never accept these as a contact's
+// real name.
+const SELF_PLACEHOLDERS = new Set([
+  'Você', 'You', 'Tu', 'Tú', 'Sie', 'Ich', 'Me', 'Yo',
+]);
+
 export async function GET(req: NextRequest) {
   const raw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
   const payload = await verifyCookie(raw);
@@ -46,10 +54,6 @@ export async function GET(req: NextRequest) {
   if (contactsRes.status === 'fulfilled') rawFromContacts = contactsRes.value || [];
   if (chatsRes.status === 'fulfilled') rawFromChats = chatsRes.value || [];
   if (groupsRes.status === 'fulfilled') rawGroups = groupsRes.value || [];
-
-  console.log('SAMPLE_CHAT_5', JSON.stringify(rawFromChats?.[5], null, 2));
-  console.log('SAMPLE_CHAT_10', JSON.stringify(rawFromChats?.[10], null, 2));
-  console.log('SAMPLE_CONTACT', JSON.stringify(rawFromContacts?.[0], null, 2));
 
   if (contactsRes.status === 'rejected' && chatsRes.status === 'rejected') {
     const msg = (contactsRes.reason?.message || chatsRes.reason?.message || '') as string;
@@ -169,25 +173,39 @@ export async function GET(req: NextRequest) {
       (Array.isArray(msgRes) ? msgRes : []);
     const nameByPhone = new Map<string, string>();
     for (const m of messages) {
-      const jid = m?.key?.remoteJid;
+      // Outgoing messages carry the SENDER's pushName (= the user, often
+      // "Você" from Baileys' hardcoded fallback) but their remoteJid is the
+      // RECIPIENT — mapping the two would name contacts after ourselves.
+      if (m?.key?.fromMe === true) continue;
       const pushName = typeof m?.pushName === 'string' ? m.pushName.trim() : '';
-      if (!jid || !pushName) continue;
+      if (!pushName) continue;
+      if (SELF_PLACEHOLDERS.has(pushName)) continue;
+
+      // Group messages: pushName belongs to `key.participant`, not to the
+      // group's remoteJid. This lets us name people we only share a group
+      // with, without any extra API call.
+      const participantJid = m?.key?.participant;
+      if (participantJid) {
+        const pNorm = jidToNumber(participantJid);
+        if (pNorm && !nameByPhone.has(pNorm)) nameByPhone.set(pNorm, pushName);
+        continue;
+      }
+
+      const jid = m?.key?.remoteJid;
+      if (!jid) continue;
       const normalized = jidToNumber(jid);
       if (!normalized) continue;
       if (!nameByPhone.has(normalized)) nameByPhone.set(normalized, pushName);
     }
-    let backfilled = 0;
     for (const [num, entry] of byNumber) {
       if (entry.name === `+${num}`) {
         const fromMessages = nameByPhone.get(num);
         if (fromMessages) {
           entry.name = fromMessages;
           entry.pushName = fromMessages;
-          backfilled++;
         }
       }
     }
-    console.log('NAME_BACKFILL', { messagesScanned: messages.length, namesFound: nameByPhone.size, contactsBackfilled: backfilled });
   } catch (err: any) {
     console.error('NAME_BACKFILL_FAILED', err?.message || err);
   }
