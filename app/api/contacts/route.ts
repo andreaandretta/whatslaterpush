@@ -158,6 +158,40 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Backfill names from recent messages — every Message row carries pushName
+  // from the WhatsApp envelope, even when Chat.pushName is null. One bulk
+  // call covers every contact the user has actually chatted with.
+  try {
+    const msgRes: any = await evolutionClient.findMessages(user.instance_name, 2000);
+    const messages: any[] =
+      msgRes?.messages?.records ||
+      msgRes?.records ||
+      (Array.isArray(msgRes) ? msgRes : []);
+    const nameByPhone = new Map<string, string>();
+    for (const m of messages) {
+      const jid = m?.key?.remoteJid;
+      const pushName = typeof m?.pushName === 'string' ? m.pushName.trim() : '';
+      if (!jid || !pushName) continue;
+      const normalized = jidToNumber(jid);
+      if (!normalized) continue;
+      if (!nameByPhone.has(normalized)) nameByPhone.set(normalized, pushName);
+    }
+    let backfilled = 0;
+    for (const [num, entry] of byNumber) {
+      if (entry.name === `+${num}`) {
+        const fromMessages = nameByPhone.get(num);
+        if (fromMessages) {
+          entry.name = fromMessages;
+          entry.pushName = fromMessages;
+          backfilled++;
+        }
+      }
+    }
+    console.log('NAME_BACKFILL', { messagesScanned: messages.length, namesFound: nameByPhone.size, contactsBackfilled: backfilled });
+  } catch (err: any) {
+    console.error('NAME_BACKFILL_FAILED', err?.message || err);
+  }
+
   const out: OutContact[] = Array.from(byNumber.values());
   out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
 

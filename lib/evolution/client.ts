@@ -261,6 +261,27 @@ class EvolutionClient {
   }
 
   /**
+   * Fetch recent messages across the whole instance. Used to mine `pushName`
+   * for contacts whose Chat/Contact rows have it null — every Message row
+   * carries the sender's pushName from the WhatsApp envelope, even when the
+   * Chat table doesn't.
+   */
+  async findMessages(
+    instanceName: string,
+    limit: number = 2000
+  ): Promise<any> {
+    return this.request(`/chat/findMessages/${instanceName}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        where: {},
+        page: 1,
+        offset: limit,
+      }),
+      signal: AbortSignal.timeout(15000),
+    })
+  }
+
+  /**
    * Fetch a single contact's profile (picture, status, business info).
    * Returns Evolution's raw profile payload — `profilePictureUrl` is the
    * field we care about for avatars.
