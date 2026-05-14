@@ -72,7 +72,10 @@ export async function GET(req: NextRequest) {
   };
 
   for (const c of rawContacts || []) {
-    const normalized = jidToNumber(c?.remoteJid || '');
+    // Evolution v2 returns the JID under `.id` for findChats responses while
+    // older docs / some endpoints use `.remoteJid`. Read both to stay
+    // compatible — without this fallback every findChats row is skipped.
+    const normalized = jidToNumber(c?.remoteJid || c?.id || '');
     if (!normalized) continue;
     if (byNumber.has(normalized)) continue;
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 interface ContactAvatarProps {
   name?: string;
@@ -6,6 +6,10 @@ interface ContactAvatarProps {
   size?: 'sm' | 'md' | 'lg';
   className?: string;
   photoSrc?: string;
+  // Fires once per non-empty photoSrc, when its <img> either loads
+  // successfully or errors out. Lets the parent throttle parallel photo
+  // requests by only enabling the next batch once previous ones settle.
+  onPhotoSettled?: () => void;
 }
 
 const PALETTE = [
@@ -42,20 +46,30 @@ function hashNumber(number: string): number {
   return h;
 }
 
-export function ContactAvatar({ name, number, size = 'md', className = '', photoSrc }: ContactAvatarProps) {
+export function ContactAvatar({ name, number, size = 'md', className = '', photoSrc, onPhotoSettled }: ContactAvatarProps) {
   const initials = computeInitials(name, number);
   const color = PALETTE[hashNumber(number) % PALETTE.length];
   const sizeClass = SIZES[size];
 
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
+  // Guards onPhotoSettled so we call it exactly once per photoSrc — load and
+  // error events on the same <img> normally don't both fire, but defensive.
+  const reportedRef = useRef(false);
 
   // Reset state when src changes so a previous failure doesn't stick when the
   // parent eventually decides to load the photo for this contact.
   useEffect(() => {
     setLoaded(false);
     setFailed(false);
+    reportedRef.current = false;
   }, [photoSrc]);
+
+  function reportSettled() {
+    if (reportedRef.current) return;
+    reportedRef.current = true;
+    onPhotoSettled?.();
+  }
 
   const showImage = !!photoSrc && !failed;
 
@@ -70,8 +84,8 @@ export function ContactAvatar({ name, number, size = 'md', className = '', photo
           src={photoSrc}
           alt=""
           loading="lazy"
-          onLoad={() => setLoaded(true)}
-          onError={() => setFailed(true)}
+          onLoad={() => { setLoaded(true); reportSettled(); }}
+          onError={() => { setFailed(true); reportSettled(); }}
           className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'}`}
         />
       )}

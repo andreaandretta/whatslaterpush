@@ -40,14 +40,20 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   const [manualNumber, setManualNumber] = useState('');
   const [manualError, setManualError] = useState<string | null>(null);
   // How many of the *currently filtered* rows should fetch their profile
-  // photo. Starts at 50 (~the first two screens worth) and grows in chunks
-  // as the user scrolls toward the bottom. A previous attempt used an
-  // IntersectionObserver but suffered from a ref/effect ordering race that
-  // left it inert in production.
-  const INITIAL_PHOTO_LIMIT = 50;
-  const PHOTO_BATCH_INCREMENT = 25;
-  const LOAD_MORE_THRESHOLD_PX = 400;
+  // photo. Starts at 5 (the rate-limit budget for Evolution's fetchProfile
+  // — bursts of 50 parallel requests reliably triggered 502s in production)
+  // and grows by 1 every time a photo settles, so there are always at most
+  // 5 photo requests in flight.
+  const INITIAL_PHOTO_LIMIT = 5;
+  const MAX_CONCURRENT_PHOTOS = 5;
   const [photoLimit, setPhotoLimit] = useState(INITIAL_PHOTO_LIMIT);
+
+  // Called by ContactAvatar when its <img> resolves (load or error). One
+  // settled photo means we can start one more — keeps the in-flight count
+  // bounded by MAX_CONCURRENT_PHOTOS regardless of how many rows are visible.
+  const handlePhotoSettled = React.useCallback(() => {
+    setPhotoLimit((prev) => prev + 1);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -100,15 +106,6 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   useEffect(() => {
     setPhotoLimit(INITIAL_PHOTO_LIMIT);
   }, [search, state.kind]);
-
-  function handleScroll(e: React.UIEvent<HTMLDivElement>) {
-    const t = e.currentTarget;
-    if (t.scrollHeight - t.scrollTop - t.clientHeight > LOAD_MORE_THRESHOLD_PX) return;
-    setPhotoLimit((prev) => {
-      if (prev >= filtered.length) return prev;
-      return Math.min(prev + PHOTO_BATCH_INCREMENT, filtered.length);
-    });
-  }
 
   function handleManualSubmit() {
     setManualError(null);
@@ -164,7 +161,6 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
         <div
           className="flex-1 overflow-y-auto"
           style={{ backgroundColor: '#111B21' }}
-          onScroll={handleScroll}
         >
           <button
             type="button"
@@ -280,6 +276,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
                   name={hasRealName ? c.name : undefined}
                   number={c.number}
                   photoSrc={photoSrc}
+                  onPhotoSettled={photoSrc ? handlePhotoSettled : undefined}
                 />
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold text-white truncate">
