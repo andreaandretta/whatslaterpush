@@ -74,15 +74,31 @@ export async function GET(req: NextRequest) {
     return normalized;
   };
 
+  // Evolution v2 sometimes leaves `remoteJid` null on Baileys-synced rows and
+  // puts the JID in `.id` instead — but `.id` may also be a Prisma UUID, so we
+  // only accept strings that actually look like a JID.
+  const extractJid = (c: any): string | null => {
+    if (typeof c?.remoteJid === 'string' && c.remoteJid.includes('@')) return c.remoteJid;
+    if (typeof c?.id === 'string' && c.id.includes('@')) return c.id;
+    if (typeof c?.key?.remoteJid === 'string' && c.key.remoteJid.includes('@')) return c.key.remoteJid;
+    return null;
+  };
+
   for (const c of rawContacts || []) {
-    // Evolution v2 returns the JID under `.id` for findChats responses while
-    // older docs / some endpoints use `.remoteJid`. Read both to stay
-    // compatible — without this fallback every findChats row is skipped.
-    const normalized = jidToNumber(c?.remoteJid || c?.id || '');
+    const jid = extractJid(c);
+    if (!jid) continue;
+    const normalized = jidToNumber(jid);
     if (!normalized) continue;
     if (byNumber.has(normalized)) continue;
 
-    const displayName = (c.name && c.name.trim()) || (c.pushName && c.pushName.trim()) || `+${normalized}`;
+    // Baileys cannot read the user's address book, so `pushName` (the name the
+    // contact set on their own device) is the only reliable source. `name` and
+    // `verifiedName` are usually null outside business accounts.
+    const displayName =
+      (c.pushName && c.pushName.trim()) ||
+      (c.name && c.name.trim()) ||
+      (c.verifiedName && c.verifiedName.trim()) ||
+      `+${normalized}`;
     const entry: OutContact = { number: normalized, name: displayName };
     if (c.pushName) entry.pushName = c.pushName;
     byNumber.set(normalized, entry);
