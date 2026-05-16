@@ -210,7 +210,12 @@ export async function GET(req: NextRequest) {
     console.error('NAME_BACKFILL_FAILED', err?.message || err);
   }
 
-  const out: OutContact[] = Array.from(byNumber.values());
+  // Picker shows only contacts with a real name — the "+number" fallback
+  // entries are noise for users browsing the list. "Nuovo contatto" handles
+  // the manual-entry case for unknown numbers.
+  const out: OutContact[] = Array.from(byNumber.values()).filter(
+    (c) => !c.name.startsWith('+')
+  );
   out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
 
   return NextResponse.json({ contacts: out });

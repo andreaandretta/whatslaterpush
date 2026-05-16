@@ -86,8 +86,9 @@ describe('GET /api/contacts', () => {
     const res = await callGet();
     expect(res.status).toBe(200);
     const body = await res.json();
+    // displayName prefers pushName over the (often null) `name` field.
     expect(body.contacts).toEqual([
-      { number: '393339998877', name: 'Anna Rossi', pushName: 'Anna' },
+      { number: '393339998877', name: 'Anna', pushName: 'Anna' },
       { number: '393331112233', name: 'Marco', pushName: 'Marco' },
     ]);
   });
@@ -133,10 +134,10 @@ describe('GET /api/contacts', () => {
     const res = await callGet();
     expect(res.status).toBe(200);
     const body = await res.json();
+    // Group participants without a real name are excluded from the picker —
+    // only Marco (who has a pushName) survives the final filter.
     expect(body.contacts).toEqual([
-      { number: '393335554444', name: '+393335554444' },
-      { number: '393339998877', name: '+393339998877' },
-      { number: '393331112233', name: 'Marco Bianchi', pushName: 'Marco' },
+      { number: '393331112233', name: 'Marco', pushName: 'Marco' },
     ]);
   });
 
@@ -174,11 +175,11 @@ describe('GET /api/contacts', () => {
     expect(instanceArg).toBe(INSTANCE);
     expect(numbersArg.sort()).toEqual(['393335554444', '393336667788', '393339998877']);
 
+    // 393336667788 stays unnamed after enrichment → filtered out of picker output.
     expect(body.contacts).toEqual([
-      { number: '393336667788', name: '+393336667788' },
       { number: '393339998877', name: 'Anna Rossi' },
       { number: '393335554444', name: 'Luca', pushName: 'Luca' },
-      { number: '393331112233', name: 'Marco Bianchi', pushName: 'Marco' },
+      { number: '393331112233', name: 'Marco', pushName: 'Marco' },
     ]);
   });
 
@@ -190,9 +191,8 @@ describe('GET /api/contacts', () => {
     const res = await callGet();
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.contacts).toEqual([
-      { number: '393335554444', name: '+393335554444' },
-    ]);
+    // Enrichment failed → no real name available → entry filtered out.
+    expect(body.contacts).toEqual([]);
   });
 
   test('skips whatsappNumbers entirely when every contact already has a name', async () => {
@@ -213,7 +213,7 @@ describe('GET /api/contacts', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.contacts).toEqual([
-      { number: '393331112233', name: 'Marco Bianchi', pushName: 'Marco' },
+      { number: '393331112233', name: 'Marco', pushName: 'Marco' },
     ]);
   });
 
@@ -229,8 +229,8 @@ describe('GET /api/contacts', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.contacts).toEqual([
-      { number: '393335554444', name: 'Luca Verdi', pushName: 'Luca' },
-      { number: '393331112233', name: 'Marco Bianchi', pushName: 'Marco' },
+      { number: '393335554444', name: 'Luca', pushName: 'Luca' },
+      { number: '393331112233', name: 'Marco', pushName: 'Marco' },
     ]);
   });
 });
