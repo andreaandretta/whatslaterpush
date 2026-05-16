@@ -14,9 +14,9 @@ test.describe('Landing Page', () => {
 
   test('hero CTA button is visible', async ({ page }) => {
     await page.goto('/');
-    const cta = page.locator('a', { hasText: 'Inizia a programmare i messaggi' });
+    const cta = page.locator('a', { hasText: 'Provalo gratis' });
     await expect(cta).toBeVisible();
-    await expect(cta).toHaveAttribute('href', '/dashboard');
+    await expect(cta).toHaveAttribute('href', '/connect');
   });
 
   test('pricing section shows 3 plans', async ({ page }) => {

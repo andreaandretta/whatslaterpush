@@ -8,10 +8,10 @@ export default function HeroSection() {
         {/* Text */}
         <div className="text-center md:text-left">
           <h1 className="font-heading text-3xl sm:text-4xl md:text-5xl font-bold text-white leading-tight">
-            I tuoi clienti non dimenticano pi&ugrave; l&apos;appuntamento.
+            Programma i messaggi WhatsApp che ti dimentichi sempre di mandare.
           </h1>
           <p className="mt-4 text-lg text-[#25D366] font-medium leading-relaxed">
-            Il promemoria parte da WhatsApp, dal tuo numero, in automatico.
+            Dal tuo numero personale. Per chi coordina squadre, fornitori e clienti ogni giorno.
           </p>
           <p className="mt-3 text-sm text-white/50">
             Setup in 2 minuti &middot; Nessuna app da installare
@@ -21,10 +21,9 @@ export default function HeroSection() {
               href="/connect"
               className="inline-flex items-center justify-center bg-primary text-white px-8 h-14 rounded-full text-base font-bold shadow-lg shadow-primary/30 hover:bg-primary-hover transition-colors"
             >
-              Inizia a programmare i messaggi
+              Provalo gratis &mdash; niente carta
             </Link>
           </div>
-          <p className="mt-3 text-xs text-white/40">Nessuna carta richiesta</p>
         </div>
 
         {/* Phone mockup — static WhatsApp chat */}
