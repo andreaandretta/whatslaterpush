@@ -10,7 +10,7 @@ interface PricingSectionProps {
 export default function PricingSection({ currentPlan, userPhone }: PricingSectionProps) {
   const [error, setError] = useState<string | null>(null);
 
-  const handleCheckout = async (plan: 'personal' | 'business') => {
+  const handleCheckout = async (plan: 'personal' | 'professional' | 'business') => {
     setError(null);
     if (!userPhone) {
       window.location.href = '/dashboard';
@@ -47,7 +47,7 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
     }
   };
 
-  const isPaying = currentPlan === 'personal' || currentPlan === 'business';
+  const isPaying = currentPlan === 'personal' || currentPlan === 'professional' || currentPlan === 'business';
 
   return (
     <section id="prezzi" className="py-24 bg-white">
@@ -55,7 +55,7 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
         <h2 className="font-heading text-3xl sm:text-4xl font-bold text-text-primary mb-2">Scegli il tuo piano</h2>
         <p className="text-text-secondary mb-10">Inizia gratis, passa a pagamento quando sei pronto.</p>
 
-        <div className="grid md:grid-cols-3 gap-6 max-w-3xl mx-auto">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 max-w-5xl mx-auto">
           {/* Free */}
           <div className="bg-white rounded-2xl p-6 border border-[#E9EDEF] shadow-sm">
             <h3 className="text-lg font-bold mb-1">Free</h3>
@@ -99,6 +99,33 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
             ) : (
               <button onClick={() => handleCheckout('personal')} className="w-full bg-primary text-white py-2.5 rounded-xl font-semibold hover:scale-[1.02] transition-transform shadow-md shadow-primary/30">
                 {currentPlan === 'business' ? 'Passa a Personal' : 'Passa a Personal'}
+              </button>
+            )}
+          </div>
+
+          {/* Professional */}
+          <div className="bg-white rounded-2xl p-6 border border-[#E9EDEF] shadow-sm">
+            <h3 className="text-lg font-bold mb-1">Professional</h3>
+            <div className="flex items-baseline justify-center gap-1 mb-2">
+              <span className="text-3xl font-bold">&euro;9,99</span>
+              <span className="text-text-secondary text-sm">/mese</span>
+            </div>
+            <p className="text-xs text-text-secondary italic mb-4">
+              Perfetto per: site manager, commerciali, consulenti
+            </p>
+            <ul className="space-y-2 text-sm text-left mb-6">
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 35 messaggi/giorno</li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 200 contatti</li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 60 giorni di storico</li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 3 tentativi di invio</li>
+            </ul>
+            {currentPlan === 'professional' ? (
+              <button onClick={() => window.open('/#prezzi', '_blank')} className="w-full py-2.5 rounded-xl text-sm font-medium text-primary border border-primary hover:bg-primary/5 transition-colors">
+                Cambia piano
+              </button>
+            ) : (
+              <button onClick={() => handleCheckout('professional')} className="w-full bg-primary text-white py-2.5 rounded-xl font-semibold hover:scale-[1.02] transition-transform shadow-md shadow-primary/30">
+                Passa a Professional
               </button>
             )}
           </div>

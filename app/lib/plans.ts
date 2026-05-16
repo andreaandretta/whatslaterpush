@@ -6,10 +6,11 @@ export interface PlanLimits {
 }
 
 const PLANS: Record<string, PlanLimits> = {
-  trial:    { dailyLimit: 20, maxContacts: 50,     maxRetry: 3, historyDays: 30 },
-  free:     { dailyLimit: 3,  maxContacts: 5,      maxRetry: 1, historyDays: 7  },
-  personal: { dailyLimit: 20, maxContacts: 50,     maxRetry: 3, historyDays: 30 },
-  business: { dailyLimit: 50, maxContacts: 999999, maxRetry: 3, historyDays: 90 },
+  trial:        { dailyLimit: 20, maxContacts: 50,     maxRetry: 3, historyDays: 30 },
+  free:         { dailyLimit: 3,  maxContacts: 5,      maxRetry: 1, historyDays: 7  },
+  personal:     { dailyLimit: 20, maxContacts: 50,     maxRetry: 3, historyDays: 30 },
+  professional: { dailyLimit: 35, maxContacts: 200,    maxRetry: 3, historyDays: 60 },
+  business:     { dailyLimit: 50, maxContacts: 999999, maxRetry: 3, historyDays: 90 },
 };
 
 const FREE = PLANS.free;
@@ -22,6 +23,7 @@ const PLAN_NAMES: Record<string, string> = {
   trial: 'Trial',
   free: 'Free',
   personal: 'Personal',
+  professional: 'Professional',
   business: 'Business',
 };
 

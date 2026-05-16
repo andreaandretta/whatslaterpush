@@ -25,6 +25,14 @@ describe('getPlanLimits', () => {
     expect(limits.historyDays).toBe(30);
   });
 
+  test('returns professional limits', () => {
+    const limits = getPlanLimits('professional');
+    expect(limits.dailyLimit).toBe(35);
+    expect(limits.maxContacts).toBe(200);
+    expect(limits.maxRetry).toBe(3);
+    expect(limits.historyDays).toBe(60);
+  });
+
   test('returns business limits', () => {
     const limits = getPlanLimits('business');
     expect(limits.dailyLimit).toBe(50);
@@ -49,6 +57,7 @@ describe('getPlanName', () => {
     expect(getPlanName('free')).toBe('Free');
     expect(getPlanName('trial')).toBe('Trial');
     expect(getPlanName('personal')).toBe('Personal');
+    expect(getPlanName('professional')).toBe('Professional');
     expect(getPlanName('business')).toBe('Business');
   });
 });

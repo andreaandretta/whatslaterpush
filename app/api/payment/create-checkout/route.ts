@@ -7,6 +7,7 @@ export const dynamic = 'force-dynamic';
 
 const PRICE_IDS: Record<string, string | undefined> = {
   personal: process.env.STRIPE_PRICE_PERSONAL,
+  professional: process.env.STRIPE_PRICE_PROFESSIONAL,
   business: process.env.STRIPE_PRICE_BUSINESS,
 };
 
