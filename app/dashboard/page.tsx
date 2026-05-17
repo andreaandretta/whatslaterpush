@@ -13,6 +13,7 @@ import { ContactAvatar } from '@/components/ContactAvatar';
 import PricingSection from '../components/PricingSection';
 import FAQSection from '../components/FAQSection';
 import Footer from '../components/Footer';
+import { getPlanLimits } from '../lib/plans';
 
 const supabaseClient = typeof window !== 'undefined' ? createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -257,6 +258,11 @@ export default function DashboardPage() {
         {/* Welcome card — first access, no messages ever scheduled */}
         {sessionValidated && userPhone && totalLifetime === 0 && (
           <WelcomeCard segment={segment} />
+        )}
+
+        {/* Daily cap badge — only for free/personal */}
+        {userPhone && (subscription.plan === 'free' || subscription.plan === 'personal') && (
+          <DailyCapBadge plan={subscription.plan} messages={messages} />
         )}
 
         {/* Messages Section */}
@@ -509,6 +515,38 @@ function PlanBadge({ subscription }: { subscription: SubscriptionState }) {
       {(subscription.plan === 'trial' || subscription.plan === 'free') && (
         <a href="#prezzi" className="text-xs font-medium hover:underline">Passa a Personal</a>
       )}
+    </div>
+  );
+}
+
+// --- Daily Cap Badge ---
+function DailyCapBadge({ plan, messages }: { plan: string; messages: ScheduledMessage[] }) {
+  const limits = getPlanLimits(plan);
+  const today = new Date();
+  const sameDay = (d: Date) =>
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate();
+
+  const countToday = messages.filter((m) => {
+    if (m.status !== 'sent' && m.status !== 'pending') return false;
+    const sched = new Date(m.scheduled_at);
+    return !isNaN(sched.getTime()) && sameDay(sched);
+  }).length;
+
+  const planLabel = plan === 'free' ? 'Free' : 'Personal';
+  const nextPlan = plan === 'free' ? 'Personal' : 'Professional';
+  const nextLimit = plan === 'free' ? 20 : 35;
+
+  return (
+    <div className="flex items-center justify-between rounded-xl px-4 py-3 border border-gray-200 bg-white">
+      <p className="text-sm text-text-primary">
+        Hai schedulato <strong>{countToday}</strong> messagg{countToday === 1 ? 'io' : 'i'} oggi ✓
+        <span className="text-text-secondary"> — Limite {planLabel}: {limits.dailyLimit}/giorno</span>
+      </p>
+      <a href="#prezzi" className="text-xs font-semibold text-primary hover:underline shrink-0 ml-3">
+        Sblocca {nextLimit} con {nextPlan} →
+      </a>
     </div>
   );
 }
