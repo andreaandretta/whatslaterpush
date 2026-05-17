@@ -30,7 +30,7 @@ function contactRowsFromPayload(
   rawList: any[],
   userPhone: string,
   source: ContactSource
-): Array<{ user_phone: string; contact_number: string; name: string | null; push_name: string | null; source: ContactSource }> {
+): Array<{ user_phone: string; contact_number: string; name: string | null; push_name: string | null; profile_pic_url: string | null; source: ContactSource }> {
   const rows: Array<any> = [];
   const seen = new Set<string>();
   for (const c of rawList || []) {
@@ -53,12 +53,16 @@ function contactRowsFromPayload(
       (typeof c?.pushName === 'string' && c.pushName.trim()) ? c.pushName.trim() :
       (typeof c?.notify === 'string' && c.notify.trim()) ? c.notify.trim() :
       null;
+    const profilePicUrl =
+      (typeof c?.profilePicUrl === 'string' && c.profilePicUrl.trim()) ? c.profilePicUrl.trim() :
+      null;
 
     rows.push({
       user_phone: userPhone,
       contact_number: numericPart,
       name,
       push_name: pushName,
+      profile_pic_url: profilePicUrl,
       source,
     });
   }
@@ -833,8 +837,16 @@ export async function POST(req) {
           ? (Array.isArray(payload?.data?.contacts) ? payload.data.contacts : [])
           : (Array.isArray(payload?.data) ? payload.data : []);
 
+      // TEMP DEBUG: log the first contact's raw shape so we can confirm whether
+      // Baileys is actually emitting `profilePicUrl` in this payload (required
+      // by the photo-cache work — remove once verified in production).
+      if (rawList.length > 0) {
+        console.log('WEBHOOK:CONTACTS_PAYLOAD_SAMPLE event=' + sourceKey + ' shape=' + JSON.stringify(rawList[0]).substring(0, 500));
+      }
+
       const rows = contactRowsFromPayload(rawList, userPhone, sourceKey);
-      console.log('WEBHOOK:CONTACTS event=' + sourceKey + ' instance=' + evoInstance + ' incoming=' + rawList.length + ' persisted=' + rows.length);
+      const withPic = rows.filter(r => r.profile_pic_url).length;
+      console.log('WEBHOOK:CONTACTS event=' + sourceKey + ' instance=' + evoInstance + ' incoming=' + rawList.length + ' persisted=' + rows.length + ' withPic=' + withPic);
 
       if (rows.length === 0) {
         return NextResponse.json({ ok: true, persisted: 0 });

@@ -17,6 +17,10 @@ interface OutContact {
   number: string;
   name: string;
   pushName?: string;
+  // Cached WhatsApp profile picture URL. Always a direct pps.whatsapp.net
+  // link — the browser loads it without proxying through our server.
+  // Absent (not empty string) when no photo is known.
+  photoUrl?: string;
 }
 
 // Baileys hardcodes "Você" (PT-BR for "You") as the sender pushName on
@@ -51,12 +55,12 @@ export async function GET(req: NextRequest) {
   // 5-15s and avoids Evolution timeouts.
   const { data: cached } = await supabase
     .from('whatsapp_contacts')
-    .select('contact_number, name, push_name')
+    .select('contact_number, name, push_name, profile_pic_url')
     .eq('user_phone', phone);
 
   if (cached && cached.length > 0) {
     const out: OutContact[] = [];
-    for (const row of cached as Array<{ contact_number: string; name: string | null; push_name: string | null }>) {
+    for (const row of cached as Array<{ contact_number: string; name: string | null; push_name: string | null; profile_pic_url: string | null }>) {
       const num = row.contact_number;
       if (!num || num === phone) continue;
       const name = (row.name && row.name.trim()) || null;
@@ -65,6 +69,8 @@ export async function GET(req: NextRequest) {
       if (!displayName) continue; // skip anonymous rows, same as Evolution path
       const entry: OutContact = { number: num, name: displayName };
       if (pushName) entry.pushName = pushName;
+      const photoUrl = (row.profile_pic_url && row.profile_pic_url.trim()) || null;
+      if (photoUrl) entry.photoUrl = photoUrl;
       out.push(entry);
     }
     out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
@@ -137,6 +143,9 @@ export async function GET(req: NextRequest) {
       `+${normalized}`;
     const entry: OutContact = { number: normalized, name: displayName };
     if (c.pushName) entry.pushName = c.pushName;
+    const photoUrl =
+      (typeof c.profilePicUrl === 'string' && c.profilePicUrl.trim()) ? c.profilePicUrl.trim() : null;
+    if (photoUrl) entry.photoUrl = photoUrl;
     byNumber.set(normalized, entry);
   }
 

@@ -268,4 +268,60 @@ describe('GET /api/contacts', () => {
     ]);
     expect(findContactsMock).toHaveBeenCalled();
   });
+
+  describe('photoUrl exposure', () => {
+    test('cache-first includes photoUrl when profile_pic_url is present', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393401111111', name: 'Mario', push_name: 'Mario', profile_pic_url: 'https://pps.whatsapp.net/mario.jpg' },
+        { contact_number: '393402222222', name: 'Anna',  push_name: 'Anna',  profile_pic_url: null },
+      ]);
+      const res = await callGet();
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const mario = body.contacts.find((c: any) => c.number === '393401111111');
+      const anna  = body.contacts.find((c: any) => c.number === '393402222222');
+      expect(mario.photoUrl).toBe('https://pps.whatsapp.net/mario.jpg');
+      expect(anna.photoUrl).toBeUndefined();
+    });
+
+    test('evolution fallback exposes photoUrl from findChats.profilePicUrl', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', []);
+      findChatsMock.mockResolvedValue([
+        { remoteJid: '393401111111@s.whatsapp.net', pushName: 'Mario', name: 'Mario Rossi', profilePicUrl: 'https://pps.whatsapp.net/mario.jpg' },
+        { remoteJid: '393402222222@s.whatsapp.net', pushName: 'Anna',  name: 'Anna Rossi' },
+      ]);
+      const res = await callGet();
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const mario = body.contacts.find((c: any) => c.number === '393401111111');
+      const anna  = body.contacts.find((c: any) => c.number === '393402222222');
+      expect(mario.photoUrl).toBe('https://pps.whatsapp.net/mario.jpg');
+      expect(anna.photoUrl).toBeUndefined();
+    });
+
+    test('evolution fallback uses findContacts.profilePicUrl when findChats is empty', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', []);
+      findChatsMock.mockResolvedValue([]);
+      findContactsMock.mockResolvedValue([
+        { remoteJid: '393404444444@s.whatsapp.net', pushName: 'Sara', name: 'Sara R.', profilePicUrl: 'https://pps.whatsapp.net/sara.jpg' },
+      ]);
+      const res = await callGet();
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const sara = body.contacts.find((c: any) => c.number === '393404444444');
+      expect(sara.photoUrl).toBe('https://pps.whatsapp.net/sara.jpg');
+    });
+
+    test('empty-string profilePicUrl is omitted, not exposed as empty value', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', []);
+      findChatsMock.mockResolvedValue([
+        { remoteJid: '393401111111@s.whatsapp.net', pushName: 'Mario', name: 'Mario', profilePicUrl: '' },
+      ]);
+      const res = await callGet();
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const mario = body.contacts.find((c: any) => c.number === '393401111111');
+      expect(mario.photoUrl).toBeUndefined();
+    });
+  });
 });

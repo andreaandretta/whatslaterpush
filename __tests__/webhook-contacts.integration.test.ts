@@ -200,3 +200,103 @@ describe('Webhook: contact event when user not found', () => {
     expect(rpcCalls.length).toBe(0);
   });
 });
+
+describe('Webhook: profilePicUrl persistence', () => {
+  test('CONTACTS_UPSERT with profilePicUrl populates profile_pic_url in rpc row', async () => {
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 1);
+    const body = makeContactsUpsertPayload({
+      instance: INSTANCE,
+      contacts: [{
+        jid: '393401111111@s.whatsapp.net',
+        name: 'Mario',
+        profilePicUrl: 'https://pps.whatsapp.net/v/t61.24694/abc.jpg?token=xyz',
+      }],
+    });
+    const res = await callWebhook(body);
+    expect(res.status).toBe(200);
+
+    const rows = rpcUpsertRows();
+    expect(rows.length).toBe(1);
+    expect(rows[0].profile_pic_url).toBe('https://pps.whatsapp.net/v/t61.24694/abc.jpg?token=xyz');
+  });
+
+  test('CONTACTS_UPSERT without profilePicUrl sets profile_pic_url=null', async () => {
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 1);
+    const body = makeContactsUpsertPayload({
+      instance: INSTANCE,
+      contacts: [{ jid: '393402222222@s.whatsapp.net', name: 'Anna' }],
+    });
+    const res = await callWebhook(body);
+    expect(res.status).toBe(200);
+
+    const rows = rpcUpsertRows();
+    expect(rows.length).toBe(1);
+    expect(rows[0].profile_pic_url).toBe(null);
+  });
+
+  test('CONTACTS_SET propagates profilePicUrl for each contact', async () => {
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 2);
+    const body = makeContactsSetPayload({
+      instance: INSTANCE,
+      contacts: [
+        { jid: '393401111111@s.whatsapp.net', name: 'Mario', profilePicUrl: 'https://pps.whatsapp.net/mario.jpg' },
+        { jid: '393402222222@s.whatsapp.net', name: 'Anna' },
+      ],
+    });
+    const res = await callWebhook(body);
+    expect(res.status).toBe(200);
+
+    const rows = rpcUpsertRows();
+    expect(rows.find(r => r.contact_number === '393401111111')?.profile_pic_url)
+      .toBe('https://pps.whatsapp.net/mario.jpg');
+    expect(rows.find(r => r.contact_number === '393402222222')?.profile_pic_url)
+      .toBe(null);
+  });
+
+  test('CONTACTS_UPDATE with profilePicUrl persists the url', async () => {
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 1);
+    const body = makeContactsUpdatePayload({
+      instance: INSTANCE,
+      contacts: [{
+        jid: '393403333333@s.whatsapp.net',
+        pushName: 'Giulia',
+        profilePicUrl: 'https://pps.whatsapp.net/giulia.jpg',
+      }],
+    });
+    const res = await callWebhook(body);
+    expect(res.status).toBe(200);
+
+    const rows = rpcUpsertRows();
+    expect(rows[0].profile_pic_url).toBe('https://pps.whatsapp.net/giulia.jpg');
+  });
+
+  test('MESSAGING_HISTORY_SET propagates profilePicUrl from nested contacts', async () => {
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 1);
+    const body = makeMessagingHistorySetPayload({
+      instance: INSTANCE,
+      contacts: [{
+        jid: '393404444444@s.whatsapp.net',
+        name: 'Luca',
+        profilePicUrl: 'https://pps.whatsapp.net/luca.jpg',
+      }],
+    });
+    const res = await callWebhook(body);
+    expect(res.status).toBe(200);
+
+    const rows = rpcUpsertRows();
+    expect(rows[0].profile_pic_url).toBe('https://pps.whatsapp.net/luca.jpg');
+  });
+
+  test('empty-string profilePicUrl is normalized to null', async () => {
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 1);
+    const body = makeContactsUpsertPayload({
+      instance: INSTANCE,
+      contacts: [{ jid: '393405555555@s.whatsapp.net', name: 'Paolo', profilePicUrl: '' }],
+    });
+    const res = await callWebhook(body);
+    expect(res.status).toBe(200);
+
+    const rows = rpcUpsertRows();
+    expect(rows[0].profile_pic_url).toBe(null);
+  });
+});

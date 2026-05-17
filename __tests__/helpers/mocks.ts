@@ -221,7 +221,7 @@ export function makeRequestWithCookie(body: any, cookieValue: string, headers: R
 
 export function makeContactsSetPayload(opts: {
   instance: string;
-  contacts: Array<{ id?: string; jid?: string; name?: string | null; pushName?: string | null; notify?: string | null }>;
+  contacts: Array<{ id?: string; jid?: string; name?: string | null; pushName?: string | null; notify?: string | null; profilePicUrl?: string | null }>;
 }) {
   return {
     event: 'CONTACTS_SET',
@@ -232,13 +232,14 @@ export function makeContactsSetPayload(opts: {
       name: c.name ?? null,
       pushName: c.pushName ?? null,
       notify: c.notify ?? null,
+      profilePicUrl: c.profilePicUrl ?? null,
     })),
   };
 }
 
 export function makeContactsUpsertPayload(opts: {
   instance: string;
-  contacts: Array<{ id?: string; jid?: string; name?: string | null; pushName?: string | null; notify?: string | null }>;
+  contacts: Array<{ id?: string; jid?: string; name?: string | null; pushName?: string | null; notify?: string | null; profilePicUrl?: string | null }>;
 }) {
   return {
     event: 'CONTACTS_UPSERT',
@@ -249,13 +250,14 @@ export function makeContactsUpsertPayload(opts: {
       name: c.name ?? null,
       pushName: c.pushName ?? null,
       notify: c.notify ?? null,
+      profilePicUrl: c.profilePicUrl ?? null,
     })),
   };
 }
 
 export function makeContactsUpdatePayload(opts: {
   instance: string;
-  contacts: Array<{ id?: string; jid?: string; name?: string | null; pushName?: string | null }>;
+  contacts: Array<{ id?: string; jid?: string; name?: string | null; pushName?: string | null; profilePicUrl?: string | null }>;
 }) {
   return {
     event: 'CONTACTS_UPDATE',
@@ -265,13 +267,14 @@ export function makeContactsUpdatePayload(opts: {
       remoteJid: c.jid || c.id,
       name: c.name ?? null,
       pushName: c.pushName ?? null,
+      profilePicUrl: c.profilePicUrl ?? null,
     })),
   };
 }
 
 export function makeMessagingHistorySetPayload(opts: {
   instance: string;
-  contacts?: Array<{ id?: string; jid?: string; name?: string | null; pushName?: string | null; notify?: string | null }>;
+  contacts?: Array<{ id?: string; jid?: string; name?: string | null; pushName?: string | null; notify?: string | null; profilePicUrl?: string | null }>;
   chats?: Array<{ id?: string; name?: string | null }>;
   messages?: any[];
 }) {
@@ -285,6 +288,7 @@ export function makeMessagingHistorySetPayload(opts: {
         name: c.name ?? null,
         pushName: c.pushName ?? null,
         notify: c.notify ?? null,
+        profilePicUrl: c.profilePicUrl ?? null,
       })),
       chats: opts.chats || [],
       messages: opts.messages || [],
