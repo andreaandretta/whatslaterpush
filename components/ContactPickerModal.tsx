@@ -10,6 +10,7 @@ interface Contact {
   number: string;
   name: string;
   pushName?: string;
+  photoUrl?: string;
 }
 
 function formatPhone(digits: string): string {
@@ -39,21 +40,6 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   const [manualName, setManualName] = useState('');
   const [manualNumber, setManualNumber] = useState('');
   const [manualError, setManualError] = useState<string | null>(null);
-  // How many of the *currently filtered* rows should fetch their profile
-  // photo. Starts at 5 (the rate-limit budget for Evolution's fetchProfile
-  // — bursts of 50 parallel requests reliably triggered 502s in production)
-  // and grows by 1 every time a photo settles, so there are always at most
-  // 5 photo requests in flight.
-  const INITIAL_PHOTO_LIMIT = 5;
-  const MAX_CONCURRENT_PHOTOS = 5;
-  const [photoLimit, setPhotoLimit] = useState(INITIAL_PHOTO_LIMIT);
-
-  // Called by ContactAvatar when its <img> resolves (load or error). One
-  // settled photo means we can start one more — keeps the in-flight count
-  // bounded by MAX_CONCURRENT_PHOTOS regardless of how many rows are visible.
-  const handlePhotoSettled = React.useCallback(() => {
-    setPhotoLimit((prev) => prev + 1);
-  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -63,7 +49,6 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     setManualName('');
     setManualNumber('');
     setManualError(null);
-    setPhotoLimit(INITIAL_PHOTO_LIMIT);
 
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), 8000);
@@ -99,13 +84,6 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
       c.name.toLowerCase().includes(q) || c.number.includes(q)
     );
   }, [state, search]);
-
-  // Reset the photo limit whenever the rendered subset changes (search edit
-  // or the initial contact list landing). Without this, after a search the
-  // first 50 of the new filtered list would not auto-load photos.
-  useEffect(() => {
-    setPhotoLimit(INITIAL_PHOTO_LIMIT);
-  }, [search, state.kind]);
 
   function handleManualSubmit() {
     setManualError(null);
@@ -255,16 +233,13 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             </div>
           )}
 
-          {state.kind === 'list' && filtered.map((c, idx) => {
+          {state.kind === 'list' && filtered.map((c) => {
             const formattedPhone = formatPhone(c.number);
             const hasRealName = !!c.name && c.name.trim() !== '' && c.name !== `+${c.number}`;
             // When there's no real name, send name=undefined so downstream
             // (ScheduleModal, avatar) shows the formatted phone instead of
             // a confusing "+digits" string.
             const onSelectName = hasRealName ? c.name : undefined;
-            const photoSrc = idx < photoLimit
-              ? `/api/contacts/${c.number}/photo`
-              : undefined;
             return (
               <button
                 key={c.number}
@@ -275,8 +250,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
                 <ContactAvatar
                   name={hasRealName ? c.name : undefined}
                   number={c.number}
-                  photoSrc={photoSrc}
-                  onPhotoSettled={photoSrc ? handlePhotoSettled : undefined}
+                  photoSrc={c.photoUrl}
                 />
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold text-white truncate">

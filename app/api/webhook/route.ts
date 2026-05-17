@@ -837,13 +837,6 @@ export async function POST(req) {
           ? (Array.isArray(payload?.data?.contacts) ? payload.data.contacts : [])
           : (Array.isArray(payload?.data) ? payload.data : []);
 
-      // TEMP DEBUG: log the first contact's raw shape so we can confirm whether
-      // Baileys is actually emitting `profilePicUrl` in this payload (required
-      // by the photo-cache work — remove once verified in production).
-      if (rawList.length > 0) {
-        console.log('WEBHOOK:CONTACTS_PAYLOAD_SAMPLE event=' + sourceKey + ' shape=' + JSON.stringify(rawList[0]).substring(0, 500));
-      }
-
       const rows = contactRowsFromPayload(rawList, userPhone, sourceKey);
       const withPic = rows.filter(r => r.profile_pic_url).length;
       console.log('WEBHOOK:CONTACTS event=' + sourceKey + ' instance=' + evoInstance + ' incoming=' + rawList.length + ' persisted=' + rows.length + ' withPic=' + withPic);
