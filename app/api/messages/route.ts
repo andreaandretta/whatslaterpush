@@ -44,10 +44,16 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  const { count: lifetimeCount } = await supabase
+    .from('scheduled_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('instance_phone', phone);
+
   return NextResponse.json({
     messages: data || [],
     subscription_plan: user?.subscription_plan || 'unknown',
     trial_ends_at: user?.trial_ends_at || null,
+    total_scheduled_lifetime: lifetimeCount ?? 0,
   });
 }
 

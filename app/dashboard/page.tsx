@@ -37,20 +37,30 @@ interface ScheduledMessage {
   error_message?: string;
 }
 
+type Segment = 'D' | 'B' | 'C' | null;
+
 export default function DashboardPage() {
   const [instanceName, setInstanceName] = useState('');
   const [userPhone, setUserPhone]       = useState('');
   const [messages, setMessages]         = useState<ScheduledMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(true);
   const [subscription, setSubscription] = useState<SubscriptionState>({ plan: 'unknown', trial_ends_at: null, expired: false });
+  const [totalLifetime, setTotalLifetime] = useState<number | null>(null);
   const [sessionValidated, setSessionValidated] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<{ number: string; name?: string } | null>(null);
+  const [segment, setSegment] = useState<Segment>(null);
 
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get('seg');
+    if (raw === 'D' || raw === 'B' || raw === 'C') setSegment(raw);
+  }, []);
 
   // --- Cookie-based auth check on mount ---
   useEffect(() => {
@@ -88,6 +98,9 @@ export default function DashboardPage() {
         if (d.messages) {
           setMessages(Array.isArray(d.messages) ? d.messages : []);
           setSubscription({ plan: d.subscription_plan || 'free', trial_ends_at: d.trial_ends_at, expired: false });
+          if (typeof d.total_scheduled_lifetime === 'number') {
+            setTotalLifetime(d.total_scheduled_lifetime);
+          }
         } else setMessages(Array.isArray(d) ? d : []);
       }
     } catch {
@@ -239,6 +252,11 @@ export default function DashboardPage() {
         {/* Plan Badge */}
         {userPhone && subscription.plan !== 'unknown' && (
           <PlanBadge subscription={subscription} />
+        )}
+
+        {/* Welcome card — first access, no messages ever scheduled */}
+        {sessionValidated && userPhone && totalLifetime === 0 && (
+          <WelcomeCard segment={segment} />
         )}
 
         {/* Messages Section */}
@@ -491,6 +509,32 @@ function PlanBadge({ subscription }: { subscription: SubscriptionState }) {
       {(subscription.plan === 'trial' || subscription.plan === 'free') && (
         <a href="#prezzi" className="text-xs font-medium hover:underline">Passa a Personal</a>
       )}
+    </div>
+  );
+}
+
+// --- Welcome Card (first access, no messages scheduled yet) ---
+function getWelcomeCopy(segment: Segment): string {
+  switch (segment) {
+    case 'D':
+    case 'B':
+    case 'C':
+    default:
+      return 'Benvenuto! Clicca Manda messaggio per programmare il tuo primo messaggio.';
+  }
+}
+
+function WelcomeCard({ segment }: { segment: Segment }) {
+  return (
+    <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="w-9 h-9 rounded-full bg-[#25D366] flex items-center justify-center shrink-0">
+          <CheckCircle2 className="w-5 h-5 text-white" />
+        </div>
+        <p className="text-sm text-[#075E54] font-medium leading-snug">
+          {getWelcomeCopy(segment)}
+        </p>
+      </div>
     </div>
   );
 }
