@@ -73,6 +73,11 @@ export function createMockSupabase() {
     return proxy;
   }
 
+  const rpcResponseMap = new Map<string, { data: any; error: any }>();
+  function setRpcResponse(name: string, data: any, error: any = null) {
+    rpcResponseMap.set(name, { data, error });
+  }
+
   const client = {
     from: (table: string) => ({
       select: (...args: any[]) => makeChain(table, 'select', args),
@@ -81,13 +86,19 @@ export function createMockSupabase() {
       delete: () => makeChain(table, 'delete', []),
       upsert: (...args: any[]) => makeChain(table, 'upsert', args),
     }),
+    rpc: (name: string, args?: any) => {
+      // Track in the same `calls` array so existing assertions still work.
+      calls.push({ table: '__rpc__', operation: name, args: [args], chain: [] });
+      const resp = rpcResponseMap.get(name) || { data: null, error: null };
+      return Promise.resolve(resp);
+    },
     channel: () => ({
       on: () => ({ subscribe: () => ({}) }),
     }),
     removeChannel: () => {},
   };
 
-  return { client, calls, setResponse };
+  return { client, calls, setResponse, setRpcResponse };
 }
 
 // Fetch mock helper
@@ -204,4 +215,79 @@ export function makeRequestWithCookie(body: any, cookieValue: string, headers: R
     ...headers,
     cookie: `sw_session=${cookieValue}`,
   });
+}
+
+// Evolution contact webhook payload builders
+
+export function makeContactsSetPayload(opts: {
+  instance: string;
+  contacts: Array<{ id?: string; jid?: string; name?: string | null; pushName?: string | null; notify?: string | null }>;
+}) {
+  return {
+    event: 'CONTACTS_SET',
+    instance: opts.instance,
+    data: opts.contacts.map(c => ({
+      id: c.id || c.jid,
+      remoteJid: c.jid || c.id,
+      name: c.name ?? null,
+      pushName: c.pushName ?? null,
+      notify: c.notify ?? null,
+    })),
+  };
+}
+
+export function makeContactsUpsertPayload(opts: {
+  instance: string;
+  contacts: Array<{ id?: string; jid?: string; name?: string | null; pushName?: string | null; notify?: string | null }>;
+}) {
+  return {
+    event: 'CONTACTS_UPSERT',
+    instance: opts.instance,
+    data: opts.contacts.map(c => ({
+      id: c.id || c.jid,
+      remoteJid: c.jid || c.id,
+      name: c.name ?? null,
+      pushName: c.pushName ?? null,
+      notify: c.notify ?? null,
+    })),
+  };
+}
+
+export function makeContactsUpdatePayload(opts: {
+  instance: string;
+  contacts: Array<{ id?: string; jid?: string; name?: string | null; pushName?: string | null }>;
+}) {
+  return {
+    event: 'CONTACTS_UPDATE',
+    instance: opts.instance,
+    data: opts.contacts.map(c => ({
+      id: c.id || c.jid,
+      remoteJid: c.jid || c.id,
+      name: c.name ?? null,
+      pushName: c.pushName ?? null,
+    })),
+  };
+}
+
+export function makeMessagingHistorySetPayload(opts: {
+  instance: string;
+  contacts?: Array<{ id?: string; jid?: string; name?: string | null; pushName?: string | null; notify?: string | null }>;
+  chats?: Array<{ id?: string; name?: string | null }>;
+  messages?: any[];
+}) {
+  return {
+    event: 'MESSAGING_HISTORY_SET',
+    instance: opts.instance,
+    data: {
+      contacts: (opts.contacts || []).map(c => ({
+        id: c.id || c.jid,
+        remoteJid: c.jid || c.id,
+        name: c.name ?? null,
+        pushName: c.pushName ?? null,
+        notify: c.notify ?? null,
+      })),
+      chats: opts.chats || [],
+      messages: opts.messages || [],
+    },
+  };
 }

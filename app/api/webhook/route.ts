@@ -19,6 +19,62 @@ async function dbLog(tag: string, data: any) {
   } catch {}
 }
 
+// ── Contact-cache helpers ────────────────────────────────────────────────────
+// Used by the CONTACTS_SET / CONTACTS_UPSERT / CONTACTS_UPDATE /
+// MESSAGING_HISTORY_SET branch to normalise Baileys contact objects into
+// rows for upsert_whatsapp_contacts(p_rows JSONB).
+
+type ContactSource = 'CONTACTS_SET' | 'CONTACTS_UPSERT' | 'CONTACTS_UPDATE' | 'MESSAGING_HISTORY_SET';
+
+function contactRowsFromPayload(
+  rawList: any[],
+  userPhone: string,
+  source: ContactSource
+): Array<{ user_phone: string; contact_number: string; name: string | null; push_name: string | null; source: ContactSource }> {
+  const rows: Array<any> = [];
+  const seen = new Set<string>();
+  for (const c of rawList || []) {
+    // Evolution sometimes nulls remoteJid and puts the JID in `id`; mirror
+    // the extractJid logic from /api/contacts/route.ts.
+    const rawJid: string | undefined =
+      (typeof c?.remoteJid === 'string' && c.remoteJid.includes('@')) ? c.remoteJid :
+      (typeof c?.id === 'string' && c.id.includes('@')) ? c.id :
+      undefined;
+    if (!rawJid) continue;
+    if (rawJid.includes('@g.us') || rawJid.includes('@broadcast')) continue;
+    const numericPart = (rawJid.split('@')[0] || '').split(':')[0];
+    if (!/^\d{8,15}$/.test(numericPart)) continue;
+    if (numericPart === userPhone) continue;
+    if (seen.has(numericPart)) continue;
+    seen.add(numericPart);
+
+    const name = (typeof c?.name === 'string' && c.name.trim()) ? c.name.trim() : null;
+    const pushName =
+      (typeof c?.pushName === 'string' && c.pushName.trim()) ? c.pushName.trim() :
+      (typeof c?.notify === 'string' && c.notify.trim()) ? c.notify.trim() :
+      null;
+
+    rows.push({
+      user_phone: userPhone,
+      contact_number: numericPart,
+      name,
+      push_name: pushName,
+      source,
+    });
+  }
+  return rows;
+}
+
+async function userPhoneForInstance(instanceName: string): Promise<string | null> {
+  if (!instanceName) return null;
+  const { data } = await supabase
+    .from('user_instances')
+    .select('phone_number')
+    .eq('instance_name', instanceName)
+    .maybeSingle();
+  return (data as any)?.phone_number || null;
+}
+
 // Rome timezone helpers imported from ../../lib/webhook-utils
 
 // ── Legacy regex parser (fallback if OpenAI fails) ──
@@ -746,6 +802,56 @@ export async function POST(req) {
         } catch(e) { console.error('WEBHOOK: onboarding error:', e.message); }
       }
       return NextResponse.json({ ok: true });
+    }
+
+    // ── Contact + history events → cache into whatsapp_contacts ──
+    if (
+      eventType === 'CONTACTS_SET' ||
+      eventType === 'CONTACTS_UPSERT' ||
+      eventType === 'CONTACTS_UPDATE' ||
+      eventType === 'MESSAGING_HISTORY_SET' ||
+      eventType === 'contacts.set' ||
+      eventType === 'contacts.upsert' ||
+      eventType === 'contacts.update' ||
+      eventType === 'messaging-history.set'
+    ) {
+      const userPhone = await userPhoneForInstance(evoInstance);
+      if (!userPhone) {
+        console.log('WEBHOOK:CONTACTS skip — instance not mapped, instance=' + evoInstance);
+        return NextResponse.json({ ok: true });
+      }
+      const sourceKey: ContactSource =
+        eventType === 'CONTACTS_SET' || eventType === 'contacts.set' ? 'CONTACTS_SET' :
+        eventType === 'CONTACTS_UPSERT' || eventType === 'contacts.upsert' ? 'CONTACTS_UPSERT' :
+        eventType === 'CONTACTS_UPDATE' || eventType === 'contacts.update' ? 'CONTACTS_UPDATE' :
+        'MESSAGING_HISTORY_SET';
+
+      // MESSAGING_HISTORY_SET nests contacts under data.contacts; the other
+      // three put the array directly at data.
+      const rawList: any[] =
+        sourceKey === 'MESSAGING_HISTORY_SET'
+          ? (Array.isArray(payload?.data?.contacts) ? payload.data.contacts : [])
+          : (Array.isArray(payload?.data) ? payload.data : []);
+
+      const rows = contactRowsFromPayload(rawList, userPhone, sourceKey);
+      console.log('WEBHOOK:CONTACTS event=' + sourceKey + ' instance=' + evoInstance + ' incoming=' + rawList.length + ' persisted=' + rows.length);
+
+      if (rows.length === 0) {
+        return NextResponse.json({ ok: true, persisted: 0 });
+      }
+
+      // Use the merge-aware RPC instead of .upsert() — the RPC's COALESCE
+      // logic prevents null/empty values from a later event (e.g. an
+      // outgoing MESSAGES_UPSERT that triggers the Evolution #2426 wipe)
+      // from blanking a real name captured earlier.
+      const { data: persistedCount, error: rpcErr } = await supabase
+        .rpc('upsert_whatsapp_contacts', { p_rows: rows });
+
+      if (rpcErr) {
+        console.error('WEBHOOK:CONTACTS rpc error:', rpcErr.message);
+        return NextResponse.json({ ok: false, error: rpcErr.message }, { status: 500 });
+      }
+      return NextResponse.json({ ok: true, persisted: persistedCount ?? rows.length });
     }
 
     // ── Extract message ──
