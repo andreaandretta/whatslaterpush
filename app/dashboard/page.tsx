@@ -503,15 +503,15 @@ function HowToUseBox() {
       <ol className="space-y-3 text-sm">
         <li className="flex gap-3">
           <span className="bg-primary/10 text-primary w-6 h-6 rounded-full flex items-center justify-center font-bold shrink-0 text-xs">1</span>
-          <span>Apri WhatsApp e cerca la chat <strong>&quot;WhatsLater&quot;</strong> (la tua chat personale)</span>
+          <span>Clicca <strong>Manda messaggio</strong></span>
         </li>
         <li className="flex gap-3">
           <span className="bg-primary/10 text-primary w-6 h-6 rounded-full flex items-center justify-center font-bold shrink-0 text-xs">2</span>
-          <span>Presenta un cliente: tocca 📎 → <strong>Contatto</strong> (serve solo la prima volta)</span>
+          <span>Cerca il contatto o aggiungine uno nuovo con nome e numero</span>
         </li>
         <li className="flex gap-3">
           <span className="bg-primary/10 text-primary w-6 h-6 rounded-full flex items-center justify-center font-bold shrink-0 text-xs">3</span>
-          <span>Scrivi il messaggio con data/ora: <strong>&quot;Invia a Marco domani alle 9: Ciao!&quot;</strong></span>
+          <span>Scegli data e ora — il messaggio parte dal tuo numero in automatico</span>
         </li>
       </ol>
     </div>
