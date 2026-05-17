@@ -233,4 +233,39 @@ describe('GET /api/contacts', () => {
       { number: '393331112233', name: 'Marco', pushName: 'Marco' },
     ]);
   });
+
+  test('returns from supabase cache when whatsapp_contacts has rows', async () => {
+    mockSupa.setResponse('whatsapp_contacts:select', [
+      { contact_number: '393401111111', name: 'Mario Rossi', push_name: 'Mario' },
+      { contact_number: '393402222222', name: null,          push_name: 'Anna' },
+      { contact_number: '393403333333', name: 'Luca Bianchi', push_name: null },
+    ]);
+    // Evolution mocks return [] by default; assert below they are never hit.
+
+    const res = await callGet();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.contacts).toEqual([
+      { number: '393402222222', name: 'Anna',         pushName: 'Anna' },
+      { number: '393403333333', name: 'Luca Bianchi' },
+      { number: '393401111111', name: 'Mario Rossi',  pushName: 'Mario' },
+    ]);
+    expect(findContactsMock).not.toHaveBeenCalled();
+    expect(findChatsMock).not.toHaveBeenCalled();
+    expect(fetchAllGroupsMock).not.toHaveBeenCalled();
+  });
+
+  test('falls back to evolution pipeline when whatsapp_contacts cache is empty', async () => {
+    mockSupa.setResponse('whatsapp_contacts:select', []);
+    findContactsMock.mockResolvedValue([
+      { remoteJid: '393404444444@s.whatsapp.net', pushName: 'Sara', name: 'Sara R.' },
+    ]);
+    const res = await callGet();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.contacts).toEqual([
+      { number: '393404444444', name: 'Sara', pushName: 'Sara' },
+    ]);
+    expect(findContactsMock).toHaveBeenCalled();
+  });
 });

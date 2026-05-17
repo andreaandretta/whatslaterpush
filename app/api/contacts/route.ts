@@ -43,6 +43,37 @@ export async function GET(req: NextRequest) {
 
   if (!user?.instance_name) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
+  // ── Cache-first: read from whatsapp_contacts populated by webhook ──
+  // The webhook persists CONTACTS_SET / CONTACTS_UPSERT / CONTACTS_UPDATE /
+  // MESSAGING_HISTORY_SET into this table via upsert_whatsapp_contacts RPC.
+  // On cache-hit we skip the entire Evolution pipeline (findContacts +
+  // findChats + fetchAllGroups + whatsappNumbers + findMessages) — saves
+  // 5-15s and avoids Evolution timeouts.
+  const { data: cached } = await supabase
+    .from('whatsapp_contacts')
+    .select('contact_number, name, push_name')
+    .eq('user_phone', phone);
+
+  if (cached && cached.length > 0) {
+    const out: OutContact[] = [];
+    for (const row of cached as Array<{ contact_number: string; name: string | null; push_name: string | null }>) {
+      const num = row.contact_number;
+      if (!num || num === phone) continue;
+      const name = (row.name && row.name.trim()) || null;
+      const pushName = (row.push_name && row.push_name.trim()) || null;
+      const displayName = name || pushName;
+      if (!displayName) continue; // skip anonymous rows, same as Evolution path
+      const entry: OutContact = { number: num, name: displayName };
+      if (pushName) entry.pushName = pushName;
+      out.push(entry);
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
+    console.log('CONTACTS:GET source=supabase count=' + out.length + ' raw=' + cached.length);
+    return NextResponse.json({ contacts: out });
+  }
+
+  console.log('CONTACTS:GET source=evolution (cache empty)');
+
   let rawFromContacts: any[] = [];
   let rawFromChats: any[] = [];
   let rawGroups: any[] = [];
