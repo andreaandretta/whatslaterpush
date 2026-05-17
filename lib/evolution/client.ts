@@ -178,7 +178,14 @@ class EvolutionClient {
   async setWebhook(
     instanceName: string,
     webhookUrl: string,
-    events: string[] = ['MESSAGES_UPSERT']
+    events: string[] = [
+      'MESSAGES_UPSERT',
+      'CONTACTS_SET',
+      'CONTACTS_UPSERT',
+      'CONTACTS_UPDATE',
+      'MESSAGING_HISTORY_SET',
+      'CONNECTION_UPDATE',
+    ]
   ): Promise<void> {
     await this.request(`/webhook/set/${instanceName}`, {
       method: 'POST',

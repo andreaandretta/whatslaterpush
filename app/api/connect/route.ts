@@ -69,7 +69,15 @@ async function setWebhook(name: string): Promise<void> {
                             url: webhookUrl,
                             webhook_by_events: false,
                             webhook_base64: false,
-                            events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+                            events: [
+                              'MESSAGES_UPSERT',
+                              'CONTACTS_SET',
+                              'CONTACTS_UPSERT',
+                              'CONTACTS_UPDATE',
+                              'MESSAGING_HISTORY_SET',
+                              'CONNECTION_UPDATE',
+                              'QRCODE_UPDATED',
+                            ],
           };
           if (webhookSecret) {
                   webhookBody.headers = { 'x-webhook-secret': webhookSecret };
