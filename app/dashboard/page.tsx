@@ -54,8 +54,10 @@ export default function DashboardPage() {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<{ number: string; name?: string } | null>(null);
   const [segment, setSegment] = useState<Segment>(null);
+  const [showShareToast, setShowShareToast] = useState(false);
 
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevLifetimeRef = useRef<number | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -100,7 +102,12 @@ export default function DashboardPage() {
           setMessages(Array.isArray(d.messages) ? d.messages : []);
           setSubscription({ plan: d.subscription_plan || 'free', trial_ends_at: d.trial_ends_at, expired: false });
           if (typeof d.total_scheduled_lifetime === 'number') {
-            setTotalLifetime(d.total_scheduled_lifetime);
+            const next = d.total_scheduled_lifetime;
+            if (prevLifetimeRef.current === 0 && next === 1) {
+              setShowShareToast(true);
+            }
+            prevLifetimeRef.current = next;
+            setTotalLifetime(next);
           }
         } else setMessages(Array.isArray(d) ? d : []);
       }
@@ -334,6 +341,10 @@ export default function DashboardPage() {
           contact={selectedContact}
           onScheduled={fetchMessages}
         />
+
+        {showShareToast && (
+          <ShareToast onClose={() => setShowShareToast(false)} />
+        )}
       </main>
 
       <FAQSection />
@@ -515,6 +526,32 @@ function PlanBadge({ subscription }: { subscription: SubscriptionState }) {
       {(subscription.plan === 'trial' || subscription.plan === 'free') && (
         <a href="#prezzi" className="text-xs font-medium hover:underline">Passa a Personal</a>
       )}
+    </div>
+  );
+}
+
+// --- Share Toast (after first scheduled message) ---
+function ShareToast({ onClose }: { onClose: () => void }) {
+  const shareUrl = 'https://wa.me/?text=Programmo%20i%20miei%20messaggi%20con%20WhatsLater%20%F0%9F%9A%80%20whatslater.it';
+  return (
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] sm:w-auto sm:max-w-md bg-white rounded-2xl shadow-2xl border border-green-200 p-4">
+      <button
+        onClick={onClose}
+        className="absolute top-2 right-3 text-gray-400 hover:text-gray-600 text-xl leading-none"
+        aria-label="Chiudi"
+      >
+        &times;
+      </button>
+      <p className="text-sm font-bold text-[#075E54] mb-1 pr-6">Primo messaggio programmato!</p>
+      <p className="text-xs text-text-secondary mb-3">Fai sapere ai tuoi contatti come ti organizzi.</p>
+      <a
+        href={shareUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-2 bg-[#25D366] text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-[#1ebe5b] transition-colors"
+      >
+        Condividi su WhatsApp
+      </a>
     </div>
   );
 }
