@@ -63,12 +63,13 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
               <span className="text-3xl font-bold">&euro;0</span>
               <span className="text-text-secondary text-sm">/mese</span>
             </div>
-            <ul className="space-y-2 text-sm text-left mb-6">
+            <ul className="space-y-2 text-sm text-left mb-3">
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-[#667781] mt-0.5 shrink-0" /> 3 messaggi/giorno</li>
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-[#667781] mt-0.5 shrink-0" /> 5 contatti</li>
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-[#667781] mt-0.5 shrink-0" /> 7 giorni di storico</li>
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-[#667781] mt-0.5 shrink-0" /> 1 tentativo di invio</li>
             </ul>
+            <p className="text-sm text-text-secondary italic mt-2 mb-6">Per provare</p>
             {currentPlan === 'free' ? (
               <span className="block w-full py-2.5 rounded-xl text-sm font-medium text-gray-500 border border-gray-200 text-center">Piano attuale</span>
             ) : (
@@ -86,12 +87,13 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
               <span className="text-3xl font-bold">&euro;4,99</span>
               <span className="text-text-secondary text-sm">/mese</span>
             </div>
-            <ul className="space-y-2 text-sm text-left mb-6">
+            <ul className="space-y-2 text-sm text-left mb-3">
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 20 messaggi/giorno</li>
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 50 contatti</li>
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 30 giorni di storico</li>
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 3 tentativi di invio</li>
             </ul>
+            <p className="text-sm text-text-secondary italic mt-2 mb-6">Per chi schedula fino a 20 messaggi al giorno</p>
             {currentPlan === 'personal' ? (
               <button onClick={() => window.open('/#prezzi', '_blank')} className="w-full py-2.5 rounded-xl text-sm font-medium text-primary border border-primary hover:bg-primary/5 transition-colors">
                 Cambia piano
@@ -106,19 +108,17 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
           {/* Professional */}
           <div className="bg-white rounded-2xl p-6 border border-[#E9EDEF] shadow-sm">
             <h3 className="text-lg font-bold mb-1">Professional</h3>
-            <div className="flex items-baseline justify-center gap-1 mb-2">
+            <div className="flex items-baseline justify-center gap-1 mb-4">
               <span className="text-3xl font-bold">&euro;9,99</span>
               <span className="text-text-secondary text-sm">/mese</span>
             </div>
-            <p className="text-xs text-text-secondary italic mb-4">
-              Perfetto per: site manager, commerciali, consulenti
-            </p>
-            <ul className="space-y-2 text-sm text-left mb-6">
+            <ul className="space-y-2 text-sm text-left mb-3">
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 35 messaggi/giorno</li>
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 200 contatti</li>
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 60 giorni di storico</li>
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 3 tentativi di invio</li>
             </ul>
+            <p className="text-sm text-text-secondary italic mt-2 mb-6">Per chi coordina squadre o cantieri</p>
             {currentPlan === 'professional' ? (
               <button onClick={() => window.open('/#prezzi', '_blank')} className="w-full py-2.5 rounded-xl text-sm font-medium text-primary border border-primary hover:bg-primary/5 transition-colors">
                 Cambia piano
@@ -137,12 +137,13 @@ export default function PricingSection({ currentPlan, userPhone }: PricingSectio
               <span className="text-3xl font-bold">&euro;19,99</span>
               <span className="text-text-secondary text-sm">/mese</span>
             </div>
-            <ul className="space-y-2 text-sm text-left mb-6">
+            <ul className="space-y-2 text-sm text-left mb-3">
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 50 messaggi/giorno</li>
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> Contatti illimitati</li>
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 90 giorni di storico</li>
               <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" /> 3 tentativi di invio</li>
             </ul>
+            <p className="text-sm text-text-secondary italic mt-2 mb-6">Per chi gestisce pipeline di 30+ contatti attivi</p>
             {currentPlan === 'business' ? (
               <button onClick={() => window.open('/#prezzi', '_blank')} className="w-full py-2.5 rounded-xl text-sm font-medium text-primary border border-primary hover:bg-primary/5 transition-colors">
                 Cambia piano
