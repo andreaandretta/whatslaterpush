@@ -34,33 +34,40 @@ export function ReminderBottomSheet({ open, onClose, value, onChange }: Reminder
       aria-modal="true"
       aria-label="Promemoria"
     >
-      <div
+      <button
+        type="button"
+        aria-label="Chiudi"
+        tabIndex={-1}
         data-testid="reminder-backdrop"
         className="absolute inset-0 bg-black/50"
         onClick={onClose}
       />
       <div className="relative w-full sm:max-w-sm bg-[#1F2C33] rounded-t-3xl pb-6 pt-4 px-2 animate-slide-up">
-        <div className="w-12 h-1 bg-gray-600 rounded-full mx-auto mb-4" />
-        {OPTIONS.map((opt) => {
-          const selected = value === opt.value;
-          return (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => pick(opt.value)}
-              className="w-full flex items-center gap-4 px-4 py-3 hover:bg-white/5 rounded-xl text-left"
-            >
-              <span
-                className={`w-5 h-5 rounded-full border-2 ${
-                  selected ? 'border-primary bg-primary' : 'border-gray-500'
-                } flex items-center justify-center`}
+        <div aria-hidden="true" className="w-12 h-1 bg-gray-600 rounded-full mx-auto mb-4" />
+        <div role="radiogroup" aria-label="Promemoria">
+          {OPTIONS.map((opt) => {
+            const selected = value === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => pick(opt.value)}
+                className="w-full flex items-center gap-4 px-4 py-3 hover:bg-white/5 rounded-xl text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
               >
-                {selected && <span className="w-2 h-2 rounded-full bg-white" />}
-              </span>
-              <span className="text-white text-base">{opt.label}</span>
-            </button>
-          );
-        })}
+                <span
+                  className={`w-5 h-5 rounded-full border-2 ${
+                    selected ? 'border-primary bg-primary' : 'border-gray-500'
+                  } flex items-center justify-center`}
+                >
+                  {selected && <span className="w-2 h-2 rounded-full bg-white" />}
+                </span>
+                <span className="text-white text-base">{opt.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
