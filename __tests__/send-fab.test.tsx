@@ -32,4 +32,9 @@ describe('SendFab', () => {
     fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
     expect(onClick).not.toHaveBeenCalled();
   });
+
+  test('shows spinner when loading', () => {
+    const { container } = render(<SendFab disabled={false} loading={true} onClick={() => {}} />);
+    expect(container.querySelector('.animate-spin')).not.toBeNull();
+  });
 });
