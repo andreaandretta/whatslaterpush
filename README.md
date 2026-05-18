@@ -1,4 +1,4 @@
-# SchedWhats v7.0 - Design Edition
+# WhatsLater
 
 A modern WhatsApp message scheduler SaaS built with Next.js 14, Supabase, and Evolution API.
 
@@ -8,8 +8,8 @@ A modern WhatsApp message scheduler SaaS built with Next.js 14, Supabase, and Ev
 
 ## ✨ Features
 
-- **Natural Language Scheduling** - Type "Tomorrow at 9am" and AI handles the rest
-- **vCard Integration** - Share contacts via Note to Self to schedule
+- **Dashboard-first Scheduling** - Pick a contact, write the message, choose the time
+- **Natural Language Time Parsing** - "Tomorrow at 9am" works in the date picker
 - **Modern Soft UI** - Clean, airy design with rounded corners and soft shadows
 - **Real-time Updates** - Live message queue with Supabase subscriptions
 - **Secure** - Row Level Security, encrypted connections
@@ -92,8 +92,8 @@ schedwhats/
 │   │   ├── webhook/      # Evolution API webhook
 │   │   └── health/       # Health check endpoint
 │   ├── dashboard/        # Main dashboard UI
-│   ├── login/            # Login page
-│   ├── signup/           # Signup page
+│   ├── connect/          # Phone pairing (primary entry)
+│   ├── login/            # Login page (returning users)
 │   ├── globals.css       # Global styles
 │   ├── layout.tsx        # Root layout
 │   └── page.tsx          # Landing page
@@ -124,7 +124,7 @@ Connect WhatsApp instance using Evolution API.
 
 ### POST `/api/webhook`
 
-Receive vCard messages from Evolution API.
+Receive WhatsApp message events from Evolution API.
 
 ### GET `/api/health`
 
@@ -132,13 +132,11 @@ System health check.
 
 ## 📝 Usage Flow
 
-1. **Sign up** and connect your WhatsApp
-2. **Open WhatsApp** → Your Note to Self chat
-3. **Attach a Contact** (vCard)
-4. **Write caption** like "Tomorrow at 9am"
-5. **Send** - The webhook receives it
-6. **AI parses** the date and schedules
-7. **Message sent** at the scheduled time
+1. **Connect** your WhatsApp via pairing code at `/connect`
+2. **Open the dashboard** at `/dashboard`
+3. **Pick a contact** from your synced contacts
+4. **Write the message** and choose when to send it
+5. **Message sent** at the scheduled time, from your number
 
 ## 🔒 Security
 

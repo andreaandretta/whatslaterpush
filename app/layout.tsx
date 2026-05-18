@@ -13,9 +13,15 @@ const spaceGrotesk = Space_Grotesk({
 })
 
 export const metadata: Metadata = {
-  title: 'WhatsLater - Promemoria WhatsApp automatici',
-  description: 'I tuoi clienti non dimenticano più l\'appuntamento. Promemoria automatici da WhatsApp, dal tuo numero.',
-  keywords: ['WhatsApp', 'promemoria', 'appuntamenti', 'automatici', 'professionisti'],
+  title: 'WhatsLater - Programma messaggi WhatsApp dal tuo numero',
+  description: 'Programma messaggi WhatsApp dal tuo numero personale. Per chi coordina squadre, fornitori e clienti ogni giorno.',
+  keywords: ['WhatsApp', 'programmare messaggi', 'schedulare WhatsApp', 'allenatori', 'site manager', 'professionisti'],
+  openGraph: {
+    title: 'WhatsLater - Programma messaggi WhatsApp dal tuo numero',
+    description: 'Programma messaggi WhatsApp dal tuo numero personale. Per chi coordina squadre, fornitori e clienti ogni giorno.',
+    locale: 'it_IT',
+    type: 'website',
+  },
 }
 
 export default function RootLayout({

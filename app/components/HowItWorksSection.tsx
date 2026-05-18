@@ -12,8 +12,8 @@ const steps = [
   {
     icon: MessageSquare,
     number: 2,
-    title: 'Scrivi al tuo Assistente',
-    description: "Apri la chat WhatsLater e scrivi: 'Invia a Marco domani alle 15...'",
+    title: 'Scegli contatto e orario',
+    description: 'Dalla dashboard, scegli il contatto, scrivi il messaggio e quando inviarlo',
   },
   {
     icon: Check,
