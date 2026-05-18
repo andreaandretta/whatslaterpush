@@ -26,62 +26,33 @@ export default function HeroSection() {
           </div>
         </div>
 
-        {/* Phone mockup — static WhatsApp chat */}
-        <div className="flex justify-center">
+        {/* Phone mockup — D scenario: scheduled match summons */}
+        <div className="flex flex-col items-center gap-4">
+          <p className="text-xs sm:text-sm text-white/70 italic text-center max-w-[280px] leading-snug">
+            Schedulato giovedì sera dalla dashboard, inviato dal tuo numero sabato mattina alle 9
+          </p>
           <div className="w-[220px] sm:w-[260px] bg-[#0b141a] rounded-[2rem] border-2 border-white/10 overflow-hidden p-2 sm:p-3">
             <div className="rounded-2xl overflow-hidden">
-              {/* Chat header */}
+              {/* Chat header — Capitano U12 */}
               <div className="bg-[#075E54] px-3 py-2.5 flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-full bg-[#25D366] flex items-center justify-center">
-                  <span className="text-white text-xs font-bold">W</span>
+                  <span className="text-white text-xs font-bold">C</span>
                 </div>
                 <div className="flex-1">
-                  <div className="text-white text-xs font-semibold">WhatsLater</div>
+                  <div className="text-white text-xs font-semibold">Capitano U12</div>
                   <div className="text-[#93cfc4] text-[9px]">online</div>
                 </div>
               </div>
 
-              {/* Chat area */}
-              <div className="bg-[#ECE5DD] p-3 space-y-2.5" style={{ minHeight: '320px' }}>
-                {/* User bubble (right) */}
+              {/* Chat area — single scheduled message just delivered */}
+              <div className="bg-[#ECE5DD] p-3" style={{ minHeight: '200px' }}>
                 <div className="flex justify-end">
-                  <div className="bg-[#DCF8C6] rounded-lg rounded-tr-none px-2.5 py-1.5 max-w-[85%]">
+                  <div className="bg-[#DCF8C6] rounded-lg rounded-tr-none px-2.5 py-1.5 max-w-[90%]">
                     <p className="text-[11px] text-[#111B21] leading-relaxed">
-                      Invia a Marco domani alle 15: Ricorda l&apos;appuntamento! 📅
+                      Convocazione partita oggi 15:00 al campo Bovisa. Ritrovo 14:30 davanti agli spogliatoi.
                     </p>
                     <div className="flex items-center justify-end gap-1 mt-0.5">
-                      <span className="text-[8px] text-[#667781]">10:23</span>
-                      <span className="text-[8px] text-[#53BDEB]">✓✓</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Bot reply (left) */}
-                <div className="flex justify-start">
-                  <div className="bg-white rounded-lg rounded-tl-none px-2.5 py-1.5 max-w-[85%]">
-                    <p className="text-[11px] text-[#111B21] leading-relaxed whitespace-pre-line">{`✅ Perfetto! Invierò a Marco\ndomani alle 15:00:\n"Ricorda l'appuntamento!"`}</p>
-                    <div className="flex items-center justify-end gap-1 mt-0.5">
-                      <span className="text-[8px] text-[#667781]">10:23</span>
-                      <span className="text-[8px] text-[#53BDEB]">✓✓</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Separator — Marco receives */}
-                <div className="flex justify-center">
-                  <div className="bg-[#E2F7CB] rounded-md px-3 py-0.5">
-                    <span className="text-[9px] text-[#667781]">📨 Messaggio per Marco Rossi</span>
-                  </div>
-                </div>
-
-                {/* Marco's received message (left) */}
-                <div className="flex justify-start">
-                  <div className="bg-white rounded-lg rounded-tl-none px-2.5 py-1.5 max-w-[85%]">
-                    <p className="text-[11px] text-[#111B21] leading-relaxed">
-                      Ciao! Ricorda l&apos;appuntamento di domani alle 15 🗓️
-                    </p>
-                    <div className="flex items-center justify-end gap-1 mt-0.5">
-                      <span className="text-[8px] text-[#667781]">15:00</span>
+                      <span className="text-[8px] text-[#667781]">09:00</span>
                       <span className="text-[8px] text-[#53BDEB]">✓✓</span>
                     </div>
                   </div>
