@@ -117,10 +117,9 @@ test.describe('Contact picker + direct scheduling', () => {
     await page.getByPlaceholder(/Numero/i).fill('3331234567');
     await page.getByRole('button', { name: /Continua/i }).click();
 
-    await expect(page.getByText('Test Persona')).toBeVisible();
-    await page.getByRole('button', { name: /Domani 9:00/i }).click();
+    await expect(page.getByText(/Messaggio per Test Persona/i)).toBeVisible();
     await page.getByPlaceholder(/Scrivi il messaggio/i).fill('Messaggio di test e2e');
-    await page.getByRole('button', { name: /^Schedula$/i }).click();
+    await page.getByRole('button', { name: /Invia/i }).click();
 
     await expect.poll(() => postBody?.recipient_number).toBe('393331234567');
     expect(postBody?.recipient_name).toBe('Test Persona');
