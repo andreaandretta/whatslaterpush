@@ -47,8 +47,15 @@ describe('DarkCalendarDialog', () => {
 
   test('clicking OK emits the picked date', () => {
     const onConfirm = jest.fn();
+    const fixedMin = new Date(2026, 0, 1);
     render(
-      <DarkCalendarDialog open={true} onClose={() => {}} value={may15} onConfirm={onConfirm} />
+      <DarkCalendarDialog
+        open={true}
+        onClose={() => {}}
+        value={may15}
+        minDate={fixedMin}
+        onConfirm={onConfirm}
+      />
     );
     fireEvent.click(screen.getByRole('button', { name: /^20$/ }));
     fireEvent.click(screen.getByRole('button', { name: /^OK$/i }));
