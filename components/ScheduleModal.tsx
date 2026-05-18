@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, ArrowLeft, Calendar as CalendarIcon, UserCheck, Bell, ChevronRight } from 'lucide-react';
+import { X, ArrowLeft, Calendar as CalendarIcon, UserCheck, Bell, ChevronRight, ChevronDown, Settings } from 'lucide-react';
 import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { DarkCalendarDialog } from './schedule/DarkCalendarDialog';
@@ -66,6 +66,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [clockOpen, setClockOpen] = useState(false);
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -81,6 +82,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       setCalendarOpen(false);
       setClockOpen(false);
       setReminderSheetOpen(false);
+      setAdvancedOpen(false);
     }
   }, [open]);
 
@@ -93,6 +95,14 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
 
   const contactLabel = contact.name || `+${contact.number}`;
   const dateLabel = format(scheduledDate, 'EEE d MMM', { locale: it });
+
+  const hasReminder = reminder !== 'never';
+  const advancedSummary = !approval && !hasReminder
+    ? 'Nessuna notifica · invio automatico'
+    : [
+        approval ? 'Approvazione richiesta' : null,
+        hasReminder ? `Promemoria: ${REMINDER_LABELS[reminder]}` : null,
+      ].filter(Boolean).join(' · ');
 
   async function handleSubmit() {
     if (!canSubmit || !contact) return;
@@ -203,42 +213,63 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
             </div>
           </div>
 
-          <div className="flex items-start gap-4 px-4 py-3">
-            <UserCheck className="w-5 h-5 text-gray-400 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <div className="text-white text-base">Richiedi approvazione per l&apos;invio</div>
-              <div className="text-gray-400 text-sm mt-0.5">
-                Prima dell&apos;invio riceverai una notifica di conferma
-              </div>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={approval}
-              aria-label="Richiedi approvazione"
-              onClick={() => setApproval((v) => !v)}
-              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 focus:outline-none focus:ring-2 focus:ring-primary/30 ${
-                approval ? 'bg-primary' : 'bg-gray-600'
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
-                  approval ? 'translate-x-5' : ''
-                }`}
-              />
-            </button>
-          </div>
-
           <button
             type="button"
-            onClick={() => setReminderSheetOpen(true)}
+            onClick={() => setAdvancedOpen((v) => !v)}
+            aria-expanded={advancedOpen}
+            aria-controls="advanced-options"
             className="w-full flex items-center gap-4 px-4 py-3 hover:bg-white/5 text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
           >
-            <Bell className="w-5 h-5 text-gray-400 shrink-0" />
-            <div className="flex-1 text-white text-base">Promemoria</div>
-            <div className="text-primary text-base">{REMINDER_LABELS[reminder]}</div>
-            <ChevronRight className="w-5 h-5 text-gray-500" />
+            <Settings className="w-5 h-5 text-gray-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="text-white text-base">Opzioni avanzate</div>
+              <div className="text-gray-400 text-sm mt-0.5 truncate">{advancedSummary}</div>
+            </div>
+            <ChevronDown
+              className={`w-5 h-5 text-gray-500 shrink-0 transition-transform ${advancedOpen ? 'rotate-180' : ''}`}
+            />
           </button>
+
+          {advancedOpen && (
+            <div id="advanced-options" className="border-t border-[#2A3942] mx-4 mt-1">
+              <div className="flex items-start gap-4 py-4">
+                <UserCheck className="w-5 h-5 text-gray-400 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <div className="text-white text-base">Richiedi approvazione per l&apos;invio</div>
+                  <div className="text-gray-400 text-sm mt-0.5">
+                    Prima dell&apos;invio riceverai una notifica di conferma
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={approval}
+                  aria-label="Richiedi approvazione"
+                  onClick={() => setApproval((v) => !v)}
+                  className={`relative w-11 h-6 rounded-full transition-colors shrink-0 focus:outline-none focus:ring-2 focus:ring-primary/30 ${
+                    approval ? 'bg-primary' : 'bg-gray-600'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                      approval ? 'translate-x-5' : ''
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setReminderSheetOpen(true)}
+                className="w-full flex items-center gap-4 py-3 hover:bg-white/5 text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <Bell className="w-5 h-5 text-gray-400 shrink-0" />
+                <div className="flex-1 text-white text-base">Promemoria</div>
+                <div className="text-primary text-base">{REMINDER_LABELS[reminder]}</div>
+                <ChevronRight className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+          )}
 
           <div className="px-4 pt-4">
             <textarea

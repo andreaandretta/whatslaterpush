@@ -28,15 +28,26 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
     expect(screen.getByText(/Messaggio per Mario Rossi/i)).toBeInTheDocument();
   });
 
-  test('shows description, message, approval toggle, reminder row, and FAB', () => {
+  test('shows description, message, FAB; advanced options collapsed by default with silent summary', () => {
     render(
       <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} />
     );
     expect(screen.getByPlaceholderText(/Descrizione/i)).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/Scrivi il messaggio/i)).toBeInTheDocument();
+    expect(screen.getByText(/Opzioni avanzate/i)).toBeInTheDocument();
+    expect(screen.getByText(/Nessuna notifica · invio automatico/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Richiedi approvazione per l'invio/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Promemoria$/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Invia/i })).toBeInTheDocument();
+  });
+
+  test('expanding "Opzioni avanzate" reveals approval toggle and reminder row', () => {
+    render(
+      <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Opzioni avanzate/i }));
     expect(screen.getByText(/Richiedi approvazione per l'invio/i)).toBeInTheDocument();
     expect(screen.getByText(/^Promemoria$/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Invia/i })).toBeInTheDocument();
   });
 
   test('FAB is disabled when message is empty', () => {
