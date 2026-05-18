@@ -186,6 +186,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
               <button
                 type="button"
                 onClick={() => setCalendarOpen(true)}
+                aria-label="Modifica data"
                 className="capitalize hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 rounded"
               >
                 {dateLabel}
@@ -194,6 +195,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
               <button
                 type="button"
                 onClick={() => setClockOpen(true)}
+                aria-label="Modifica orario"
                 className="hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 rounded"
               >
                 {selectedTime}

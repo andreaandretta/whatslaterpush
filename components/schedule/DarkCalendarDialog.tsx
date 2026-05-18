@@ -56,7 +56,8 @@ export function DarkCalendarDialog({ open, onClose, value, minDate, onConfirm }:
             type="button"
             onClick={() => setViewMonth(subMonths(viewMonth, 1))}
             aria-label="Mese precedente"
-            className="p-2 rounded-full hover:bg-white/10 text-white focus:outline-none focus:ring-2 focus:ring-primary/30"
+            disabled={!isBefore(startOfMonth(min), startOfMonth(viewMonth))}
+            className="p-2 rounded-full hover:bg-white/10 text-white focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>

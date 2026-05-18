@@ -157,7 +157,7 @@ export function AnalogClockDialog({ open, onClose, value, onConfirm }: AnalogClo
                   textAnchor="middle"
                   dominantBaseline="central"
                   fontSize={n.value >= 12 ? 12 : 14}
-                  fill={isSelected ? '#000' : '#fff'}
+                  fill="#fff"
                   fontWeight={isSelected ? 600 : 400}
                 >
                   {n.value === 0 ? '00' : n.value}
@@ -181,7 +181,7 @@ export function AnalogClockDialog({ open, onClose, value, onConfirm }: AnalogClo
                   textAnchor="middle"
                   dominantBaseline="central"
                   fontSize={14}
-                  fill={isSelected ? '#000' : '#fff'}
+                  fill="#fff"
                   fontWeight={isSelected ? 600 : 400}
                 >
                   {pad(n.value)}
