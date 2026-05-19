@@ -303,8 +303,9 @@ export default function DashboardPage() {
                   <button onClick={() => setShowHelp(false)} className="absolute top-2 right-2 text-gray-400">&times;</button>
                   <p className="font-bold mb-2">Come funziona:</p>
                   <ol className="list-decimal list-inside space-y-1 text-text-secondary">
-                    <li>Invia il contatto di un tuo cliente (📎 &rarr; Contatto)</li>
-                    <li>Scrivi: &quot;Ricorda a [nome] l&apos;appuntamento di domani alle 15&quot;</li>
+                    <li>Clicca &quot;Manda messaggio&quot;</li>
+                    <li>Cerca il contatto o aggiungine uno nuovo</li>
+                    <li>Scegli data e ora</li>
                   </ol>
                 </div>
               )}
