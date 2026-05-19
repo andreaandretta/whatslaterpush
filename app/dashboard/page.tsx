@@ -2,11 +2,10 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  Calendar, CheckCircle2, Loader2, Smartphone, LogOut, Trash2, Plus
+  Calendar, CheckCircle2, Loader2, Smartphone, LogOut, Trash2
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { Button } from '@/components/Button';
-import QuickCaptureModal from '@/components/QuickCaptureModal';
 import ContactPickerModal from '@/components/ContactPickerModal';
 import ScheduleModal from '@/components/ScheduleModal';
 import { ContactAvatar } from '@/components/ContactAvatar';
@@ -49,7 +48,6 @@ export default function DashboardPage() {
   const [totalLifetime, setTotalLifetime] = useState<number | null>(null);
   const [sessionValidated, setSessionValidated] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
-  const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<{ number: string; name?: string } | null>(null);
@@ -249,13 +247,6 @@ export default function DashboardPage() {
           >
             ✉️ Manda messaggio
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => setQuickCaptureOpen(true)}
-            className="w-full sm:w-auto"
-          >
-            <Plus className="w-5 h-5 mr-2" /> Nuovo follow-up
-          </Button>
         </div>
         {/* Plan Badge */}
         {userPhone && subscription.plan !== 'unknown' && (
@@ -317,13 +308,6 @@ export default function DashboardPage() {
         {(showPricing || subscription.plan === 'personal' || subscription.plan === 'business') && (
           <PricingSection currentPlan={subscription.plan} userPhone={userPhone} />
         )}
-
-        {/* QuickCaptureModal */}
-        <QuickCaptureModal
-          open={quickCaptureOpen}
-          onClose={() => setQuickCaptureOpen(false)}
-          userPhone={userPhone}
-        />
 
         <ContactPickerModal
           open={contactPickerOpen}

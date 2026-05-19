@@ -369,7 +369,7 @@ describe('GET /api/contacts', () => {
       mockSupa.setResponse('whatsapp_contacts:select', [
         { contact_number: '393401111111', name: 'Mario', push_name: 'Mario' },
       ]);
-      // Number not in cache (e.g. added manually via QuickCaptureModal earlier today)
+      // Number not in cache (e.g. added manually via ContactPicker "Nuovo contatto" earlier today)
       mockSupa.setResponse('scheduled_messages:select', [
         { recipient_number: '393409999999', recipient_name: 'Manual Lead' },
       ]);

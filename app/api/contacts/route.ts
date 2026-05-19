@@ -21,11 +21,12 @@ interface OutContact {
   // link — the browser loads it without proxying through our server.
   // Absent (not empty string) when no photo is known.
   photoUrl?: string;
-  // True when the row was inserted via QuickCaptureModal / manual entry
-  // in /api/messages. Lets the picker include numbers that the webhook
-  // has never confirmed via CONTACTS_UPSERT (no push_name yet) without
-  // resorting to the fragile `name.startsWith('+')` proxy. Omitted when
-  // false to keep the JSON response lean.
+  // True when the row was inserted via manual entry in /api/messages
+  // (ContactPicker "Nuovo contatto" path). Lets the picker include
+  // numbers that the webhook has never confirmed via CONTACTS_UPSERT
+  // (no push_name yet) without resorting to the fragile
+  // `name.startsWith('+')` proxy. Omitted when false to keep the JSON
+  // response lean.
   addedManually?: boolean;
 }
 
@@ -42,7 +43,8 @@ const SELF_PLACEHOLDERS = new Set([
 //   - its display name is not the synthetic `+<number>` placeholder
 //     (real name from WhatsApp name/pushName/verifiedName), OR
 //   - it was added manually via /api/messages POST (user typed the number
-//     in QuickCaptureModal, so they expect it back in the picker).
+//     in ContactPicker "Nuovo contatto", so they expect it back in the
+//     picker).
 //
 // Replaces the old `name.startsWith('+')` proxy which would silently
 // exclude legitimate contacts whose name happens to start with "+" (e.g.
