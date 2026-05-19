@@ -1147,7 +1147,6 @@ export async function POST(req) {
           '1️⃣ Allega il contatto del destinatario (premi 📎 → Contatto) — solo la prima volta\n' +
           '2️⃣ Scrivi il messaggio, esempio:\n' +
           '   "Invia a Marco domani alle 15: Ricordati la riunione!"\n\n' +
-          '📹 Guarda come si fa: https://whatslaterpush.vercel.app/tutorial\n\n' +
           '💬 Altri comandi:\n' +
           '- LISTA — vedi messaggi programmati\n' +
           '- ANNULLA [numero] — cancella un messaggio\n' +

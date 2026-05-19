@@ -4,11 +4,26 @@ import { ChevronDown } from 'lucide-react';
 import { cn } from '../lib/cn';
 
 const faqs = [
-  { q: "E sicuro collegare WhatsApp?", a: "I tuoi dati sono protetti con la massima sicurezza. Nessuno puo leggere i tuoi messaggi." },
-  { q: "Come collego WhatsApp?", a: "Inserisci il tuo numero di telefono e segui le istruzioni. Ci vogliono 30 secondi." },
-  { q: "E se il telefono e spento?", a: "I messaggi programmati partono anche se il telefono e spento." },
-  { q: "Posso annullare un messaggio programmato?", a: "Si, dalla dashboard clicca 'Annulla invio' su qualsiasi messaggio non ancora inviato." },
-  { q: "Come capisce gli orari?", a: "Scrivi normalmente: 'domani alle 15', 'lunedi mattina', 'tra 2 ore'. WhatsLater capisce automaticamente." },
+  {
+    q: "Il messaggio parte dal mio numero personale o da un numero aziendale?",
+    a: "Dal tuo numero personale, quello che hai collegato in fase di setup. Chi riceve vede la chat con te — niente bot, niente sender \"WhatsLater\". Per loro è come se l'avessi scritto manualmente in quel momento.",
+  },
+  {
+    q: "Funziona anche per coordinare fornitori sul cantiere?",
+    a: "Sì, è uno degli usi più comuni. Site manager e geometri schedulano gli avvisi al fornitore la sera prima della consegna — \"domani 8:30 al cancello B\", \"l'ingegnere XY sarà in cantiere giovedì alle 14\". WhatsApp resta il canale, tu eviti di doverlo ricordare alle 6 del mattino.",
+  },
+  {
+    q: "Cosa succede se il mio telefono è spento?",
+    a: "Il messaggio parte lo stesso. WhatsLater gira su un server dedicato connesso al tuo account WhatsApp via linked devices — stessa tecnologia di WhatsApp Web, funziona anche col tuo telefono offline. Spegni la sera senza pensieri.",
+  },
+  {
+    q: "Posso vedere il messaggio prima che parta?",
+    a: "Sì, attivando \"Richiedi approvazione\" nelle Opzioni avanzate della schermata di scheduling. Prima dell'invio ricevi una notifica e devi confermare. Di default è disattivato — la maggior parte preferisce setup-and-forget.",
+  },
+  {
+    q: 'Posso programmare messaggi ricorrenti tipo "ogni lunedì alle 7 alla squadra"?',
+    a: "Non ancora — è in roadmap per la prossima release. Oggi puoi schedulare un messaggio alla volta. Workaround che usano gli allenatori: la domenica sera, in 10 minuti, schedulano i 4 lunedì del mese. Il copia-incolla del testo è veloce.",
+  },
 ];
 
 export default function FAQSection() {
@@ -35,7 +50,7 @@ export default function FAQSection() {
                 )} />
               </button>
               <div
-                className={cn("px-6 overflow-hidden transition-all duration-300 ease-in-out", openIndex === i ? "max-h-40 pb-5 opacity-100" : "max-h-0 opacity-0")}
+                className={cn("px-6 overflow-hidden transition-all duration-300 ease-in-out", openIndex === i ? "max-h-64 pb-5 opacity-100" : "max-h-0 opacity-0")}
               >
                 <p className="text-text-secondary text-sm leading-relaxed">{faq.a}</p>
               </div>
