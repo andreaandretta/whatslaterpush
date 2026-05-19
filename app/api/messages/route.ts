@@ -177,6 +177,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: insErr.message }, { status: 500 });
   }
 
+  // Best-effort: ensure the manually-typed recipient has a whatsapp_contacts
+  // row so the picker can list them next time even before the webhook
+  // confirms their existence via CONTACTS_UPSERT. ignoreDuplicates=true maps
+  // to ON CONFLICT DO NOTHING, which keeps any pre-existing webhook-ingested
+  // row intact (their added_manually stays whatever it already was — usually
+  // false). A failure here must not mask the scheduled-message success, so
+  // errors are logged and swallowed.
+  try {
+    const { error: contactErr } = await supabase
+      .from('whatsapp_contacts')
+      .upsert({
+        user_phone: phone,
+        contact_number: normalized,
+        name: cleanName,
+        push_name: null,
+        source: 'MANUAL',
+        added_manually: true,
+      }, { onConflict: 'user_phone,contact_number', ignoreDuplicates: true });
+    if (contactErr) console.error('MANUAL_CONTACT_UPSERT_FAILED', contactErr.message);
+  } catch (err: any) {
+    console.error('MANUAL_CONTACT_UPSERT_FAILED', err?.message || err);
+  }
+
   return NextResponse.json({
     id: inserted.id,
     scheduled_at: inserted.scheduled_at,

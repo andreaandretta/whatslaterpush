@@ -21,6 +21,12 @@ interface OutContact {
   // link — the browser loads it without proxying through our server.
   // Absent (not empty string) when no photo is known.
   photoUrl?: string;
+  // True when the row was inserted via QuickCaptureModal / manual entry
+  // in /api/messages. Lets the picker include numbers that the webhook
+  // has never confirmed via CONTACTS_UPSERT (no push_name yet) without
+  // resorting to the fragile `name.startsWith('+')` proxy. Omitted when
+  // false to keep the JSON response lean.
+  addedManually?: boolean;
 }
 
 // Baileys hardcodes "Você" (PT-BR for "You") as the sender pushName on
@@ -30,6 +36,20 @@ interface OutContact {
 const SELF_PLACEHOLDERS = new Set([
   'Você', 'You', 'Tu', 'Tú', 'Sie', 'Ich', 'Me', 'Yo',
 ]);
+
+// Picker visibility rule, applied uniformly to both cache-first and
+// Evolution-fallback paths. Includes a contact when:
+//   - its display name is not the synthetic `+<number>` placeholder
+//     (real name from WhatsApp name/pushName/verifiedName), OR
+//   - it was added manually via /api/messages POST (user typed the number
+//     in QuickCaptureModal, so they expect it back in the picker).
+//
+// Replaces the old `name.startsWith('+')` proxy which would silently
+// exclude legitimate contacts whose name happens to start with "+" (e.g.
+// someone saved as "+39 Anna" in an address book).
+function isVisibleInPicker(c: OutContact): boolean {
+  return c.name !== `+${c.number}` || c.addedManually === true;
+}
 
 export async function GET(req: NextRequest) {
   const raw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
@@ -55,24 +75,26 @@ export async function GET(req: NextRequest) {
   // 5-15s and avoids Evolution timeouts.
   const { data: cached } = await supabase
     .from('whatsapp_contacts')
-    .select('contact_number, name, push_name, profile_pic_url')
+    .select('contact_number, name, push_name, profile_pic_url, added_manually')
     .eq('user_phone', phone);
 
   if (cached && cached.length > 0) {
-    const out: OutContact[] = [];
-    for (const row of cached as Array<{ contact_number: string; name: string | null; push_name: string | null; profile_pic_url: string | null }>) {
+    const raw: OutContact[] = [];
+    for (const row of cached as Array<{ contact_number: string; name: string | null; push_name: string | null; profile_pic_url: string | null; added_manually: boolean | null }>) {
       const num = row.contact_number;
       if (!num || num === phone) continue;
       const name = (row.name && row.name.trim()) || null;
       const pushName = (row.push_name && row.push_name.trim()) || null;
       const displayName = name || pushName;
-      if (!displayName) continue; // skip anonymous rows, same as Evolution path
-      const entry: OutContact = { number: num, name: displayName };
+      const addedManually = row.added_manually === true;
+      const entry: OutContact = { number: num, name: displayName || `+${num}` };
       if (pushName) entry.pushName = pushName;
       const photoUrl = (row.profile_pic_url && row.profile_pic_url.trim()) || null;
       if (photoUrl) entry.photoUrl = photoUrl;
-      out.push(entry);
+      if (addedManually) entry.addedManually = true;
+      raw.push(entry);
     }
+    const out = raw.filter(isVisibleInPicker);
     out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
 
     // Recenti: 10 destinatari distinti più recenti, esclusi i cancelled.
@@ -279,12 +301,7 @@ export async function GET(req: NextRequest) {
     console.error('NAME_BACKFILL_FAILED', err?.message || err);
   }
 
-  // Picker shows only contacts with a real name — the "+number" fallback
-  // entries are noise for users browsing the list. "Nuovo contatto" handles
-  // the manual-entry case for unknown numbers.
-  const out: OutContact[] = Array.from(byNumber.values()).filter(
-    (c) => !c.name.startsWith('+')
-  );
+  const out: OutContact[] = Array.from(byNumber.values()).filter(isVisibleInPicker);
   out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
 
   // Evolution-fallback path: utente fresco, niente storia da mostrare.

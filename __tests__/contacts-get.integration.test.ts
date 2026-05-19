@@ -453,4 +453,61 @@ describe('GET /api/contacts', () => {
       expect(body.recents).toEqual([]);
     });
   });
+
+  describe('isVisibleInPicker filter (added_manually flag)', () => {
+    test('row with added_manually=true and no name appears with +number placeholder', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393409999999', name: null, push_name: null, profile_pic_url: null, added_manually: true },
+      ]);
+      const res = await callGet();
+      const body = await res.json();
+      expect(body.contacts).toEqual([
+        { number: '393409999999', name: '+393409999999', addedManually: true },
+      ]);
+    });
+
+    test('row with only push_name appears (displayName falls back to push_name)', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393401111111', name: null, push_name: 'Anna', profile_pic_url: null, added_manually: false },
+      ]);
+      const res = await callGet();
+      const body = await res.json();
+      expect(body.contacts).toEqual([
+        { number: '393401111111', name: 'Anna', pushName: 'Anna' },
+      ]);
+    });
+
+    test('row without name AND without push_name AND added_manually=false is excluded', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393409999999', name: null, push_name: null, profile_pic_url: null, added_manually: false },
+        { contact_number: '393401111111', name: 'Mario', push_name: 'Mario', profile_pic_url: null, added_manually: false },
+      ]);
+      const res = await callGet();
+      const body = await res.json();
+      expect(body.contacts.map((c: any) => c.number)).toEqual(['393401111111']);
+    });
+
+    test('addedManually flag exposed in response only when true (lean JSON)', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393401111111', name: 'Manual Lead', push_name: null, profile_pic_url: null, added_manually: true },
+        { contact_number: '393402222222', name: 'Webhook Contact', push_name: 'Webhook', profile_pic_url: null, added_manually: false },
+      ]);
+      const res = await callGet();
+      const body = await res.json();
+      const manual = body.contacts.find((c: any) => c.number === '393401111111');
+      const webhook = body.contacts.find((c: any) => c.number === '393402222222');
+      expect(manual.addedManually).toBe(true);
+      expect(webhook.addedManually).toBeUndefined();
+    });
+
+    test('null added_manually column treated as not manual (defense in depth)', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393401111111', name: 'Mario', push_name: 'Mario', profile_pic_url: null, added_manually: null },
+      ]);
+      const res = await callGet();
+      const body = await res.json();
+      const mario = body.contacts.find((c: any) => c.number === '393401111111');
+      expect(mario.addedManually).toBeUndefined();
+    });
+  });
 });

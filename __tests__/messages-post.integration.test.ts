@@ -52,6 +52,13 @@ function mockUserInstance(plan = 'personal') {
   });
 }
 
+function mockInsertedRow() {
+  mockSupa.setResponse('scheduled_messages:insert', {
+    id: 'new-msg-uuid',
+    scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
+  });
+}
+
 describe('POST /api/messages', () => {
   test('401 when no session cookie', async () => {
     const res = await callPost({
@@ -163,5 +170,69 @@ describe('POST /api/messages', () => {
       scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
     });
     expect(res.status).toBe(200);
+  });
+
+  describe('whatsapp_contacts manual upsert hook', () => {
+    test('upserts whatsapp_contacts with added_manually=true and source=MANUAL', async () => {
+      mockUserInstance('personal');
+      mockInsertedRow();
+      const res = await callPost({
+        recipient_number: '3339998877',
+        recipient_name: 'Anna Lead',
+        message: 'Ciao',
+        scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
+      });
+      expect(res.status).toBe(200);
+
+      const upsertCall = mockSupa.calls.find((c) => c.table === 'whatsapp_contacts' && c.operation === 'upsert');
+      expect(upsertCall).toBeDefined();
+      expect(upsertCall!.args[0]).toMatchObject({
+        user_phone: USER_PHONE,
+        contact_number: '393339998877',
+        name: 'Anna Lead',
+        push_name: null,
+        source: 'MANUAL',
+        added_manually: true,
+      });
+      // ignoreDuplicates=true → INSERT ... ON CONFLICT DO NOTHING. This is what
+      // keeps webhook-ingested rows intact (added_manually stays false for them).
+      expect(upsertCall!.args[1]).toMatchObject({
+        onConflict: 'user_phone,contact_number',
+        ignoreDuplicates: true,
+      });
+    });
+
+    test('upserts with name=null when recipient_name is missing', async () => {
+      mockUserInstance('personal');
+      mockInsertedRow();
+      const res = await callPost({
+        recipient_number: '3339998877',
+        message: 'Ciao',
+        scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
+      });
+      expect(res.status).toBe(200);
+
+      const upsertCall = mockSupa.calls.find((c) => c.table === 'whatsapp_contacts' && c.operation === 'upsert');
+      expect(upsertCall!.args[0].name).toBeNull();
+      expect(upsertCall!.args[0].added_manually).toBe(true);
+    });
+
+    test('whatsapp_contacts upsert failure does not break scheduled_messages success', async () => {
+      mockUserInstance('personal');
+      mockInsertedRow();
+      mockSupa.setResponse('whatsapp_contacts:upsert', null, { message: 'simulated supabase error' });
+
+      const res = await callPost({
+        recipient_number: '3339998877',
+        recipient_name: 'Anna',
+        message: 'Ciao',
+        scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
+      });
+      // Schedule succeeded despite the contact upsert failing — order matters:
+      // the user's message is what they care about, the cache pre-warm is a bonus.
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.status).toBe('pending');
+    });
   });
 });
