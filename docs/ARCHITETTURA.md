@@ -1,3 +1,21 @@
+> ⚠️ **DOCUMENTO DEPRECATO** — 4 Aprile 2026 (snapshot v7.0.0).
+>
+> Descrive il **vecchio paradigma user-facing** in cui il flusso primario era "L'utente scrive nella chat Note a se stesso → l'AI parsifica → il cron invia". Dopo la decisione del 2026-05-17 ("flusso primario dashboard, self-chat hidden"), il flusso utente canonico è ora `dashboard → ContactPickerModal → ScheduleModal → POST /api/messages`. Il parser self-chat resta **solo backend** in `app/api/webhook/route.ts` ed è classificato come easter egg, mai menzionato in UI o marketing.
+>
+> Altre incongruenze rispetto allo stato corrente:
+> - Lista le pagine `/signup` e `/tutorial` come folder vive — entrambe eliminate nel batch UX cleanup 2026-05-19.
+> - Schema DB v7.0 referenzia `whatsapp_instances`, `source_vcard`, `message_logs`, `system_status` — il codice live usa `user_instances` e ha migrato a un set di tabelle diverso (vedi `supabase/migrations/`).
+> - Tier system descritto senza Professional €9,99 (introdotto 2026-05-17).
+>
+> **Stato attuale** in:
+> - [`../CLAUDE.md`](../CLAUDE.md) — stato sintetico aggiornato
+> - `AndreaVault/decisions.md` — log decisioni canoniche
+> - `supabase/migrations/` — source of truth per lo schema DB live
+>
+> Conservato come riferimento storico architetturale (stack tecnico, flussi cron, regole anti-ban) ma **non come descrizione del prodotto attuale**.
+
+---
+
 # WhatsLater — Architettura Tecnica Completa
 
 > Documento aggiornato al 4 Aprile 2026 — versione 7.0.0

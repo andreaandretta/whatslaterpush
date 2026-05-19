@@ -1,3 +1,18 @@
+> ⚠️ **DOCUMENTO DEPRECATO** — 18 Marzo 2026.
+>
+> Il piano operativo "7 Giorni Build + 23 Giorni Sell" descrive l'outreach pre-pivot: nelle settimane 2-4 il target è "medici, dentisti, parrucchieri, estetiste, personal trainer" (ICP A, ora escluso). La Section 1 Stripe Architecture e la Section 2 Tier System omettono il tier **Professional €9,99/mese** introdotto il 2026-05-17 (commit 2cd6b80). Le sezioni cool-down + tier enforcement riflettono lo schema DB pre-Strada A (no contacts cache, no `added_manually`).
+>
+> Il piano lancio attuale (ICP D+B, outreach diretto comunità: allenatori/parroci/scout/istruttori) non è ancora documentato in un file equivalente.
+>
+> **Stato attuale** in:
+> - [`CLAUDE.md`](./CLAUDE.md) — stato sintetico aggiornato
+> - `AndreaVault/decisions.md` — log decisioni operative recenti
+> - `AndreaVault/Projects/WhatsLater/` — sub-tree progetto (anch'esso da rivedere per drift residuo)
+>
+> Conservato come riferimento storico per la logica gates + retention metrics + disclaimer WhatsApp.
+
+---
+
 # WhatsLater — Piano di Lancio "7 Giorni Build + 23 Giorni Sell"
 
 **Obiettivo:** 10 utenti paganti entro 30 giorni dal lancio.

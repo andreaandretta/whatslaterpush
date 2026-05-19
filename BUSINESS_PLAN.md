@@ -1,3 +1,17 @@
+> ⚠️ **DOCUMENTO DEPRECATO** — Marzo 2026.
+>
+> Posiziona ICP A (parrucchieri/dentisti/estetiste/personal trainer/ristoratori) come customer base primario e usa il no-show come framing centrale del valore. Il pricing matrix include solo i tier Personal €4,99 + Business €19,99 — manca il tier Professional €9,99/mese introdotto il 2026-05-17.
+>
+> Il pivot strategico del 17 maggio 2026 ha spostato l'ICP a **D primario** (allenatori, parroci, scout, istruttori, scuola guida) **+ B secondario** (site manager, facility manager). Il segmento A è formalmente escluso dal lancio (DA-RIVEDERE dopo 50 utenti reali).
+>
+> **Stato attuale** in:
+> - [`CLAUDE.md`](./CLAUDE.md) — contesto sintetico aggiornato
+> - `AndreaVault/decisions.md` — log decisioni canoniche (append-only)
+>
+> Conservato come riferimento storico per la logica unit economics e il framing iniziale. Non aggiornare se non per segnalare nuovi punti di drift.
+
+---
+
 # WhatsLater — Business Plan
 
 **Tagline:** Schedula messaggi WhatsApp dal tuo numero personale, senza app, in 2 minuti.
