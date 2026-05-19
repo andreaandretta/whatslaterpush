@@ -30,7 +30,7 @@ interface ContactPickerModalProps {
 
 type PickerState =
   | { kind: 'loading' }
-  | { kind: 'list'; contacts: Contact[] }
+  | { kind: 'list'; contacts: Contact[]; recents: Contact[] }
   | { kind: 'error'; reason: 'timeout' | 'unavailable' | 'unauthorized' };
 
 export default function ContactPickerModal({ open, onClose, onSelect }: ContactPickerModalProps) {
@@ -60,7 +60,8 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
         if (!res.ok) { setState({ kind: 'error', reason: 'unavailable' }); return; }
         const body = await res.json();
         const contacts: Contact[] = Array.isArray(body.contacts) ? body.contacts : [];
-        setState({ kind: 'list', contacts });
+        const recents: Contact[] = Array.isArray(body.recents) ? body.recents : [];
+        setState({ kind: 'list', contacts, recents });
         if (contacts.length === 0) setManualOpen(true);
       })
       .catch((e) => {
@@ -93,6 +94,39 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
       return;
     }
     onSelect({ number: normalized, name: manualName.trim() || undefined });
+  }
+
+  function renderContactButton(c: Contact, keyPrefix: string) {
+    const formattedPhone = formatPhone(c.number);
+    const hasRealName = !!c.name && c.name.trim() !== '' && c.name !== `+${c.number}`;
+    // When there's no real name, send name=undefined so downstream
+    // (ScheduleModal, avatar) shows the formatted phone instead of
+    // a confusing "+digits" string.
+    const onSelectName = hasRealName ? c.name : undefined;
+    return (
+      <button
+        key={`${keyPrefix}${c.number}`}
+        type="button"
+        onClick={() => onSelect({ number: c.number, name: onSelectName })}
+        className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-[#1F2C34]"
+      >
+        <ContactAvatar
+          name={hasRealName ? c.name : undefined}
+          number={c.number}
+          photoSrc={c.photoUrl}
+        />
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold text-white truncate">
+            {hasRealName ? c.name : formattedPhone}
+          </div>
+          {hasRealName && (
+            <div className="text-xs truncate" style={{ color: '#AEBAC1' }}>
+              {formattedPhone}
+            </div>
+          )}
+        </div>
+      </button>
+    );
   }
 
   if (!open) return null;
@@ -190,6 +224,18 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             </div>
           )}
 
+          {state.kind === 'list' && !search.trim() && state.recents.length > 0 && (
+            <>
+              <div
+                className="px-4 pt-3 pb-1 text-xs font-semibold uppercase"
+                style={{ color: '#00A884' }}
+              >
+                Recenti
+              </div>
+              {state.recents.map((c) => renderContactButton(c, 'r:'))}
+            </>
+          )}
+
           {state.kind === 'list' && state.contacts.length > 0 && (
             <div
               className="px-4 pt-3 pb-1 text-xs font-semibold uppercase"
@@ -233,38 +279,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             </div>
           )}
 
-          {state.kind === 'list' && filtered.map((c) => {
-            const formattedPhone = formatPhone(c.number);
-            const hasRealName = !!c.name && c.name.trim() !== '' && c.name !== `+${c.number}`;
-            // When there's no real name, send name=undefined so downstream
-            // (ScheduleModal, avatar) shows the formatted phone instead of
-            // a confusing "+digits" string.
-            const onSelectName = hasRealName ? c.name : undefined;
-            return (
-              <button
-                key={c.number}
-                type="button"
-                onClick={() => onSelect({ number: c.number, name: onSelectName })}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-[#1F2C34]"
-              >
-                <ContactAvatar
-                  name={hasRealName ? c.name : undefined}
-                  number={c.number}
-                  photoSrc={c.photoUrl}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-white truncate">
-                    {hasRealName ? c.name : formattedPhone}
-                  </div>
-                  {hasRealName && (
-                    <div className="text-xs truncate" style={{ color: '#AEBAC1' }}>
-                      {formattedPhone}
-                    </div>
-                  )}
-                </div>
-              </button>
-            );
-          })}
+          {state.kind === 'list' && filtered.map((c) => renderContactButton(c, 'a:'))}
         </div>
       </div>
     </div>

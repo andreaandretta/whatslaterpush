@@ -324,4 +324,133 @@ describe('GET /api/contacts', () => {
       expect(mario.photoUrl).toBeUndefined();
     });
   });
+
+  describe('recents from scheduled_messages', () => {
+    test('cache-hit path: recents deduped first-wins, latest per number', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393401111111', name: 'Mario Rossi', push_name: 'Mario', profile_pic_url: 'https://pps.whatsapp.net/mario.jpg' },
+        { contact_number: '393402222222', name: 'Anna',        push_name: 'Anna',  profile_pic_url: null },
+      ]);
+      // Most recent first (mock returns rows as-is, route relies on ORDER BY DESC)
+      mockSupa.setResponse('scheduled_messages:select', [
+        { recipient_number: '393401111111', recipient_name: 'Mario Rossi' }, // newest for Mario
+        { recipient_number: '393402222222', recipient_name: 'Anna' },        // newest for Anna
+        { recipient_number: '393401111111', recipient_name: 'Mario Rossi' }, // older dup
+        { recipient_number: '393402222222', recipient_name: 'Anna' },        // older dup
+      ]);
+      const res = await callGet();
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.recents).toEqual([
+        { number: '393401111111', name: 'Mario Rossi', pushName: 'Mario', photoUrl: 'https://pps.whatsapp.net/mario.jpg' },
+        { number: '393402222222', name: 'Anna',        pushName: 'Anna' },
+      ]);
+    });
+
+    test('recents enriched from cached contact (photoUrl + pushName preserved)', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393401111111', name: 'Mario Rossi', push_name: 'Mario', profile_pic_url: 'https://pps.whatsapp.net/mario.jpg' },
+      ]);
+      mockSupa.setResponse('scheduled_messages:select', [
+        { recipient_number: '393401111111', recipient_name: 'Mario Whatever' },
+      ]);
+      const res = await callGet();
+      const body = await res.json();
+      // Cache wins over recipient_name from scheduled_messages — photoUrl + pushName preserved.
+      expect(body.recents[0]).toEqual({
+        number: '393401111111',
+        name: 'Mario Rossi',
+        pushName: 'Mario',
+        photoUrl: 'https://pps.whatsapp.net/mario.jpg',
+      });
+    });
+
+    test('recents synthesized from scheduled row when recipient not in cache', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393401111111', name: 'Mario', push_name: 'Mario' },
+      ]);
+      // Number not in cache (e.g. added manually via QuickCaptureModal earlier today)
+      mockSupa.setResponse('scheduled_messages:select', [
+        { recipient_number: '393409999999', recipient_name: 'Manual Lead' },
+      ]);
+      const res = await callGet();
+      const body = await res.json();
+      expect(body.recents).toEqual([
+        { number: '393409999999', name: 'Manual Lead' },
+      ]);
+    });
+
+    test('recents synthesized falls back to +number when recipient_name is null', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393401111111', name: 'Mario', push_name: 'Mario' },
+      ]);
+      mockSupa.setResponse('scheduled_messages:select', [
+        { recipient_number: '393409999999', recipient_name: null },
+      ]);
+      const res = await callGet();
+      const body = await res.json();
+      expect(body.recents).toEqual([
+        { number: '393409999999', name: '+393409999999' },
+      ]);
+    });
+
+    test('recents capped at 10 distinct numbers', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393400000001', name: 'C1', push_name: 'C1' },
+      ]);
+      // 15 distinct recipients in DESC order — only first 10 should make it
+      const rows = Array.from({ length: 15 }, (_, i) => ({
+        recipient_number: `39340000000${i}`,
+        recipient_name: `Contact ${i}`,
+      }));
+      mockSupa.setResponse('scheduled_messages:select', rows);
+      const res = await callGet();
+      const body = await res.json();
+      expect(body.recents.length).toBe(10);
+      expect(body.recents[0].number).toBe('393400000000');
+      expect(body.recents[9].number).toBe('393400000009');
+    });
+
+    test('recents query applies .neq("status", "cancelled") filter on scheduled_messages', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393401111111', name: 'Mario', push_name: 'Mario' },
+      ]);
+      mockSupa.setResponse('scheduled_messages:select', []);
+      await callGet();
+      const scheduledCall = mockSupa.calls.find((c) => c.table === 'scheduled_messages' && c.operation === 'select');
+      expect(scheduledCall).toBeDefined();
+      const neq = scheduledCall!.chain.find((m) => m.method === 'neq');
+      expect(neq).toBeDefined();
+      expect(neq!.args).toEqual(['status', 'cancelled']);
+      // Sanity: also asserts the ORDER BY direction so the dedup invariant holds.
+      const order = scheduledCall!.chain.find((m) => m.method === 'order');
+      expect(order!.args[0]).toBe('created_at');
+      expect(order!.args[1]).toEqual({ ascending: false });
+    });
+
+    test('recents excludes self-target rows even if accidentally written', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393401111111', name: 'Mario', push_name: 'Mario' },
+      ]);
+      // Defense-in-depth: API should never let self-targets through anyway,
+      // but if a legacy row exists we must not surface it.
+      mockSupa.setResponse('scheduled_messages:select', [
+        { recipient_number: USER_PHONE, recipient_name: 'Me' },
+        { recipient_number: '393401111111', recipient_name: 'Mario' },
+      ]);
+      const res = await callGet();
+      const body = await res.json();
+      expect(body.recents.map((r: any) => r.number)).toEqual(['393401111111']);
+    });
+
+    test('evolution-fallback path returns recents: [] for API shape consistency', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', []);
+      findChatsMock.mockResolvedValue([
+        { remoteJid: '393404444444@s.whatsapp.net', pushName: 'Sara', name: 'Sara R.' },
+      ]);
+      const res = await callGet();
+      const body = await res.json();
+      expect(body.recents).toEqual([]);
+    });
+  });
 });

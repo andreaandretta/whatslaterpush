@@ -9,16 +9,17 @@
  * only.
  */
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import ContactPickerModal from '../components/ContactPickerModal';
 
-function mockFetchContacts(contacts: any[]) {
+function mockFetchContacts(contacts: any[], recents: any[] = []) {
+  const body = { contacts, recents };
   (global as any).fetch = jest.fn().mockResolvedValue({
     ok: true,
     status: 200,
-    json: () => Promise.resolve({ contacts }),
-    text: () => Promise.resolve(JSON.stringify({ contacts })),
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body)),
     headers: new Headers(),
   });
 }
@@ -107,5 +108,47 @@ describe('ContactPickerModal — photo wiring', () => {
       'https://pps.whatsapp.net/luca.jpg',
       'https://pps.whatsapp.net/mario.jpg',
     ]);
+  });
+});
+
+describe('ContactPickerModal — Recenti section', () => {
+  test('renders "Recenti" header when API returns recents', async () => {
+    mockFetchContacts(
+      [{ number: '393331111111', name: 'Mario' }, { number: '393332222222', name: 'Anna' }],
+      [{ number: '393331111111', name: 'Mario' }],
+    );
+    render(<ContactPickerModal open={true} onClose={() => {}} onSelect={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/Contatti su WhatsApp/i)).toBeInTheDocument());
+    expect(screen.getByText(/^Recenti$/i)).toBeInTheDocument();
+  });
+
+  test('does NOT render "Recenti" header when recents is empty', async () => {
+    mockFetchContacts([{ number: '393331111111', name: 'Mario' }], []);
+    render(<ContactPickerModal open={true} onClose={() => {}} onSelect={() => {}} />);
+    await waitFor(() => expect(screen.getByText('Mario')).toBeInTheDocument());
+    expect(screen.queryByText(/^Recenti$/i)).not.toBeInTheDocument();
+  });
+
+  test('typing in search hides "Recenti" section', async () => {
+    mockFetchContacts(
+      [{ number: '393331111111', name: 'Mario' }, { number: '393332222222', name: 'Anna' }],
+      [{ number: '393331111111', name: 'Mario' }],
+    );
+    render(<ContactPickerModal open={true} onClose={() => {}} onSelect={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/^Recenti$/i)).toBeInTheDocument());
+    const searchInput = screen.getByPlaceholderText(/Cerca contatto/i);
+    fireEvent.change(searchInput, { target: { value: 'Anna' } });
+    expect(screen.queryByText(/^Recenti$/i)).not.toBeInTheDocument();
+  });
+
+  test('recent contact appears in both Recenti and alphabetical sections without key collision', async () => {
+    mockFetchContacts(
+      [{ number: '393331111111', name: 'Mario' }],
+      [{ number: '393331111111', name: 'Mario' }],
+    );
+    render(<ContactPickerModal open={true} onClose={() => {}} onSelect={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/^Recenti$/i)).toBeInTheDocument());
+    // Mario rendered twice: once under Recenti, once under Contatti
+    expect(screen.getAllByText('Mario').length).toBe(2);
   });
 });

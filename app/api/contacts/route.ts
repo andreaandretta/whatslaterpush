@@ -74,8 +74,37 @@ export async function GET(req: NextRequest) {
       out.push(entry);
     }
     out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
-    console.log('CONTACTS:GET source=supabase count=' + out.length + ' raw=' + cached.length);
-    return NextResponse.json({ contacts: out });
+
+    // Recenti: 10 destinatari distinti più recenti, esclusi i cancelled.
+    // Pulliamo 50 righe DESC e dedupliamo client-side: ORDER BY created_at DESC
+    // garantisce che la prima occorrenza di un recipient_number è la sua
+    // riga più recente (first-wins = latest).
+    const { data: recentRows } = await supabase
+      .from('scheduled_messages')
+      .select('recipient_number, recipient_name')
+      .eq('instance_phone', phone)
+      .neq('status', 'cancelled')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    const cachedByNumber = new Map<string, OutContact>(out.map((c) => [c.number, c]));
+    const recents: OutContact[] = [];
+    const seenNumbers = new Set<string>();
+    for (const row of (recentRows || []) as Array<{ recipient_number: string; recipient_name: string | null }>) {
+      const num = row.recipient_number;
+      if (!num || num === phone) continue;
+      if (seenNumbers.has(num)) continue;
+      seenNumbers.add(num);
+      const fromCache = cachedByNumber.get(num);
+      recents.push(fromCache ?? {
+        number: num,
+        name: (row.recipient_name && row.recipient_name.trim()) || `+${num}`,
+      });
+      if (recents.length >= 10) break;
+    }
+
+    console.log('CONTACTS:GET source=supabase count=' + out.length + ' recents=' + recents.length + ' raw=' + cached.length);
+    return NextResponse.json({ contacts: out, recents });
   }
 
   console.log('CONTACTS:GET source=evolution (cache empty)');
@@ -258,5 +287,6 @@ export async function GET(req: NextRequest) {
   );
   out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
 
-  return NextResponse.json({ contacts: out });
+  // Evolution-fallback path: utente fresco, niente storia da mostrare.
+  return NextResponse.json({ contacts: out, recents: [] });
 }
