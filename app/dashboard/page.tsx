@@ -2,13 +2,11 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  Calendar, CheckCircle2, Loader2, LogOut, Trash2
+  Calendar, CheckCircle2, Loader2, LogOut, MessageSquarePlus,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
-import { Button } from '@/components/Button';
 import ContactPickerModal from '@/components/ContactPickerModal';
 import ScheduleModal from '@/components/ScheduleModal';
-import { ContactAvatar } from '@/components/ContactAvatar';
 import PricingSection from '../components/PricingSection';
 import FAQSection from '../components/FAQSection';
 import Footer from '../components/Footer';
@@ -45,23 +43,14 @@ export default function DashboardPage() {
   const [messages, setMessages]         = useState<ScheduledMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(true);
   const [subscription, setSubscription] = useState<SubscriptionState>({ plan: 'unknown', trial_ends_at: null, expired: false });
-  const [totalLifetime, setTotalLifetime] = useState<number | null>(null);
   const [sessionValidated, setSessionValidated] = useState(false);
-  const [showHelp, setShowHelp] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<{ number: string; name?: string } | null>(null);
-  const [segment, setSegment] = useState<Segment>(null);
   const [showShareToast, setShowShareToast] = useState(false);
 
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevLifetimeRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const raw = params.get('seg');
-    if (raw === 'D' || raw === 'B' || raw === 'C') setSegment(raw);
-  }, []);
 
   // --- Cookie-based auth check on mount ---
   useEffect(() => {
@@ -105,7 +94,6 @@ export default function DashboardPage() {
               setShowShareToast(true);
             }
             prevLifetimeRef.current = next;
-            setTotalLifetime(next);
           }
         } else setMessages(Array.isArray(d) ? d : []);
       }
@@ -139,7 +127,6 @@ export default function DashboardPage() {
           filter: `instance_name=eq.${instanceName}`
         },
         () => {
-          // Refresh messages on any instance update
           fetchMessages();
         }
       )
@@ -193,29 +180,29 @@ export default function DashboardPage() {
     const mm = target.getMinutes().toString().padStart(2, '0');
     const time = `${hh}:${mm}`;
 
-    if (diffMs < 0) return { date: 'scaduto', time, urgent: false };
+    if (diffMs < 0) return { date: 'Scaduto', time, urgent: false };
 
     if (diffMin < 60) {
       return { date: `tra ${diffMin}min`, time, urgent: diffMin < 10 };
     }
 
     const sameDay = target.toDateString() === now.toDateString();
-    if (sameDay) return { date: 'oggi', time, urgent: false };
+    if (sameDay) return { date: 'Oggi', time, urgent: false };
 
     const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
-    if (target.toDateString() === tomorrow.toDateString()) return { date: 'domani', time, urgent: false };
+    if (target.toDateString() === tomorrow.toDateString()) return { date: 'Domani', time, urgent: false };
 
     const targetMidnight = new Date(target); targetMidnight.setHours(0, 0, 0, 0);
     const nowMidnight = new Date(now); nowMidnight.setHours(0, 0, 0, 0);
     const diffDays = Math.floor((targetMidnight.getTime() - nowMidnight.getTime()) / 86400000);
     if (diffDays < 7) {
-      const days = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+      const days = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
       return { date: days[target.getDay()], time, urgent: false };
     }
 
-    const dd = target.getDate().toString().padStart(2, '0');
-    const mo = (target.getMonth() + 1).toString().padStart(2, '0');
-    return { date: `${dd}/${mo}`, time, urgent: false };
+    const months = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
+    const dd = target.getDate();
+    return { date: `${dd} ${months[target.getMonth()]}`, time, urgent: false };
   }
 
   const showPricing = subscription.plan === 'trial' || subscription.plan === 'free' || subscription.expired;
@@ -229,80 +216,42 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-text-primary font-sans">
-      {/* Dashboard Navbar */}
+    <div className="min-h-screen bg-background text-text-primary font-sans pb-32">
       <DashboardNavbar userPhone={userPhone} onLogout={handleLogout} />
 
-      <main className="pt-24 pb-12 px-4 max-w-4xl mx-auto space-y-8">
-        {/* Connected status card */}
-        <ConnectedCard userPhone={userPhone} />
+      {/* Status strip — fuses connected + plan + daily counter + contextual upgrade */}
+      <StatusStrip
+        userPhone={userPhone}
+        subscription={subscription}
+        messages={messages}
+      />
 
-
-        {/* Action buttons */}
-        <div className="mb-4 flex flex-wrap gap-2">
-          <Button
-            variant="primary"
-            onClick={() => setContactPickerOpen(true)}
-            className="w-full sm:w-auto"
-          >
-            ✉️ Manda messaggio
-          </Button>
-        </div>
-        {/* Plan Badge */}
-        {userPhone && subscription.plan !== 'unknown' && (
-          <PlanBadge subscription={subscription} />
-        )}
-
-        {/* Welcome card — first access, no messages ever scheduled */}
-        {sessionValidated && userPhone && totalLifetime === 0 && (
-          <WelcomeCard segment={segment} />
-        )}
-
-        {/* Daily cap badge — only for free/personal */}
-        {userPhone && (subscription.plan === 'free' || subscription.plan === 'personal' || subscription.plan === 'professional') && (
-          <DailyCapBadge plan={subscription.plan} messages={messages} />
-        )}
-
-        {/* Messages Section */}
+      <main className="px-4 max-w-4xl mx-auto pt-6 pb-12 space-y-8">
         {userPhone && (
-          <MessagesSection
-            messages={messages}
-            messagesLoading={messagesLoading}
-            subscription={subscription}
-            onDelete={handleDelete}
-            formatScheduled={formatScheduled}
-            statusConfig={statusConfig}
-          />
-        )}
-
-        {/* How To Use Box — inline for new users, FAB for returning */}
-        {(() => {
-          const hasNoMessages = messages.length === 0;
-          return hasNoMessages ? (
-            <HowToUseBox />
+          subscription.expired ? (
+            <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-center justify-between">
+              <div>
+                <p className="font-semibold text-red-700">Trial Scaduto</p>
+                <p className="text-sm text-red-600">Abbonati per continuare.</p>
+              </div>
+              <a href="#prezzi" className="px-4 py-2 bg-primary text-white rounded-xl font-medium text-sm">Abbonati</a>
+            </div>
+          ) : messagesLoading ? (
+            <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center">
+              <Loader2 className="w-6 h-6 text-primary animate-spin mx-auto mb-2" />
+              <p className="text-gray-400">Caricamento...</p>
+            </div>
+          ) : messages.length === 0 ? (
+            <EmptyState />
           ) : (
-            <>
-              <button
-                onClick={() => setShowHelp(!showHelp)}
-                className="fixed bottom-4 right-4 w-12 h-12 rounded-full bg-primary text-white flex items-center justify-center shadow-lg text-lg font-bold z-30"
-                aria-label="Aiuto"
-              >
-                ?
-              </button>
-              {showHelp && (
-                <div className="fixed bottom-20 right-4 w-80 bg-white rounded-xl shadow-2xl p-4 z-30 text-sm text-text-primary">
-                  <button onClick={() => setShowHelp(false)} className="absolute top-2 right-2 text-gray-400">&times;</button>
-                  <p className="font-bold mb-2">Come funziona:</p>
-                  <ol className="list-decimal list-inside space-y-1 text-text-secondary">
-                    <li>Clicca &quot;Manda messaggio&quot;</li>
-                    <li>Cerca il contatto o aggiungine uno nuovo</li>
-                    <li>Scegli data e ora</li>
-                  </ol>
-                </div>
-              )}
-            </>
-          );
-        })()}
+            <MessagesSection
+              messages={messages}
+              onDelete={handleDelete}
+              formatScheduled={formatScheduled}
+              statusConfig={statusConfig}
+            />
+          )
+        )}
 
         {/* Pricing for trial/free users, or manage subscription for paying */}
         {(showPricing || subscription.plan === 'personal' || subscription.plan === 'professional' || subscription.plan === 'business') && (
@@ -332,25 +281,124 @@ export default function DashboardPage() {
         )}
       </main>
 
+      {/* FAB — mobile round, desktop pill */}
+      <button
+        onClick={() => setContactPickerOpen(true)}
+        className="sm:hidden fixed bottom-6 right-6 w-14 h-14 bg-primary text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-105 transition-transform z-30"
+        aria-label="Manda messaggio"
+      >
+        <MessageSquarePlus className="w-6 h-6" />
+      </button>
+      <button
+        onClick={() => setContactPickerOpen(true)}
+        className="hidden sm:flex fixed bottom-6 right-6 bg-primary text-white rounded-full shadow-2xl px-6 py-4 items-center gap-2 font-semibold hover:scale-105 transition-transform z-30"
+      >
+        <MessageSquarePlus className="w-5 h-5" />
+        Manda messaggio
+      </button>
+
       <FAQSection />
       <Footer />
     </div>
   );
 }
 
-// --- Connected Status Card ---
-function ConnectedCard({ userPhone }: { userPhone: string }) {
+// --- Status Strip (fuses ConnectedCard + PlanBadge + DailyCapBadge + contextual upgrade) ---
+function StatusStrip({ userPhone, subscription, messages }: {
+  userPhone: string;
+  subscription: SubscriptionState;
+  messages: ScheduledMessage[];
+}) {
+  const planKnown = subscription.plan !== 'unknown';
+  const planLabel = getPlanName(subscription.plan);
+  const limits = getPlanLimits(subscription.plan);
+  const showCounter = planKnown && (subscription.plan === 'free' || subscription.plan === 'personal' || subscription.plan === 'professional');
+
+  // Count messages scheduled or sent today (matches legacy DailyCapBadge logic)
+  const today = new Date();
+  const sameDay = (d: Date) =>
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate();
+  const countToday = messages.filter((m) => {
+    if (m.status !== 'sent' && m.status !== 'pending') return false;
+    const sched = new Date(m.scheduled_at);
+    return !isNaN(sched.getTime()) && sameDay(sched);
+  }).length;
+
+  // Trial countdown
+  let trialDays = 0;
+  if (subscription.plan === 'trial' && subscription.trial_ends_at) {
+    trialDays = Math.max(0, Math.ceil(
+      (new Date(subscription.trial_ends_at).getTime() - Date.now()) / (24 * 60 * 60 * 1000)
+    ));
+  }
+
+  // Last 4 digits of phone — privacy + space
+  const last4 = userPhone ? userPhone.slice(-4) : '';
+
+  // Context-aware upgrade copy
+  const upgradeCopy = ((): string | null => {
+    if (!planKnown) return null;
+    switch (subscription.plan) {
+      case 'free':
+        return 'Sblocca 20 msg/giorno con Personal €4.99 →';
+      case 'trial':
+        return `Trial scade tra ${trialDays}gg — continua con Personal €4.99 →`;
+      case 'personal':
+        return 'Passa a Professional per 35 msg/giorno →';
+      case 'professional':
+        return 'Passa a Business per 50 msg + contatti illimitati →';
+      default:
+        return null;
+    }
+  })();
+
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-          <CheckCircle2 className="w-5 h-5 text-primary" />
-        </div>
-        <div>
-          <h3 className="font-bold">WhatsApp Connesso</h3>
-          {userPhone && <p className="text-sm text-text-secondary">+{userPhone}</p>}
-        </div>
+    <div className="max-w-4xl mx-auto px-4 pt-20 pb-3 flex items-center justify-between flex-wrap gap-2 border-b border-gray-100">
+      <div className="flex items-center gap-2 text-sm flex-wrap">
+        <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
+        <span className="text-text-secondary">
+          Connesso {last4 && <span className="font-medium text-text-primary">···{last4}</span>}
+        </span>
+        {planKnown && (
+          <>
+            <span className="text-gray-300">·</span>
+            <span className="text-text-secondary">Piano {planLabel}</span>
+          </>
+        )}
+        {showCounter && (
+          <>
+            <span className="text-gray-300">·</span>
+            <span className="text-text-primary font-medium">
+              Hai schedulato {countToday} messagg{countToday === 1 ? 'io' : 'i'} oggi ✓
+            </span>
+            <span className="text-gray-400 text-xs">(limite {limits.dailyLimit})</span>
+          </>
+        )}
       </div>
+      {upgradeCopy && (
+        <a href="#prezzi" className="text-primary text-xs font-semibold shrink-0">
+          {upgradeCopy}
+        </a>
+      )}
+    </div>
+  );
+}
+
+// --- Empty State (replaces WelcomeCard + "0 messages" placeholder) ---
+function EmptyState() {
+  return (
+    <div className="text-center py-12">
+      <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+        <Calendar className="w-8 h-8 text-primary" />
+      </div>
+      <h2 className="text-xl font-bold mb-2">
+        Nessun messaggio programmato
+      </h2>
+      <p className="text-text-secondary max-w-md mx-auto">
+        Tocca il bottone in basso a destra per programmare il primo messaggio.
+      </p>
     </div>
   );
 }
@@ -387,86 +435,124 @@ function DashboardNavbar({ userPhone, onLogout }: {
   );
 }
 
-// --- Messages Section ---
-function MessagesSection({ messages, messagesLoading, subscription, onDelete, formatScheduled, statusConfig }: {
+// --- Messages Section (V4 dense layout — protagonist list) ---
+function MessagesSection({ messages, onDelete, formatScheduled, statusConfig }: {
   messages: ScheduledMessage[];
-  messagesLoading: boolean;
-  subscription: SubscriptionState;
   onDelete: (id: string) => void;
   formatScheduled: (d: string) => { date: string; time: string; urgent: boolean };
   statusConfig: Record<string, { color: string; label: string }>;
 }) {
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold text-text-primary">Messaggi programmati</h2>
-        <span className="text-sm text-text-secondary bg-white px-3 py-1 rounded-full border border-gray-100">
-          {messages.length} messagg{messages.length !== 1 ? 'i' : 'io'}
+      <div className="flex items-baseline justify-between mb-4">
+        <h2 className="text-lg font-bold text-text-primary">Prossimi messaggi</h2>
+        <span className="text-xs text-text-secondary">
+          {messages.length} programmat{messages.length === 1 ? 'o' : 'i'}
         </span>
       </div>
-      {subscription.expired && (
-        <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-4 flex items-center justify-between">
-          <div><p className="font-semibold text-red-700">Trial Scaduto</p><p className="text-sm text-red-600">Abbonati per continuare.</p></div>
-          <a href="#prezzi" className="px-4 py-2 bg-primary text-white rounded-xl font-medium text-sm">Abbonati</a>
-        </div>
-      )}
-      {messagesLoading ? (
-        <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center">
-          <Loader2 className="w-6 h-6 text-primary animate-spin mx-auto mb-2" />
-          <p className="text-gray-400">Caricamento...</p>
-        </div>
-      ) : messages.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center">
-          <p className="text-gray-500">Nessun messaggio programmato. Inizia con &quot;Nuovo contatto&quot;.</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {messages.map((msg) => {
-            const sched = formatScheduled(msg.scheduled_at);
-            const status = statusConfig[msg.status] || { color: '#9CA3AF', label: msg.status };
-            const cancellable = msg.status === 'pending' || msg.status.startsWith('awaiting_');
-            return (
-              <div key={msg.id} className="flex items-center gap-3 p-3 rounded-xl bg-white border border-gray-100 shadow-sm">
-                <ContactAvatar name={msg.recipient_name} number={msg.recipient_number || ''} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="font-bold text-text-primary truncate">
-                      {msg.recipient_name || `+${msg.recipient_number || '?'}`}
-                    </div>
-                    <div className={`text-xs shrink-0 ${sched.urgent ? 'text-red-500' : 'text-text-secondary'}`}>
-                      {sched.date}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm text-text-secondary truncate">
-                      {(msg.parsed_message || '').substring(0, 60)}
-                    </div>
-                    <div className="text-xs text-text-secondary flex items-center gap-1.5 shrink-0">
-                      <span>{sched.time}</span>
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: status.color }} />
-                    </div>
-                  </div>
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 divide-y divide-gray-100">
+        {messages.map((msg) => {
+          const sched = formatScheduled(msg.scheduled_at);
+          const status = statusConfig[msg.status] || { color: '#9CA3AF', label: msg.status };
+          const cancellable = msg.status === 'pending' || msg.status.startsWith('awaiting_');
+          const showStatusBadge = !cancellable && msg.status !== 'pending';
+          const displayName = msg.recipient_name || `+${msg.recipient_number || '?'}`;
+          const initial = (msg.recipient_name || msg.recipient_number || '?').charAt(0).toUpperCase();
+          return (
+            <div
+              key={msg.id}
+              className="flex items-start gap-3 p-4 hover:bg-gray-50 transition-colors first:rounded-t-2xl last:rounded-b-2xl"
+            >
+              <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-semibold shrink-0">
+                {initial}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="font-semibold text-sm truncate text-text-primary">
+                    {displayName}
+                  </p>
+                  <span className={`text-xs shrink-0 font-medium ${sched.urgent ? 'text-red-500' : 'text-text-secondary'}`}>
+                    {sched.date} {sched.time}
+                  </span>
                 </div>
-                {cancellable && (
-                  <button
-                    onClick={() => { if (confirm('Vuoi annullare questo invio?')) onDelete(msg.id) }}
-                    className="p-2 text-gray-400 hover:text-red-400 transition-colors"
-                    title="Annulla invio"
-                    aria-label="Annulla invio"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                <p className="text-sm text-text-secondary mt-1 line-clamp-2">
+                  {msg.parsed_message || ''}
+                </p>
+                {showStatusBadge && (
+                  <div className="text-xs mt-1.5 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: status.color }} />
+                    <span className="text-text-secondary">{status.label}</span>
+                  </div>
                 )}
               </div>
-            );
-          })}
-        </div>
-      )}
+              {cancellable && (
+                <button
+                  onClick={() => { if (confirm('Vuoi annullare questo invio?')) onDelete(msg.id) }}
+                  className="text-gray-300 hover:text-red-500 shrink-0 text-base leading-none pt-1 transition-colors"
+                  title="Annulla invio"
+                  aria-label="Annulla invio"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-// --- Plan Badge ---
+// --- Share Toast (after first scheduled message) ---
+function ShareToast({ onClose }: { onClose: () => void }) {
+  const shareUrl = 'https://wa.me/?text=Programmo%20i%20miei%20messaggi%20con%20WhatsLater%20%F0%9F%9A%80%20whatslater.it';
+  return (
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] sm:w-auto sm:max-w-md bg-white rounded-2xl shadow-2xl border border-green-200 p-4">
+      <button
+        onClick={onClose}
+        className="absolute top-2 right-3 text-gray-400 hover:text-gray-600 text-xl leading-none"
+        aria-label="Chiudi"
+      >
+        &times;
+      </button>
+      <p className="text-sm font-bold text-[#075E54] mb-1 pr-6">Primo messaggio programmato!</p>
+      <p className="text-xs text-text-secondary mb-3">Fai sapere ai tuoi contatti come ti organizzi.</p>
+      <a
+        href={shareUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-2 bg-[#25D366] text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-[#1ebe5b] transition-colors"
+      >
+        Condividi su WhatsApp
+      </a>
+    </div>
+  );
+}
+
+// =====================================================================
+// LEGACY components — kept (unmounted) for easy V4 regression rollback.
+// Do NOT remove without explicit approval; restoring them is a 1-line
+// JSX edit if the V4 layout needs to be reverted.
+// =====================================================================
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function ConnectedCard({ userPhone }: { userPhone: string }) {
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+          <CheckCircle2 className="w-5 h-5 text-primary" />
+        </div>
+        <div>
+          <h3 className="font-bold">WhatsApp Connesso</h3>
+          {userPhone && <p className="text-sm text-text-secondary">+{userPhone}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function PlanBadge({ subscription }: { subscription: SubscriptionState }) {
   const planLabels: Record<string, string> = {
     trial: 'Trial',
@@ -505,33 +591,7 @@ function PlanBadge({ subscription }: { subscription: SubscriptionState }) {
   );
 }
 
-// --- Share Toast (after first scheduled message) ---
-function ShareToast({ onClose }: { onClose: () => void }) {
-  const shareUrl = 'https://wa.me/?text=Programmo%20i%20miei%20messaggi%20con%20WhatsLater%20%F0%9F%9A%80%20whatslater.it';
-  return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] sm:w-auto sm:max-w-md bg-white rounded-2xl shadow-2xl border border-green-200 p-4">
-      <button
-        onClick={onClose}
-        className="absolute top-2 right-3 text-gray-400 hover:text-gray-600 text-xl leading-none"
-        aria-label="Chiudi"
-      >
-        &times;
-      </button>
-      <p className="text-sm font-bold text-[#075E54] mb-1 pr-6">Primo messaggio programmato!</p>
-      <p className="text-xs text-text-secondary mb-3">Fai sapere ai tuoi contatti come ti organizzi.</p>
-      <a
-        href={shareUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center gap-2 bg-[#25D366] text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-[#1ebe5b] transition-colors"
-      >
-        Condividi su WhatsApp
-      </a>
-    </div>
-  );
-}
-
-// --- Daily Cap Badge ---
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function DailyCapBadge({ plan, messages }: { plan: string; messages: ScheduledMessage[] }) {
   const limits = getPlanLimits(plan);
   const today = new Date();
@@ -546,8 +606,6 @@ function DailyCapBadge({ plan, messages }: { plan: string; messages: ScheduledMe
     return !isNaN(sched.getTime()) && sameDay(sched);
   }).length;
 
-  // Upgrade path: free → Personal → Professional → Business.
-  // Source of truth: app/lib/plans.ts (getPlanName + getPlanLimits).
   const UPGRADE_PATH: Record<string, string> = {
     free: 'personal',
     personal: 'professional',
@@ -571,7 +629,7 @@ function DailyCapBadge({ plan, messages }: { plan: string; messages: ScheduledMe
   );
 }
 
-// --- Welcome Card (first access, no messages scheduled yet) ---
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function getWelcomeCopy(segment: Segment): string {
   switch (segment) {
     case 'D':
@@ -582,6 +640,7 @@ function getWelcomeCopy(segment: Segment): string {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function WelcomeCard({ segment }: { segment: Segment }) {
   return (
     <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
@@ -597,7 +656,7 @@ function WelcomeCard({ segment }: { segment: Segment }) {
   );
 }
 
-// --- How To Use Box ---
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function HowToUseBox() {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
