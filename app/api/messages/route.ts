@@ -44,13 +44,41 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  // Attach cached profile photos from whatsapp_contacts so the dashboard
+  // avatars can render WhatsApp pictures without a second client round-trip.
+  const recipientNumbers = Array.from(
+    new Set(
+      ((data || []) as Array<{ recipient_number: string | null }>)
+        .map((m) => m.recipient_number)
+        .filter((n): n is string => typeof n === 'string' && n.length > 0)
+    )
+  );
+
+  const photoByNumber = new Map<string, string>();
+  if (recipientNumbers.length > 0) {
+    const { data: contacts } = await supabase
+      .from('whatsapp_contacts')
+      .select('contact_number, profile_pic_url')
+      .eq('user_phone', phone)
+      .in('contact_number', recipientNumbers);
+    for (const c of (contacts || []) as Array<{ contact_number: string; profile_pic_url: string | null }>) {
+      const url = c.profile_pic_url?.trim();
+      if (url) photoByNumber.set(c.contact_number, url);
+    }
+  }
+
+  const messages = ((data || []) as Array<Record<string, any>>).map((m) => ({
+    ...m,
+    photo_url: m.recipient_number ? photoByNumber.get(m.recipient_number) || null : null,
+  }));
+
   const { count: lifetimeCount } = await supabase
     .from('scheduled_messages')
     .select('id', { count: 'exact', head: true })
     .eq('instance_phone', phone);
 
   return NextResponse.json({
-    messages: data || [],
+    messages,
     subscription_plan: user?.subscription_plan || 'unknown',
     trial_ends_at: user?.trial_ends_at || null,
     total_scheduled_lifetime: lifetimeCount ?? 0,

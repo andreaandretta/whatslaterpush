@@ -7,6 +7,7 @@ import {
 import { createClient } from '@supabase/supabase-js';
 import ContactPickerModal from '@/components/ContactPickerModal';
 import ScheduleModal from '@/components/ScheduleModal';
+import { ContactAvatar } from '@/components/ContactAvatar';
 import PricingSection from '../components/PricingSection';
 import FAQSection from '../components/FAQSection';
 import Footer from '../components/Footer';
@@ -33,6 +34,7 @@ interface ScheduledMessage {
   status: string;
   retry_count?: number;
   error_message?: string;
+  photo_url?: string | null;
 }
 
 type Segment = 'D' | 'B' | 'C' | null;
@@ -158,65 +160,61 @@ export default function DashboardPage() {
     }
   };
 
+  // Status → coloured dot. Pending/awaiting/sending share the orange "in
+  // attesa" bucket; sent green; failed red; cancelled gray.
   const statusConfig: Record<string, { color: string; label: string }> = {
-    awaiting_confirm:  { color: '#EAB308', label: 'In attesa di conferma' },
-    awaiting_contact:  { color: '#EAB308', label: 'In attesa del contatto' },
-    awaiting_datetime: { color: '#EAB308', label: 'In attesa della data' },
-    awaiting_message:  { color: '#EAB308', label: 'In attesa del messaggio' },
-    pending:           { color: '#3B82F6', label: 'Programmato' },
-    sending:           { color: '#3B82F6', label: 'In invio...' },
+    awaiting_confirm:  { color: '#F97316', label: 'In attesa di conferma' },
+    awaiting_contact:  { color: '#F97316', label: 'In attesa del contatto' },
+    awaiting_datetime: { color: '#F97316', label: 'In attesa della data' },
+    awaiting_message:  { color: '#F97316', label: 'In attesa del messaggio' },
+    pending:           { color: '#F97316', label: 'In attesa' },
+    sending:           { color: '#F97316', label: 'In invio...' },
     sent:              { color: '#22C55E', label: 'Inviato' },
     failed:            { color: '#EF4444', label: 'Non inviato' },
     cancelled:         { color: '#9CA3AF', label: 'Annullato' },
   };
 
-  function formatScheduled(scheduledAt: string): { date: string; time: string; urgent: boolean } {
+  // Always format the scheduled date — never collapse past dates to a
+  // "Scaduto" label. Weekday names are only used for upcoming dates within
+  // the next week; past dates older than yesterday show the full DD mon
+  // form so the user can read history unambiguously.
+  function formatScheduled(scheduledAt: string): { date: string; time: string } {
     const target = new Date(scheduledAt);
     const now = new Date();
-    const diffMs = target.getTime() - now.getTime();
-    const diffMin = Math.round(diffMs / 60000);
 
     const hh = target.getHours().toString().padStart(2, '0');
     const mm = target.getMinutes().toString().padStart(2, '0');
     const time = `${hh}:${mm}`;
 
-    if (diffMs < 0) return { date: 'Scaduto', time, urgent: false };
-
-    if (diffMin < 60) {
-      return { date: `tra ${diffMin}min`, time, urgent: diffMin < 10 };
-    }
-
-    const sameDay = target.toDateString() === now.toDateString();
-    if (sameDay) return { date: 'Oggi', time, urgent: false };
-
-    const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
-    if (target.toDateString() === tomorrow.toDateString()) return { date: 'Domani', time, urgent: false };
-
     const targetMidnight = new Date(target); targetMidnight.setHours(0, 0, 0, 0);
     const nowMidnight = new Date(now); nowMidnight.setHours(0, 0, 0, 0);
-    const diffDays = Math.floor((targetMidnight.getTime() - nowMidnight.getTime()) / 86400000);
-    if (diffDays < 7) {
-      const days = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
-      return { date: days[target.getDay()], time, urgent: false };
+    const diffDays = Math.round((targetMidnight.getTime() - nowMidnight.getTime()) / 86400000);
+
+    if (diffDays === 0) return { date: 'oggi', time };
+    if (diffDays === 1) return { date: 'domani', time };
+    if (diffDays === -1) return { date: 'ieri', time };
+    if (diffDays > 1 && diffDays < 7) {
+      const days = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+      return { date: days[target.getDay()], time };
     }
 
     const months = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
     const dd = target.getDate();
-    return { date: `${dd} ${months[target.getMonth()]}`, time, urgent: false };
+    return { date: `${dd} ${months[target.getMonth()]}`, time };
   }
 
   const showPricing = subscription.plan === 'trial' || subscription.plan === 'free' || subscription.expired;
 
   if (!sessionValidated) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen bg-[#111B21] flex items-center justify-center">
         <Loader2 className="w-8 h-8 text-primary animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background text-text-primary font-sans pb-32">
+    <div className="min-h-screen bg-[#111B21] text-white font-sans pb-32">
       <DashboardNavbar userPhone={userPhone} onLogout={handleLogout} />
 
       {/* Status strip — fuses connected + plan + daily counter + contextual upgrade */}
@@ -229,17 +227,17 @@ export default function DashboardPage() {
       <main className="px-4 max-w-4xl mx-auto pt-6 pb-12 space-y-8">
         {userPhone && (
           subscription.expired ? (
-            <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-center justify-between">
+            <div className="bg-red-950/40 border border-red-900 rounded-2xl p-4 flex items-center justify-between">
               <div>
-                <p className="font-semibold text-red-700">Trial Scaduto</p>
-                <p className="text-sm text-red-600">Abbonati per continuare.</p>
+                <p className="font-semibold text-red-300">Trial Scaduto</p>
+                <p className="text-sm text-red-400">Abbonati per continuare.</p>
               </div>
               <a href="#prezzi" className="px-4 py-2 bg-primary text-white rounded-xl font-medium text-sm">Abbonati</a>
             </div>
           ) : messagesLoading ? (
-            <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center">
+            <div className="bg-[#202C33] rounded-2xl border border-[#2A3942] p-12 text-center">
               <Loader2 className="w-6 h-6 text-primary animate-spin mx-auto mb-2" />
-              <p className="text-gray-400">Caricamento...</p>
+              <p className="text-gray-500">Caricamento...</p>
             </div>
           ) : messages.length === 0 ? (
             <EmptyState />
@@ -355,25 +353,25 @@ function StatusStrip({ userPhone, subscription, messages }: {
   })();
 
   return (
-    <div className="max-w-4xl mx-auto px-4 pt-20 pb-3 flex items-center justify-between flex-wrap gap-2 border-b border-gray-100">
+    <div className="max-w-4xl mx-auto px-4 pt-20 pb-3 flex items-center justify-between flex-wrap gap-2 border-b border-[#2A3942]">
       <div className="flex items-center gap-2 text-sm flex-wrap">
         <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
-        <span className="text-text-secondary">
-          Connesso {last4 && <span className="font-medium text-text-primary">···{last4}</span>}
+        <span className="text-gray-400">
+          Connesso {last4 && <span className="font-medium text-white">···{last4}</span>}
         </span>
         {planKnown && (
           <>
-            <span className="text-gray-300">·</span>
-            <span className="text-text-secondary">Piano {planLabel}</span>
+            <span className="text-gray-600">·</span>
+            <span className="text-gray-400">Piano {planLabel}</span>
           </>
         )}
         {showCounter && (
           <>
-            <span className="text-gray-300">·</span>
-            <span className="text-text-primary font-medium">
+            <span className="text-gray-600">·</span>
+            <span className="text-white font-medium">
               Hai schedulato {countToday} messagg{countToday === 1 ? 'io' : 'i'} oggi ✓
             </span>
-            <span className="text-gray-400 text-xs">(limite {limits.dailyLimit})</span>
+            <span className="text-gray-500 text-xs">(limite {limits.dailyLimit})</span>
           </>
         )}
       </div>
@@ -390,13 +388,13 @@ function StatusStrip({ userPhone, subscription, messages }: {
 function EmptyState() {
   return (
     <div className="text-center py-12">
-      <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+      <div className="w-16 h-16 bg-primary/20 rounded-full flex items-center justify-center mx-auto mb-4">
         <Calendar className="w-8 h-8 text-primary" />
       </div>
-      <h2 className="text-xl font-bold mb-2">
+      <h2 className="text-xl font-bold mb-2 text-white">
         Nessun messaggio programmato
       </h2>
-      <p className="text-text-secondary max-w-md mx-auto">
+      <p className="text-gray-400 max-w-md mx-auto">
         Tocca il bottone in basso a destra per programmare il primo messaggio.
       </p>
     </div>
@@ -409,25 +407,25 @@ function DashboardNavbar({ userPhone, onLogout }: {
   onLogout: () => void;
 }) {
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-b border-gray-200 px-4 md:px-6 py-3">
+    <nav className="fixed top-0 left-0 right-0 z-50 bg-[#111B21]/95 backdrop-blur-md border-b border-[#2A3942] px-4 md:px-6 py-3">
       <div className="max-w-4xl mx-auto flex items-center justify-between">
-        <div className="flex items-center gap-2 font-bold text-lg tracking-tight">
+        <div className="flex items-center gap-2 font-bold text-lg tracking-tight text-white">
           <Calendar className="w-5 h-5 text-primary" />
           <span>WhatsLater</span>
         </div>
         <div className="flex items-center gap-3">
           {userPhone && (
-            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-green-100 text-green-700 border border-green-200">
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-green-900/30 text-green-400 border border-green-800/60">
               <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
               Connesso
             </span>
           )}
           {userPhone ? (
-            <button onClick={onLogout} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border border-gray-200 hover:bg-gray-50 transition-colors">
+            <button onClick={onLogout} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border border-[#2A3942] text-gray-300 hover:bg-[#2A3942] transition-colors">
               <LogOut className="w-3.5 h-3.5" /> Disconnetti
             </button>
           ) : (
-            <a href="/" className="text-sm text-text-secondary hover:text-primary transition-colors">Home</a>
+            <a href="/" className="text-sm text-gray-400 hover:text-primary transition-colors">Home</a>
           )}
         </div>
       </div>
@@ -435,60 +433,61 @@ function DashboardNavbar({ userPhone, onLogout }: {
   );
 }
 
-// --- Messages Section (V4 dense layout — protagonist list) ---
+// --- Messages Section (V4 dense layout — protagonist list, dark theme) ---
 function MessagesSection({ messages, onDelete, formatScheduled, statusConfig }: {
   messages: ScheduledMessage[];
   onDelete: (id: string) => void;
-  formatScheduled: (d: string) => { date: string; time: string; urgent: boolean };
+  formatScheduled: (d: string) => { date: string; time: string };
   statusConfig: Record<string, { color: string; label: string }>;
 }) {
   return (
     <div>
       <div className="flex items-baseline justify-between mb-4">
-        <h2 className="text-lg font-bold text-text-primary">Prossimi messaggi</h2>
-        <span className="text-xs text-text-secondary">
+        <h2 className="text-lg font-bold text-white">Prossimi messaggi</h2>
+        <span className="text-xs text-gray-400">
           {messages.length} programmat{messages.length === 1 ? 'o' : 'i'}
         </span>
       </div>
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 divide-y divide-gray-100">
+      <div className="bg-[#202C33] rounded-2xl border border-[#2A3942] divide-y divide-[#2A3942] overflow-hidden">
         {messages.map((msg) => {
           const sched = formatScheduled(msg.scheduled_at);
           const status = statusConfig[msg.status] || { color: '#9CA3AF', label: msg.status };
           const cancellable = msg.status === 'pending' || msg.status.startsWith('awaiting_');
-          const showStatusBadge = !cancellable && msg.status !== 'pending';
           const displayName = msg.recipient_name || `+${msg.recipient_number || '?'}`;
-          const initial = (msg.recipient_name || msg.recipient_number || '?').charAt(0).toUpperCase();
           return (
             <div
               key={msg.id}
-              className="flex items-start gap-3 p-4 hover:bg-gray-50 transition-colors first:rounded-t-2xl last:rounded-b-2xl"
+              className="flex items-start gap-3 p-4 hover:bg-[#2A3942]/50 transition-colors"
             >
-              <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-semibold shrink-0">
-                {initial}
-              </div>
+              <ContactAvatar
+                name={msg.recipient_name}
+                number={msg.recipient_number || ''}
+                size="md"
+                photoSrc={msg.photo_url || undefined}
+              />
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline justify-between gap-2">
-                  <p className="font-semibold text-sm truncate text-text-primary">
+                  <p className="font-semibold text-sm truncate text-white">
                     {displayName}
                   </p>
-                  <span className={`text-xs shrink-0 font-medium ${sched.urgent ? 'text-red-500' : 'text-text-secondary'}`}>
-                    {sched.date} {sched.time}
-                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0 text-xs text-gray-400 font-medium">
+                    <span>{sched.date} {sched.time}</span>
+                    <span
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{ backgroundColor: status.color }}
+                      aria-label={status.label}
+                      title={status.label}
+                    />
+                  </div>
                 </div>
-                <p className="text-sm text-text-secondary mt-1 line-clamp-2">
+                <p className="text-sm text-gray-400 mt-1 line-clamp-2">
                   {msg.parsed_message || ''}
                 </p>
-                {showStatusBadge && (
-                  <div className="text-xs mt-1.5 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: status.color }} />
-                    <span className="text-text-secondary">{status.label}</span>
-                  </div>
-                )}
               </div>
               {cancellable && (
                 <button
                   onClick={() => { if (confirm('Vuoi annullare questo invio?')) onDelete(msg.id) }}
-                  className="text-gray-300 hover:text-red-500 shrink-0 text-base leading-none pt-1 transition-colors"
+                  className="text-gray-500 hover:text-red-400 shrink-0 text-base leading-none pt-1 transition-colors"
                   title="Annulla invio"
                   aria-label="Annulla invio"
                 >
@@ -507,16 +506,16 @@ function MessagesSection({ messages, onDelete, formatScheduled, statusConfig }: 
 function ShareToast({ onClose }: { onClose: () => void }) {
   const shareUrl = 'https://wa.me/?text=Programmo%20i%20miei%20messaggi%20con%20WhatsLater%20%F0%9F%9A%80%20whatslater.it';
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] sm:w-auto sm:max-w-md bg-white rounded-2xl shadow-2xl border border-green-200 p-4">
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] sm:w-auto sm:max-w-md bg-[#202C33] rounded-2xl shadow-2xl border border-green-800/60 p-4">
       <button
         onClick={onClose}
-        className="absolute top-2 right-3 text-gray-400 hover:text-gray-600 text-xl leading-none"
+        className="absolute top-2 right-3 text-gray-400 hover:text-gray-200 text-xl leading-none"
         aria-label="Chiudi"
       >
         &times;
       </button>
-      <p className="text-sm font-bold text-[#075E54] mb-1 pr-6">Primo messaggio programmato!</p>
-      <p className="text-xs text-text-secondary mb-3">Fai sapere ai tuoi contatti come ti organizzi.</p>
+      <p className="text-sm font-bold text-green-400 mb-1 pr-6">Primo messaggio programmato!</p>
+      <p className="text-xs text-gray-400 mb-3">Fai sapere ai tuoi contatti come ti organizzi.</p>
       <a
         href={shareUrl}
         target="_blank"
