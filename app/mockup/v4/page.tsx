@@ -1,12 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   Calendar, CheckCircle2, LogOut, Mail, Plus,
 } from 'lucide-react';
-
-export const dynamic = 'force-dynamic';
 
 const SAMPLE_PHONE = '393481234567';
 const SAMPLE_PLAN_LABEL = 'Trial';
@@ -111,6 +109,14 @@ function MockNavbar() {
 }
 
 export default function MockupV4Page() {
+  return (
+    <Suspense fallback={null}>
+      <MockupV4Content />
+    </Suspense>
+  );
+}
+
+function MockupV4Content() {
   const searchParams = useSearchParams();
   const empty = searchParams?.get('empty') === 'true';
   const messages = empty ? [] : SAMPLE_MESSAGES;
