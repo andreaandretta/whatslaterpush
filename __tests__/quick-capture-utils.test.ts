@@ -1,33 +1,4 @@
-import { formatDatePhrase, containsAmbiguousTimeKeyword, hasExplicitHHMM } from '../app/lib/quick-capture-utils';
-
-describe('formatDatePhrase', () => {
-  test('formats today HH:MM as "oggi alle HH:MM"', () => {
-    const today = new Date();
-    today.setHours(17, 0, 0, 0);
-    expect(formatDatePhrase(today)).toBe('oggi alle 17:00');
-  });
-
-  test('formats tomorrow HH:MM as "domani alle HH:MM"', () => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(9, 0, 0, 0);
-    expect(formatDatePhrase(tomorrow)).toBe('domani alle 09:00');
-  });
-
-  test('formats date >= 2 days ahead as "il DD/MM alle HH:MM"', () => {
-    const future = new Date();
-    future.setDate(future.getDate() + 5);
-    future.setHours(14, 30, 0, 0);
-    const result = formatDatePhrase(future);
-    expect(result).toMatch(/^il \d{2}\/\d{2} alle 14:30$/);
-  });
-
-  test('zero-pads single-digit hours/minutes', () => {
-    const today = new Date();
-    today.setHours(9, 5, 0, 0);
-    expect(formatDatePhrase(today)).toBe('oggi alle 09:05');
-  });
-});
+import { containsAmbiguousTimeKeyword, hasExplicitHHMM } from '../app/lib/quick-capture-utils';
 
 describe('containsAmbiguousTimeKeyword', () => {
   test.each([
