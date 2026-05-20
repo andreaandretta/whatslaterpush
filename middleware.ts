@@ -19,6 +19,7 @@ const PUBLIC_PREFIXES = [
   '/api/monitoring',
   '/api/debug-logs',
   '/api/payment/webhook',
+  '/mockup',
 ];
 
 const PROTECTED_PAGE_PATHS = ['/dashboard', '/admin'];
