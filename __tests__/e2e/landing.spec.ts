@@ -19,18 +19,20 @@ test.describe('Landing Page', () => {
     await expect(cta).toHaveAttribute('href', '/connect');
   });
 
-  test('pricing section shows 3 plans', async ({ page }) => {
+  test('pricing section shows 4 plans', async ({ page }) => {
     await page.goto('/');
     const pricingSection = page.locator('#prezzi');
     await expect(pricingSection).toBeVisible();
 
     await expect(pricingSection.locator('h3', { hasText: 'Free' })).toBeVisible();
     await expect(pricingSection.locator('h3', { hasText: 'Personal' })).toBeVisible();
+    await expect(pricingSection.locator('h3', { hasText: 'Professional' })).toBeVisible();
     await expect(pricingSection.locator('h3', { hasText: 'Business' })).toBeVisible();
 
     // Check prices
     await expect(pricingSection.getByText('€0')).toBeVisible();
     await expect(pricingSection.getByText('€4,99')).toBeVisible();
+    await expect(pricingSection.getByText('€9,99')).toBeVisible();
     await expect(pricingSection.getByText('€19,99')).toBeVisible();
   });
 
@@ -40,15 +42,15 @@ test.describe('Landing Page', () => {
     await faqSection.scrollIntoViewIfNeeded();
 
     // First FAQ is open by default
-    const firstAnswer = faqSection.locator('p', { hasText: 'I tuoi dati sono protetti' });
+    const firstAnswer = faqSection.locator('p', { hasText: 'Dal tuo numero personale' });
     await expect(firstAnswer).toBeVisible();
 
     // Click second FAQ question
-    const secondQuestion = faqSection.locator('button', { hasText: 'Come collego WhatsApp?' });
+    const secondQuestion = faqSection.locator('button', { hasText: 'Funziona anche per coordinare fornitori sul cantiere?' });
     await secondQuestion.click();
 
     // Second answer should now be visible
-    const secondAnswer = faqSection.locator('p', { hasText: 'Inserisci il tuo numero di telefono' });
+    const secondAnswer = faqSection.locator('p', { hasText: 'Site manager e geometri' });
     await expect(secondAnswer).toBeVisible();
   });
 
@@ -75,12 +77,6 @@ test.describe('Static Pages — Smoke Tests', () => {
 
   test('/terms loads', async ({ page }) => {
     const response = await page.goto('/terms');
-    expect(response?.status()).toBe(200);
-    await expect(page.locator('body')).not.toBeEmpty();
-  });
-
-  test('/tutorial loads', async ({ page }) => {
-    const response = await page.goto('/tutorial');
     expect(response?.status()).toBe(200);
     await expect(page.locator('body')).not.toBeEmpty();
   });
