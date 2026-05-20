@@ -12,7 +12,7 @@ import { ContactAvatar } from '@/components/ContactAvatar';
 import PricingSection from '../components/PricingSection';
 import FAQSection from '../components/FAQSection';
 import Footer from '../components/Footer';
-import { getPlanLimits } from '../lib/plans';
+import { getPlanLimits, getPlanName } from '../lib/plans';
 
 const supabaseClient = typeof window !== 'undefined' ? createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -259,7 +259,7 @@ export default function DashboardPage() {
         )}
 
         {/* Daily cap badge — only for free/personal */}
-        {userPhone && (subscription.plan === 'free' || subscription.plan === 'personal') && (
+        {userPhone && (subscription.plan === 'free' || subscription.plan === 'personal' || subscription.plan === 'professional') && (
           <DailyCapBadge plan={subscription.plan} messages={messages} />
         )}
 
@@ -305,7 +305,7 @@ export default function DashboardPage() {
         })()}
 
         {/* Pricing for trial/free users, or manage subscription for paying */}
-        {(showPricing || subscription.plan === 'personal' || subscription.plan === 'business') && (
+        {(showPricing || subscription.plan === 'personal' || subscription.plan === 'professional' || subscription.plan === 'business') && (
           <PricingSection currentPlan={subscription.plan} userPhone={userPhone} />
         )}
 
@@ -484,12 +484,14 @@ function PlanBadge({ subscription }: { subscription: SubscriptionState }) {
     trial: 'Trial',
     free: 'Free',
     personal: 'Personal',
+    professional: 'Professional',
     business: 'Business',
   };
   const planColors: Record<string, string> = {
     trial: 'bg-blue-100 text-blue-700 border-blue-200',
     free: 'bg-gray-100 text-gray-600 border-gray-200',
     personal: 'bg-green-100 text-green-700 border-green-200',
+    professional: 'bg-teal-100 text-teal-700 border-teal-200',
     business: 'bg-purple-100 text-purple-700 border-purple-200',
   };
 
@@ -556,9 +558,17 @@ function DailyCapBadge({ plan, messages }: { plan: string; messages: ScheduledMe
     return !isNaN(sched.getTime()) && sameDay(sched);
   }).length;
 
-  const planLabel = plan === 'free' ? 'Free' : 'Personal';
-  const nextPlan = plan === 'free' ? 'Personal' : 'Professional';
-  const nextLimit = plan === 'free' ? 20 : 35;
+  // Upgrade path: free → Personal → Professional → Business.
+  // Source of truth: app/lib/plans.ts (getPlanName + getPlanLimits).
+  const UPGRADE_PATH: Record<string, string> = {
+    free: 'personal',
+    personal: 'professional',
+    professional: 'business',
+  };
+  const upgradeTarget = UPGRADE_PATH[plan] || 'business';
+  const planLabel = getPlanName(plan);
+  const nextPlan = getPlanName(upgradeTarget);
+  const nextLimit = getPlanLimits(upgradeTarget).dailyLimit;
 
   return (
     <div className="flex items-center justify-between rounded-xl px-4 py-3 border border-gray-200 bg-white">

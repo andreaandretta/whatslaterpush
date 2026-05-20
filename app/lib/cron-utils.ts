@@ -47,7 +47,7 @@ export function shouldSendMessage(msg: PendingMessage): SkipReason {
   // P9: Check trial/subscription
   const subPlan = userInst.subscription_plan;
   const trialEnd = userInst.trial_ends_at;
-  const isPaying = subPlan === 'personal' || subPlan === 'business';
+  const isPaying = subPlan === 'personal' || subPlan === 'professional' || subPlan === 'business';
   if (!isPaying) {
     const trialExpiredAt = trialEnd ? new Date(trialEnd) : null;
     if (!trialExpiredAt || trialExpiredAt < new Date()) {

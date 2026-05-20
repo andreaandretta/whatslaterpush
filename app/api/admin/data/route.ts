@@ -93,13 +93,13 @@ async function getBusinessData() {
 
   const totalUsers = totalRes.count || 0;
 
-  const byPlan = { free: 0, trial: 0, personal: 0, business: 0 };
+  const byPlan = { free: 0, trial: 0, personal: 0, professional: 0, business: 0 };
   for (const row of (planRes.data || [])) {
     const p = row.subscription_plan as keyof typeof byPlan;
     if (p in byPlan) byPlan[p]++;
   }
 
-  const mrr = byPlan.personal * 4.99 + byPlan.business * 19.99;
+  const mrr = byPlan.personal * 4.99 + byPlan.professional * 9.99 + byPlan.business * 19.99;
 
   return {
     totalUsers,

@@ -1,8 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
+import { getPlanName, getPlanLimits } from '../../../lib/plans';
 
 export const dynamic = 'force-dynamic';
+
+// Single source of truth for which plans Stripe checkout can produce.
+// Kept in sync with app/lib/plans.ts and the subscription_plan CHECK
+// constraint in supabase/migrations/20260520_add_professional_plan.sql.
+const PAID_PLANS = ['personal', 'professional', 'business'] as const;
 
 function getSupabase() {
   return createClient(
@@ -45,9 +51,9 @@ export async function POST(req: Request) {
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object as Stripe.Checkout.Session;
     const phone = session.client_reference_id || session.metadata?.phone;
-    const plan = session.metadata?.plan; // 'personal' or 'business'
+    const plan = session.metadata?.plan;
 
-    if (phone && plan) {
+    if (phone && plan && (PAID_PLANS as readonly string[]).includes(plan)) {
       const { data: user } = await supabase
         .from('user_instances')
         .select('instance_name, stripe_customer_id')
@@ -69,12 +75,14 @@ export async function POST(req: Request) {
         .eq('instance_phone', phone)
         .eq('status', 'paused');
 
-      const planName = plan === 'business' ? 'Business' : 'Personal';
       if (user?.instance_name) {
+        const dailyLimit = getPlanLimits(plan).dailyLimit;
         await notifyUser(user.instance_name, phone,
-          `✅ Piano ${planName} attivato! Ora hai ${plan === 'business' ? '50' : '20'} messaggi al giorno.\n\nGrazie per aver scelto WhatsLater!`
+          `✅ Piano ${getPlanName(plan)} attivato! Ora hai ${dailyLimit} messaggi al giorno.\n\nGrazie per aver scelto WhatsLater!`
         );
       }
+    } else if (phone && plan) {
+      console.warn('[stripe/webhook] checkout.session.completed received with unsupported plan:', plan);
     }
   }
 

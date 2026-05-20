@@ -16,7 +16,7 @@ interface AdminData {
   system: CheckResult[];
   business: {
     totalUsers: number;
-    byPlan: { free: number; trial: number; personal: number; business: number };
+    byPlan: { free: number; trial: number; personal: number; professional: number; business: number };
     trialExpiring: { phone_number: string; trial_ends_at: string }[];
     trialChurned: { phone_number: string; trial_ends_at: string }[];
     mrr: number;
@@ -72,6 +72,7 @@ const PLAN_COLORS: Record<string, string> = {
   free: 'bg-gray-400',
   trial: 'bg-blue-400',
   personal: 'bg-green-500',
+  professional: 'bg-teal-500',
   business: 'bg-purple-600',
 };
 
@@ -193,7 +194,7 @@ function AdminPage() {
   if (!data) return null;
 
   const { system, business, stripe, alerts } = data;
-  const maxPlan = Math.max(business.byPlan.free, business.byPlan.trial, business.byPlan.personal, business.byPlan.business, 1);
+  const maxPlan = Math.max(business.byPlan.free, business.byPlan.trial, business.byPlan.personal, business.byPlan.professional, business.byPlan.business, 1);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -314,7 +315,7 @@ function AdminPage() {
           {/* Plan distribution */}
           <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm mb-4">
             <p className="text-sm font-semibold text-gray-700 mb-3">Distribuzione piani</p>
-            {(['free', 'trial', 'personal', 'business'] as const).map((plan) => (
+            {(['free', 'trial', 'personal', 'professional', 'business'] as const).map((plan) => (
               <div key={plan} className="flex items-center gap-3 mb-2">
                 <span className="text-xs text-gray-600 w-16 capitalize">{plan}</span>
                 <div className="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden">
