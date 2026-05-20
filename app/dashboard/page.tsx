@@ -215,7 +215,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#111B21] text-white font-sans pb-32">
-      <DashboardNavbar userPhone={userPhone} onLogout={handleLogout} />
+      <DashboardNavbar userPhone={userPhone} plan={subscription.plan} onLogout={handleLogout} />
 
       {/* Status strip — fuses connected + plan + daily counter + contextual upgrade */}
       <StatusStrip
@@ -251,8 +251,10 @@ export default function DashboardPage() {
           )
         )}
 
-        {/* Pricing for trial/free users, or manage subscription for paying */}
-        {(showPricing || subscription.plan === 'personal' || subscription.plan === 'professional' || subscription.plan === 'business') && (
+        {/* Pricing visible only to free/trial (and expired so the "Abbonati"
+            anchor in the expired banner still resolves). Paying users manage
+            their subscription via the navbar link, no need to show plans. */}
+        {showPricing && (
           <PricingSection currentPlan={subscription.plan} userPhone={userPhone} />
         )}
 
@@ -402,10 +404,27 @@ function EmptyState() {
 }
 
 // --- Dashboard Navbar ---
-function DashboardNavbar({ userPhone, onLogout }: {
+function DashboardNavbar({ userPhone, plan, onLogout }: {
   userPhone: string;
+  plan: string;
   onLogout: () => void;
 }) {
+  const isPaying = plan === 'personal' || plan === 'professional' || plan === 'business';
+
+  const handlePortal = async () => {
+    try {
+      const res = await fetch('/api/payment/portal', { method: 'POST' });
+      const data = await res.json();
+      if (data?.url) {
+        window.location.href = data.url;
+      } else {
+        alert('Impossibile aprire il portale. Riprova tra qualche istante.');
+      }
+    } catch {
+      alert('Errore di rete. Riprova tra qualche istante.');
+    }
+  };
+
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-[#111B21]/95 backdrop-blur-md border-b border-[#2A3942] px-4 md:px-6 py-3">
       <div className="max-w-4xl mx-auto flex items-center justify-between">
@@ -419,6 +438,14 @@ function DashboardNavbar({ userPhone, onLogout }: {
               <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
               Connesso
             </span>
+          )}
+          {isPaying && (
+            <button
+              onClick={handlePortal}
+              className="text-xs font-medium text-primary hover:underline whitespace-nowrap"
+            >
+              Gestisci abbonamento
+            </button>
           )}
           {userPhone ? (
             <button onClick={onLogout} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border border-[#2A3942] text-gray-300 hover:bg-[#2A3942] transition-colors">
