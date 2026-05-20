@@ -39,6 +39,25 @@ export default function MockupIndexPage() {
             Redesign vero. Hero gigante, status minimale, lista messaggi snella.
           </p>
         </Link>
+        <Link
+          href="/mockup/v4"
+          className="block bg-white border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow"
+        >
+          <h3 className="font-bold text-text-primary">V4 — FAB + Lista protagonista</h3>
+          <p className="text-sm text-text-secondary mt-1">
+            Pattern Bud round 6. Status compresso in 1 riga, lista messaggi al centro,
+            FAB bottom-right per primary action.
+          </p>
+        </Link>
+        <Link
+          href="/mockup/v4?empty=true"
+          className="block bg-white border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow"
+        >
+          <h3 className="font-bold text-text-primary">V4 — Empty state</h3>
+          <p className="text-sm text-text-secondary mt-1">
+            Cosa vede l&apos;utente al primo accesso (0 messaggi schedulati).
+          </p>
+        </Link>
       </div>
     </div>
   );
