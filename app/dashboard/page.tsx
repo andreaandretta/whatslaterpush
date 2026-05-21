@@ -255,7 +255,7 @@ export default function DashboardPage() {
             anchor in the expired banner still resolves). Paying users manage
             their subscription via the navbar link, no need to show plans. */}
         {showPricing && (
-          <PricingSection currentPlan={subscription.plan} userPhone={userPhone} />
+          <PricingSection currentPlan={subscription.plan} userPhone={userPhone} theme="dark" />
         )}
 
         <ContactPickerModal
