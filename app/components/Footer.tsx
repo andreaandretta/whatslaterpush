@@ -1,8 +1,16 @@
 'use client';
 
-export default function Footer() {
+interface FooterProps {
+  theme?: 'light' | 'dark';
+}
+
+export default function Footer({ theme = 'light' }: FooterProps) {
+  const dark = theme === 'dark';
+  const bg = dark ? 'bg-[#111B21]' : 'bg-[#075E54]';
+  const top = dark ? 'border-t border-[#2A3942]' : 'rounded-t-[4rem]';
+
   return (
-    <footer className="bg-[#075E54] text-white rounded-t-[4rem] pt-20 pb-10 px-6 mt-20">
+    <footer className={`${bg} ${top} text-white pt-20 pb-10 px-6 mt-20`}>
       <div className="max-w-5xl mx-auto flex flex-col items-center text-center">
         <div className="flex items-center gap-2 font-heading font-bold text-2xl tracking-tight mb-4">
           <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">

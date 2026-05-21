@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  Calendar, CheckCircle2, Loader2, LogOut, MessageSquarePlus,
+  Calendar, CheckCircle2, Loader2, LogOut, MessageSquarePlus, X,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import ContactPickerModal from '@/components/ContactPickerModal';
@@ -227,10 +227,10 @@ export default function DashboardPage() {
       <main className="px-4 max-w-4xl mx-auto pt-6 pb-12 space-y-8">
         {userPhone && (
           subscription.expired ? (
-            <div className="bg-red-950/40 border border-red-900 rounded-2xl p-4 flex items-center justify-between">
+            <div className="bg-[#202C33] border border-red-500/40 rounded-2xl p-4 flex items-center justify-between">
               <div>
-                <p className="font-semibold text-red-300">Trial Scaduto</p>
-                <p className="text-sm text-red-400">Abbonati per continuare.</p>
+                <p className="font-semibold text-red-400">Trial Scaduto</p>
+                <p className="text-sm text-gray-400">Abbonati per continuare.</p>
               </div>
               <a href="#prezzi" className="px-4 py-2 bg-primary text-white rounded-xl font-medium text-sm">Abbonati</a>
             </div>
@@ -298,7 +298,7 @@ export default function DashboardPage() {
       </button>
 
       <FAQSection theme="dark" />
-      <Footer />
+      <Footer theme="dark" />
     </div>
   );
 }
@@ -380,7 +380,10 @@ function StatusStrip({ userPhone, subscription, messages }: {
               </span>
             )}
             {upgradeCopy && (
-              <a href="#prezzi" className="text-primary text-xs font-semibold shrink-0">
+              <a
+                href="#prezzi"
+                className="bg-primary/15 text-primary border border-primary/40 px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 hover:bg-primary/20 transition-colors"
+              >
                 {upgradeCopy}
               </a>
             )}
@@ -447,8 +450,8 @@ function DashboardNavbar({ userPhone, plan, onLogout }: {
             </button>
           )}
           {userPhone ? (
-            <button onClick={onLogout} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border border-[#2A3942] text-gray-300 hover:bg-[#2A3942] transition-colors">
-              <LogOut className="w-3.5 h-3.5" /> Disconnetti
+            <button onClick={onLogout} className="flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-medium border border-[#2A3942] text-gray-300 hover:bg-[#2A3942] transition-colors">
+              <LogOut className="w-4 h-4" /> Disconnetti
             </button>
           ) : (
             <a href="/" className="text-sm text-gray-400 hover:text-primary transition-colors">Home</a>
@@ -469,7 +472,7 @@ function MessagesSection({ messages, onDelete, formatScheduled, statusConfig }: 
   return (
     <div>
       <div className="flex items-baseline justify-between mb-4">
-        <h2 className="text-lg font-bold text-white">Prossimi messaggi</h2>
+        <h2 className="text-xl font-bold tracking-tight text-white">Prossimi messaggi</h2>
         <span className="text-xs text-gray-400">
           {messages.length} programmat{messages.length === 1 ? 'o' : 'i'}
         </span>
@@ -499,7 +502,7 @@ function MessagesSection({ messages, onDelete, formatScheduled, statusConfig }: 
                   <div className="flex items-center gap-1.5 shrink-0 text-xs text-gray-400 font-medium">
                     <span>{sched.date} {sched.time}</span>
                     <span
-                      className="w-1.5 h-1.5 rounded-full"
+                      className="w-2.5 h-2.5 rounded-full ring-2 ring-[#202C33]"
                       style={{ backgroundColor: status.color }}
                       aria-label={status.label}
                       title={status.label}
@@ -513,11 +516,11 @@ function MessagesSection({ messages, onDelete, formatScheduled, statusConfig }: 
               {cancellable && (
                 <button
                   onClick={() => { if (confirm('Vuoi annullare questo invio?')) onDelete(msg.id) }}
-                  className="text-gray-500 hover:text-red-400 shrink-0 text-base leading-none transition-colors p-2 -m-2 min-w-[44px] min-h-[44px] inline-flex items-center justify-center"
+                  className="text-gray-500 hover:text-red-400 shrink-0 transition-colors p-2 -m-2 min-w-[44px] min-h-[44px] inline-flex items-center justify-center"
                   title="Annulla invio"
                   aria-label="Annulla invio"
                 >
-                  ✕
+                  <X className="w-4 h-4" />
                 </button>
               )}
             </div>
@@ -532,7 +535,7 @@ function MessagesSection({ messages, onDelete, formatScheduled, statusConfig }: 
 function ShareToast({ onClose }: { onClose: () => void }) {
   const shareUrl = 'https://wa.me/?text=Programmo%20i%20miei%20messaggi%20con%20WhatsLater%20%F0%9F%9A%80%20whatslater.it';
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] sm:w-auto sm:max-w-md bg-[#202C33] rounded-2xl shadow-2xl border border-green-800/60 p-4">
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] sm:w-auto sm:max-w-md bg-[#202C33] rounded-2xl shadow-2xl border border-[#2A3942] p-4">
       <button
         onClick={onClose}
         className="absolute top-2 right-3 text-gray-400 hover:text-gray-200 text-xl leading-none"

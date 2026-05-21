@@ -97,7 +97,7 @@ export default function PricingSection({ currentPlan, userPhone, theme = 'light'
           </div>
 
           {/* Personal — recommended */}
-          <div className={`${cardBg} rounded-2xl p-6 border-2 border-primary shadow-lg relative`}>
+          <div className={`${cardBg} rounded-2xl p-6 border-2 border-primary ring-1 ring-primary/20 lg:scale-105 relative`}>
             <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">
               <Zap className="w-3 h-3" /> Consigliato
             </div>
@@ -118,7 +118,7 @@ export default function PricingSection({ currentPlan, userPhone, theme = 'light'
                 Cambia piano
               </button>
             ) : (
-              <button onClick={() => handleCheckout('personal')} className="w-full bg-primary text-white py-2.5 rounded-xl font-semibold hover:scale-[1.02] transition-transform shadow-md shadow-primary/30">
+              <button onClick={() => handleCheckout('personal')} className="w-full bg-primary text-white py-2.5 rounded-xl font-semibold hover:scale-[1.02] transition-transform">
                 {currentPlan === 'business' ? 'Passa a Personal' : 'Passa a Personal'}
               </button>
             )}
@@ -143,7 +143,7 @@ export default function PricingSection({ currentPlan, userPhone, theme = 'light'
                 Cambia piano
               </button>
             ) : (
-              <button onClick={() => handleCheckout('professional')} className="w-full bg-primary text-white py-2.5 rounded-xl font-semibold hover:scale-[1.02] transition-transform shadow-md shadow-primary/30">
+              <button onClick={() => handleCheckout('professional')} className="w-full bg-primary text-white py-2.5 rounded-xl font-semibold hover:scale-[1.02] transition-transform">
                 Passa a Professional
               </button>
             )}
