@@ -182,7 +182,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             <div className="flex items-center gap-3">
               <div
                 className="w-10 h-10 rounded-full flex items-center justify-center"
-                style={{ backgroundColor: '#00A884' }}
+                style={{ backgroundColor: '#25D366' }}
               >
                 <UserPlus className="w-5 h-5 text-white" />
               </div>
@@ -200,7 +200,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
                 value={manualName}
                 onChange={(e) => setManualName(e.target.value)}
                 placeholder="Nome (opzionale)"
-                className="w-full px-3 py-2 rounded-xl text-sm text-white placeholder:text-[#8696A0] focus:outline-none focus:ring-2 focus:ring-[#00A884]"
+                className="w-full px-3 py-2 rounded-xl text-sm text-white placeholder:text-[#8696A0] focus:outline-none focus:ring-2 focus:ring-[#25D366]"
                 style={{ backgroundColor: '#2A3942' }}
               />
               <input
@@ -209,14 +209,14 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
                 value={manualNumber}
                 onChange={(e) => setManualNumber(e.target.value)}
                 placeholder="Numero (es. 3331234567)"
-                className="w-full px-3 py-2 rounded-xl text-sm text-white placeholder:text-[#8696A0] focus:outline-none focus:ring-2 focus:ring-[#00A884]"
+                className="w-full px-3 py-2 rounded-xl text-sm text-white placeholder:text-[#8696A0] focus:outline-none focus:ring-2 focus:ring-[#25D366]"
                 style={{ backgroundColor: '#2A3942' }}
               />
               {manualError && <div className="text-xs text-red-400">{manualError}</div>}
               <Button
                 type="button"
                 onClick={handleManualSubmit}
-                className="w-full !bg-[#00A884] hover:!bg-[#00997A] !text-white !border-transparent"
+                className="w-full !bg-[#25D366] hover:!bg-[#1DA851] !text-white !border-transparent"
                 size="sm"
               >
                 Continua
@@ -228,7 +228,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             <>
               <div
                 className="px-4 pt-3 pb-1 text-xs font-semibold uppercase"
-                style={{ color: '#00A884' }}
+                style={{ color: '#25D366' }}
               >
                 Recenti
               </div>
@@ -239,7 +239,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
           {state.kind === 'list' && state.contacts.length > 0 && (
             <div
               className="px-4 pt-3 pb-1 text-xs font-semibold uppercase"
-              style={{ color: '#00A884' }}
+              style={{ color: '#25D366' }}
             >
               Contatti su WhatsApp ({state.contacts.length})
             </div>
@@ -247,7 +247,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
 
           {state.kind === 'loading' && (
             <div className="p-8 text-center">
-              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" style={{ color: '#00A884' }} />
+              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" style={{ color: '#25D366' }} />
               <p className="text-sm" style={{ color: '#AEBAC1' }}>Caricamento contatti…</p>
             </div>
           )}

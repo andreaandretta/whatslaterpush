@@ -190,14 +190,14 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
 
           <div className="border-t border-[#2A3942] mx-4" />
 
-          <div className="flex items-center gap-4 px-4 py-4">
+          <div className="flex items-center gap-4 px-4 py-2">
             <CalendarIcon className="w-5 h-5 text-gray-400 shrink-0" />
-            <div className="flex items-center gap-2 text-white text-base">
+            <div className="flex items-center gap-1 text-white text-base">
               <button
                 type="button"
                 onClick={() => setCalendarOpen(true)}
                 aria-label="Modifica data"
-                className="capitalize hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 rounded"
+                className="capitalize hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 rounded p-2 min-w-[44px] min-h-[44px] inline-flex items-center justify-center"
               >
                 {dateLabel}
               </button>
@@ -206,7 +206,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                 type="button"
                 onClick={() => setClockOpen(true)}
                 aria-label="Modifica orario"
-                className="hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 rounded"
+                className="hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 rounded p-2 min-w-[44px] min-h-[44px] inline-flex items-center justify-center"
               >
                 {selectedTime}
               </button>

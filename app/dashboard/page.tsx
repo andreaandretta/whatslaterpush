@@ -297,7 +297,7 @@ export default function DashboardPage() {
         Manda messaggio
       </button>
 
-      <FAQSection />
+      <FAQSection theme="dark" />
       <Footer />
     </div>
   );
@@ -355,33 +355,38 @@ function StatusStrip({ userPhone, subscription, messages }: {
   })();
 
   return (
-    <div className="max-w-4xl mx-auto px-4 pt-20 pb-3 flex items-center justify-between flex-wrap gap-2 border-b border-[#2A3942]">
-      <div className="flex items-center gap-2 text-sm flex-wrap">
-        <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
-        <span className="text-gray-400">
-          Connesso {last4 && <span className="font-medium text-white">···{last4}</span>}
-        </span>
-        {planKnown && (
-          <>
-            <span className="text-gray-600">·</span>
-            <span className="text-gray-400">Piano {planLabel}</span>
-          </>
-        )}
-        {showCounter && (
-          <>
-            <span className="text-gray-600">·</span>
-            <span className="text-white font-medium">
-              Hai schedulato {countToday} messagg{countToday === 1 ? 'io' : 'i'} oggi ✓
-            </span>
-            <span className="text-gray-500 text-xs">(limite {limits.dailyLimit})</span>
-          </>
+    <div className="max-w-4xl mx-auto px-4 pt-20 pb-3 border-b border-[#2A3942] text-sm">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between sm:flex-wrap gap-1 sm:gap-2">
+        {/* Riga 1 mobile / parte sinistra desktop: stato + piano */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
+          <span className="text-gray-400">
+            Connesso {last4 && <span className="font-medium text-white">···{last4}</span>}
+          </span>
+          {planKnown && (
+            <>
+              <span className="text-gray-600">·</span>
+              <span className="text-gray-400">Piano {planLabel}</span>
+            </>
+          )}
+        </div>
+        {/* Riga 2 mobile / parte destra desktop: counter + upgrade */}
+        {(showCounter || upgradeCopy) && (
+          <div className="flex items-center justify-between gap-2 flex-wrap sm:justify-end sm:gap-3">
+            {showCounter && (
+              <span className="text-white font-medium">
+                Hai schedulato {countToday} messagg{countToday === 1 ? 'io' : 'i'} oggi ✓
+                <span className="text-gray-500 text-xs ml-1">(limite {limits.dailyLimit})</span>
+              </span>
+            )}
+            {upgradeCopy && (
+              <a href="#prezzi" className="text-primary text-xs font-semibold shrink-0">
+                {upgradeCopy}
+              </a>
+            )}
+          </div>
         )}
       </div>
-      {upgradeCopy && (
-        <a href="#prezzi" className="text-primary text-xs font-semibold shrink-0">
-          {upgradeCopy}
-        </a>
-      )}
     </div>
   );
 }
@@ -397,7 +402,7 @@ function EmptyState() {
         Nessun messaggio programmato
       </h2>
       <p className="text-gray-400 max-w-md mx-auto">
-        Tocca il bottone in basso a destra per programmare il primo messaggio.
+        Programma il prossimo messaggio per la tua squadra o i tuoi clienti. Tocca il bottone in basso a destra per iniziare.
       </p>
     </div>
   );
@@ -433,12 +438,6 @@ function DashboardNavbar({ userPhone, plan, onLogout }: {
           <span>WhatsLater</span>
         </div>
         <div className="flex items-center gap-3">
-          {userPhone && (
-            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-green-900/30 text-green-400 border border-green-800/60">
-              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-              Connesso
-            </span>
-          )}
           {isPaying && (
             <button
               onClick={handlePortal}
@@ -514,7 +513,7 @@ function MessagesSection({ messages, onDelete, formatScheduled, statusConfig }: 
               {cancellable && (
                 <button
                   onClick={() => { if (confirm('Vuoi annullare questo invio?')) onDelete(msg.id) }}
-                  className="text-gray-500 hover:text-red-400 shrink-0 text-base leading-none pt-1 transition-colors"
+                  className="text-gray-500 hover:text-red-400 shrink-0 text-base leading-none transition-colors p-2 -m-2 min-w-[44px] min-h-[44px] inline-flex items-center justify-center"
                   title="Annulla invio"
                   aria-label="Annulla invio"
                 >
