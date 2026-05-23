@@ -44,7 +44,6 @@ function hashNumber(number: string): number {
 
 export function ContactAvatar({ name, number, size = 'md', className = '', photoSrc }: ContactAvatarProps) {
   const initials = computeInitials(name, number);
-  const color = PALETTE[hashNumber(number) % PALETTE.length];
   const sizeClass = SIZES[size];
 
   const [loaded, setLoaded] = useState(false);
@@ -58,6 +57,11 @@ export function ContactAvatar({ name, number, size = 'md', className = '', photo
   }, [photoSrc]);
 
   const showImage = !!photoSrc && !failed;
+
+  // Neutral slate background for letter-only avatars so they don't compete
+  // with real photo avatars. Photos still get the hashed palette as the
+  // loading placeholder, covered by the <img> once it lands.
+  const color = showImage ? PALETTE[hashNumber(number) % PALETTE.length] : 'bg-[#2A3942]';
 
   return (
     <div

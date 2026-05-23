@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  Calendar, CheckCircle2, Loader2, LogOut, MessageSquarePlus, X,
+  Calendar, CheckCircle2, Loader2, LogOut, Send, X,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import ContactPickerModal from '@/components/ContactPickerModal';
@@ -11,6 +11,7 @@ import { ContactAvatar } from '@/components/ContactAvatar';
 import PricingSection from '../components/PricingSection';
 import FAQSection from '../components/FAQSection';
 import Footer from '../components/Footer';
+import MessagesSection, { type ScheduledMessage as MessagesSectionMessage } from '../components/MessagesSection';
 import { getPlanLimits, getPlanName } from '../lib/plans';
 
 const supabaseClient = typeof window !== 'undefined' ? createClient(
@@ -50,6 +51,10 @@ export default function DashboardPage() {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<{ number: string; name?: string } | null>(null);
   const [showShareToast, setShowShareToast] = useState(false);
+  // Toast for inline feedback after duplicate/pause/delete actions. Auto-dismisses in 5s.
+  const [toast, setToast] = useState<{ text: string; undo?: () => void; id: number } | null>(null);
+  // Carry an initial message text into ScheduleModal when duplicating.
+  const [prefillText, setPrefillText] = useState<string>('');
 
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevLifetimeRef = useRef<number | null>(null);
@@ -160,6 +165,54 @@ export default function DashboardPage() {
     }
   };
 
+  // Inline toast surface used by MessagesSection for delete/duplicate/pause feedback.
+  const showToast = useCallback((text: string, undo?: () => void) => {
+    const id = Date.now();
+    setToast({ text, undo, id });
+    setTimeout(() => {
+      setToast((curr) => (curr && curr.id === id ? null : curr));
+    }, 5000);
+  }, []);
+
+  // Duplicate — opens ScheduleModal pre-filled with the same contact and text.
+  // Skips the contact picker step entirely. The user just confirms date/time.
+  const handleDuplicate = useCallback((msg: MessagesSectionMessage) => {
+    setSelectedContact({
+      number: msg.recipient_number || '',
+      name: msg.recipient_name,
+    });
+    setPrefillText(msg.parsed_message || msg.caption || '');
+    setScheduleOpen(true);
+  }, []);
+
+  // Edit — same flow as duplicate for now; backend doesn't have an update
+  // endpoint yet, so for an MVP we duplicate-then-delete-original.
+  // TODO(backend): add PATCH /api/messages for true edit-in-place.
+  const handleEdit = useCallback((msg: MessagesSectionMessage) => {
+    handleDuplicate(msg);
+    showToast('Modifica come duplicato — l’originale resta finché non lo elimini.');
+  }, [handleDuplicate, showToast]);
+
+  // Pause/resume — optimistic; backend ignores unknown statuses silently for now.
+  const handlePauseToggle = useCallback(async (msg: MessagesSectionMessage) => {
+    const newStatus = msg.status === 'paused' ? 'pending' : 'paused';
+    // Optimistic
+    setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, status: newStatus } : m)));
+    showToast(newStatus === 'paused' ? 'Messaggio in pausa' : 'Messaggio riattivato');
+    try {
+      await fetch('/api/messages', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: msg.id, status: newStatus }),
+      });
+      fetchMessages();
+    } catch {
+      // Roll back on network error
+      setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, status: msg.status } : m)));
+      showToast('Errore di rete — riprova.');
+    }
+  }, [fetchMessages, showToast]);
+
   // Status → coloured dot. Pending/awaiting/sending share the orange "in
   // attesa" bucket; sent green; failed red; cancelled gray.
   const statusConfig: Record<string, { color: string; label: string }> = {
@@ -203,7 +256,21 @@ export default function DashboardPage() {
     return { date: `${dd} ${months[target.getMonth()]}`, time };
   }
 
-  const showPricing = subscription.plan === 'trial' || subscription.plan === 'free' || subscription.expired;
+  // Pricing visibility:
+  // - free / expired → always show (they need to pay)
+  // - trial with > 3 days left → hide (don't pester active users)
+  // - trial with ≤ 3 days left → show (last call to convert)
+  let trialDaysLeft = Infinity;
+  if (subscription.plan === 'trial' && subscription.trial_ends_at) {
+    trialDaysLeft = Math.max(0, Math.ceil(
+      (new Date(subscription.trial_ends_at).getTime() - Date.now()) / (24 * 60 * 60 * 1000)
+    ));
+  }
+  const showPricing =
+    subscription.plan === 'free' ||
+    subscription.expired ||
+    (subscription.plan === 'trial' && trialDaysLeft <= 3);
+  const showFAQ = showPricing;
 
   if (!sessionValidated) {
     return (
@@ -245,8 +312,10 @@ export default function DashboardPage() {
             <MessagesSection
               messages={messages}
               onDelete={handleDelete}
-              formatScheduled={formatScheduled}
-              statusConfig={statusConfig}
+              onDuplicate={handleDuplicate}
+              onEdit={handleEdit}
+              onPauseToggle={handlePauseToggle}
+              onShowToast={showToast}
             />
           )
         )}
@@ -270,10 +339,11 @@ export default function DashboardPage() {
 
         <ScheduleModal
           open={scheduleOpen}
-          onClose={() => { setScheduleOpen(false); setSelectedContact(null); }}
-          onBack={() => { setScheduleOpen(false); setContactPickerOpen(true); }}
+          onClose={() => { setScheduleOpen(false); setSelectedContact(null); setPrefillText(''); }}
+          onBack={() => { setScheduleOpen(false); setContactPickerOpen(true); setPrefillText(''); }}
           contact={selectedContact}
           onScheduled={fetchMessages}
+          initialMessage={prefillText}
         />
 
         {showShareToast && (
@@ -281,24 +351,61 @@ export default function DashboardPage() {
         )}
       </main>
 
-      {/* FAB — mobile round, desktop pill */}
-      <button
-        onClick={() => setContactPickerOpen(true)}
-        className="sm:hidden fixed bottom-6 right-6 w-14 h-14 bg-primary text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-105 transition-transform z-30"
-        aria-label="Manda messaggio"
-      >
-        <MessageSquarePlus className="w-6 h-6" />
-      </button>
-      <button
-        onClick={() => setContactPickerOpen(true)}
-        className="hidden sm:flex fixed bottom-6 right-6 bg-primary text-white rounded-full shadow-2xl px-6 py-4 items-center gap-2 font-semibold hover:scale-105 transition-transform z-30"
-      >
-        <MessageSquarePlus className="w-5 h-5" />
-        Manda messaggio
-      </button>
+      {/* FAB — mobile round, desktop pill. Wrapped to host the attention ripple. */}
+      <div className="sm:hidden fixed bottom-6 right-6 z-30">
+        <span
+          aria-hidden
+          className="absolute inset-0 rounded-full bg-primary wa-ping pointer-events-none"
+        ></span>
+        <button
+          onClick={() => setContactPickerOpen(true)}
+          className="relative w-14 h-14 bg-primary text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
+          aria-label="Manda messaggio"
+        >
+          <Send className="w-6 h-6 -ml-0.5" fill="currentColor" />
+        </button>
+      </div>
 
-      <FAQSection theme="dark" />
+      <div className="hidden sm:block fixed bottom-6 right-6 z-30">
+        <span
+          aria-hidden
+          className="absolute inset-0 rounded-full bg-primary wa-ping pointer-events-none"
+        ></span>
+        <button
+          onClick={() => setContactPickerOpen(true)}
+          className="relative bg-primary text-white rounded-full shadow-2xl px-6 py-4 flex items-center gap-2 font-semibold hover:scale-105 active:scale-95 transition-transform"
+        >
+          <Send className="w-5 h-5 -ml-0.5" fill="currentColor" />
+          Manda messaggio
+        </button>
+      </div>
+
+      {showFAQ && <FAQSection theme="dark" />}
       <Footer theme="dark" />
+
+      {/* Action toast — surfaces feedback from MessagesSection (duplicate/pause/delete). */}
+      {toast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] sm:w-auto sm:max-w-md">
+          <div className="bg-[#2A3942] border border-[#3B4A54] rounded-xl px-4 py-3 flex items-center gap-3 shadow-2xl">
+            <span className="flex-1 text-sm text-white">{toast.text}</span>
+            {toast.undo && (
+              <button
+                onClick={() => { toast.undo!(); setToast(null); }}
+                className="text-primary font-bold text-xs uppercase tracking-wider"
+              >
+                Annulla
+              </button>
+            )}
+            <button
+              onClick={() => setToast(null)}
+              className="text-gray-500 hover:text-gray-300 -m-1 p-1"
+              aria-label="Chiudi"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -334,8 +441,22 @@ function StatusStrip({ userPhone, subscription, messages }: {
     ));
   }
 
-  // Last 4 digits of phone — privacy + space
-  const last4 = userPhone ? userPhone.slice(-4) : '';
+  // Last 4 digits of phone + masked country/area code for trust without exposing the full number.
+  // E.g. raw "393331234567" → displayed "+39 333 ··· 4567".
+  const maskedPhone = ((): string => {
+    if (!userPhone) return '';
+    const digits = userPhone.replace(/\D/g, '');
+    if (digits.length < 6) return digits ? `···${digits.slice(-4)}` : '';
+    // Italian numbers: country code 39 + 3-digit prefix + 7 digits = 12 total.
+    if (digits.startsWith('39') && digits.length >= 11) {
+      const prefix = digits.slice(2, 5);
+      const last4 = digits.slice(-4);
+      return `+39 ${prefix} ··· ${last4}`;
+    }
+    const last4 = digits.slice(-4);
+    const cc = digits.slice(0, Math.min(3, digits.length - 4));
+    return `+${cc} ··· ${last4}`;
+  })();
 
   // Context-aware upgrade copy
   const upgradeCopy = ((): string | null => {
@@ -359,9 +480,14 @@ function StatusStrip({ userPhone, subscription, messages }: {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between sm:flex-wrap gap-1 sm:gap-2">
         {/* Riga 1 mobile / parte sinistra desktop: stato + piano */}
         <div className="flex items-center gap-2 flex-wrap">
-          <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
-          <span className="text-gray-400">
-            Connesso {last4 && <span className="font-medium text-white">···{last4}</span>}
+          {/* Connected pill — neutral background, small primary dot for the
+              "alive" signal. Reserves green-saturated treatment for FAB only. */}
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#202C33] border border-[#2A3942] text-xs text-gray-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_0_3px_rgba(37,211,102,0.18)]" aria-hidden></span>
+            Connesso
+            {maskedPhone && (
+              <span className="font-semibold text-white tabular-nums ml-0.5">{maskedPhone}</span>
+            )}
           </span>
           {planKnown && (
             <>
@@ -382,7 +508,9 @@ function StatusStrip({ userPhone, subscription, messages }: {
             {upgradeCopy && (
               <a
                 href="#prezzi"
-                className="bg-primary/15 text-primary border border-primary/40 px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 hover:bg-primary/20 transition-colors"
+                // Trial/upgrade banner = warning ("action needed soon") → AMBER,
+                // not green. Keeps the dashboard's single-green-element rule.
+                className="bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 hover:bg-amber-500/15 transition-colors"
               >
                 {upgradeCopy}
               </a>
@@ -462,8 +590,9 @@ function DashboardNavbar({ userPhone, plan, onLogout }: {
   );
 }
 
-// --- Messages Section (V4 dense layout — protagonist list, dark theme) ---
-function MessagesSection({ messages, onDelete, formatScheduled, statusConfig }: {
+// --- Messages Section (V4 dense layout — LEGACY, kept for rollback) ---
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function MessagesSectionLegacyV4({ messages, onDelete, formatScheduled, statusConfig }: {
   messages: ScheduledMessage[];
   onDelete: (id: string) => void;
   formatScheduled: (d: string) => { date: string; time: string };

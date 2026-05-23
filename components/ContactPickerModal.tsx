@@ -133,18 +133,18 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center sm:px-4"
+      className="fixed inset-0 z-50 bg-black/60 sm:flex sm:items-center sm:justify-center sm:px-4"
       role="dialog"
       aria-modal="true"
       onClick={onClose}
     >
       <div
-        className="w-full h-full sm:h-auto sm:max-h-[85vh] sm:max-w-md sm:rounded-3xl sm:shadow-soft flex flex-col overflow-hidden"
+        className="fixed inset-0 sm:static sm:h-auto sm:max-h-[85vh] sm:max-w-md sm:rounded-3xl sm:shadow-soft flex flex-col overflow-hidden"
         style={{ backgroundColor: '#111B21' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div
-          className="flex items-center justify-between px-4 py-3 text-white"
+          className="flex items-center justify-between px-4 pt-[max(env(safe-area-inset-top),12px)] pb-3 text-white shrink-0"
           style={{ backgroundColor: '#1F2C34' }}
         >
           <h2 className="font-semibold">Nuovo messaggio</h2>
@@ -181,12 +181,12 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
           >
             <div className="flex items-center gap-3">
               <div
-                className="w-10 h-10 rounded-full flex items-center justify-center"
-                style={{ backgroundColor: '#25D366' }}
+                className="w-10 h-10 rounded-full flex items-center justify-center border"
+                style={{ borderColor: '#25D366', backgroundColor: 'rgba(37, 211, 102, 0.12)' }}
               >
-                <UserPlus className="w-5 h-5 text-white" />
+                <UserPlus className="w-5 h-5" style={{ color: '#25D366' }} />
               </div>
-              <span className="font-semibold text-white">Nuovo contatto</span>
+              <span className="font-medium text-white">Nuovo contatto</span>
             </div>
             {manualOpen
               ? <ChevronUp className="w-4 h-4" style={{ color: '#AEBAC1' }} />
