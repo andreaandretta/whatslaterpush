@@ -72,9 +72,12 @@ export default function PricingSection({ currentPlan, userPhone, theme = 'light'
     <section id="prezzi" className={`py-24 ${section}`}>
       <div className="max-w-4xl mx-auto px-6 text-center">
         <h2 className={`font-heading text-3xl sm:text-4xl font-bold mb-2 ${heading}`}>Scegli il tuo piano</h2>
-        <p className={`mb-10 ${subHeading}`}>Inizia gratis, passa a pagamento quando sei pronto.</p>
+        <p className={`mb-3 ${subHeading}`}>Inizia gratis, passa a pagamento quando sei pronto.</p>
+        <p className={`mb-10 text-sm ${subHeading}`}>
+          Cancelli quando vuoi. Niente carta richiesta per iniziare.
+        </p>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 max-w-5xl mx-auto">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-5 max-w-5xl mx-auto lg:items-start">
           {/* Free */}
           <div className={`${cardBg} rounded-2xl p-6 border ${cardBorder} shadow-sm`}>
             <h3 className={`text-lg font-bold mb-1 ${cardText}`}>Free</h3>
@@ -88,7 +91,7 @@ export default function PricingSection({ currentPlan, userPhone, theme = 'light'
               <li className="flex items-start gap-2"><CheckCircle2 className={`w-4 h-4 mt-0.5 shrink-0 ${checkMuted}`} /> 7 giorni di storico</li>
               <li className="flex items-start gap-2"><CheckCircle2 className={`w-4 h-4 mt-0.5 shrink-0 ${checkMuted}`} /> 1 tentativo di invio</li>
             </ul>
-            <p className={`text-sm italic mt-2 mb-6 ${mutedText}`}>Per provare</p>
+            <p className={`text-sm italic mt-2 mb-6 ${mutedText}`}>Per testare il prodotto</p>
             {currentPlan === 'free' ? (
               <span className={`block w-full py-2.5 rounded-xl text-sm font-medium border text-center ${currentBadge}`}>Piano attuale</span>
             ) : (
@@ -97,9 +100,9 @@ export default function PricingSection({ currentPlan, userPhone, theme = 'light'
           </div>
 
           {/* Personal — recommended */}
-          <div className={`${cardBg} rounded-2xl p-6 border-2 border-primary ring-1 ring-primary/20 lg:scale-105 relative`}>
-            <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">
-              <Zap className="w-3 h-3" /> Consigliato
+          <div className={`${cardBg} rounded-2xl p-7 border-2 border-primary ring-4 ring-primary/15 lg:scale-[1.06] lg:-my-2 relative shadow-soft-lg z-10`}>
+            <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1 shadow-md">
+              <Zap className="w-3 h-3" /> Più scelto
             </div>
             <h3 className={`text-lg font-bold mb-1 mt-2 ${cardText}`}>Personal</h3>
             <div className="flex items-baseline justify-center gap-1 mb-4">
@@ -143,7 +146,7 @@ export default function PricingSection({ currentPlan, userPhone, theme = 'light'
                 Cambia piano
               </button>
             ) : (
-              <button onClick={() => handleCheckout('professional')} className="w-full bg-primary text-white py-2.5 rounded-xl font-semibold hover:scale-[1.02] transition-transform">
+              <button onClick={() => handleCheckout('professional')} className="w-full py-2.5 rounded-xl font-semibold text-primary border-2 border-primary hover:bg-primary/5 transition-colors">
                 Passa a Professional
               </button>
             )}
@@ -168,7 +171,7 @@ export default function PricingSection({ currentPlan, userPhone, theme = 'light'
                 Cambia piano
               </button>
             ) : (
-              <button onClick={() => handleCheckout('business')} className="w-full bg-[#075E54] text-white py-2.5 rounded-xl font-semibold hover:scale-[1.02] transition-transform shadow-md">
+              <button onClick={() => handleCheckout('business')} className="w-full py-2.5 rounded-xl font-semibold text-primary border-2 border-primary hover:bg-primary/5 transition-colors">
                 Passa a Business
               </button>
             )}

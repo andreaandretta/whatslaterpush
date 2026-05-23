@@ -15,6 +15,8 @@ interface ScheduleModalProps {
   onBack: () => void;
   contact: { number: string; name?: string } | null;
   onScheduled: () => void;
+  /** Pre-fill the message body — used by Duplica/Modifica from the dashboard. */
+  initialMessage?: string;
 }
 
 const REMINDER_LABELS: Record<ReminderValue, string> = {
@@ -51,12 +53,12 @@ function translateError(code: string): string {
   }
 }
 
-export default function ScheduleModal({ open, onClose, onBack, contact, onScheduled }: ScheduleModalProps) {
+export default function ScheduleModal({ open, onClose, onBack, contact, onScheduled, initialMessage = '' }: ScheduleModalProps) {
   const init = defaultDateTime();
   const [selectedDate, setSelectedDate] = useState<Date>(init.date);
   const [selectedTime, setSelectedTime] = useState<string>(init.time);
   const [description, setDescription] = useState('');
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(initialMessage);
   const [reminder, setReminder] = useState<ReminderValue>('never');
   const [approval, setApproval] = useState(false);
 
@@ -74,7 +76,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       setSelectedDate(d.date);
       setSelectedTime(d.time);
       setDescription('');
-      setMessage('');
+      setMessage(initialMessage);
       setReminder('never');
       setApproval(false);
       setError(null);
