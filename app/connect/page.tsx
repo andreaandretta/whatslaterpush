@@ -76,7 +76,7 @@ export default function ConnectPage() {
         if (data.authenticated) {
           if (pollTimer.current) clearInterval(pollTimer.current);
           setPhase('connecting');
-          setTimeout(() => router.push(data.redirect || '/dashboard'), 1200);
+          setTimeout(() => router.push(data.redirect || '/dashboard'), 800);
         }
       } catch {
         // Network blip: continue polling
@@ -148,7 +148,7 @@ export default function ConnectPage() {
                     </p>
                   </div>
                   <Button type="submit" className="w-full" isLoading={submitting}>
-                    Procedi
+                    Mostra il QR
                   </Button>
                 </form>
               </>
@@ -157,22 +157,36 @@ export default function ConnectPage() {
             {phase === 'pairing' && (
               <>
                 <ConnectStepper currentStep={2} />
-                {qrCode && (
-                  <div className="flex justify-center mb-4">
-                    <div className="relative w-48 h-48 border-4 border-primary/20 rounded-xl p-2 bg-white">
-                      <img src={qrCode} alt="QR code per connessione WhatsApp" className="w-full h-full" />
-                    </div>
-                  </div>
-                )}
                 {pairingCode && (
-                  <div className="bg-[#ECE5DD]/40 rounded-xl px-3 py-2.5 mb-4">
+                  <div className="bg-[#ECE5DD]/40 rounded-xl px-3 py-3 mb-4">
                     <p className="text-[10px] uppercase text-text-secondary font-semibold tracking-wider">
-                      Oppure inserisci questo codice
+                      Inserisci questo codice in WhatsApp
                     </p>
-                    <p className="text-lg font-mono font-bold tracking-[0.25em] text-accent">
+                    <p className="text-2xl font-mono font-bold tracking-[0.25em] text-accent mt-1">
                       {pairingCode}
                     </p>
                   </div>
+                )}
+                {qrCode && (
+                  <>
+                    {/* Mobile: QR collassato — ICP D è mobile-dominant, QR inutilizzabile sullo stesso telefono */}
+                    <details className="md:hidden mb-4 group">
+                      <summary className="cursor-pointer text-xs text-text-secondary underline list-none py-1 select-none">
+                        Oppure scansiona il QR (da un altro dispositivo)
+                      </summary>
+                      <div className="flex justify-center mt-3">
+                        <div className="relative w-48 h-48 border-4 border-primary/20 rounded-xl p-2 bg-white">
+                          <img src={qrCode} alt="QR code per connessione WhatsApp" className="w-full h-full" />
+                        </div>
+                      </div>
+                    </details>
+                    {/* Desktop: QR sempre visibile */}
+                    <div className="hidden md:flex justify-center mb-4">
+                      <div className="relative w-48 h-48 border-4 border-primary/20 rounded-xl p-2 bg-white">
+                        <img src={qrCode} alt="QR code per connessione WhatsApp" className="w-full h-full" />
+                      </div>
+                    </div>
+                  </>
                 )}
                 <div className="border-t border-border pt-3 space-y-2">
                   <div className="flex items-start gap-2 text-xs">
@@ -214,10 +228,6 @@ export default function ConnectPage() {
                 <p className="text-sm text-text-secondary mt-2">
                   Ti stiamo portando alla dashboard...
                 </p>
-                <div className="mt-4 flex items-center justify-center gap-2 text-[11px] text-text-secondary">
-                  <Loader2 className="w-3 h-3 animate-spin text-primary" />
-                  <span>Un istante...</span>
-                </div>
               </div>
             )}
 

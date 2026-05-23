@@ -15,7 +15,7 @@ const spaceGrotesk = Space_Grotesk({
 export const metadata: Metadata = {
   title: 'WhatsLater - Programma messaggi WhatsApp dal tuo numero',
   description: 'Programma messaggi WhatsApp dal tuo numero personale. Per chi coordina squadre, fornitori e clienti ogni giorno.',
-  keywords: ['WhatsApp', 'programmare messaggi', 'schedulare WhatsApp', 'allenatori', 'site manager', 'professionisti'],
+  keywords: ['WhatsApp', 'programmare messaggi', 'schedulare WhatsApp', 'allenatori', 'site manager', 'parroci', 'scout', 'istruttori sportivi', 'scuola guida', 'facility manager', 'coordinare squadra'],
   openGraph: {
     title: 'WhatsLater - Programma messaggi WhatsApp dal tuo numero',
     description: 'Programma messaggi WhatsApp dal tuo numero personale. Per chi coordina squadre, fornitori e clienti ogni giorno.',

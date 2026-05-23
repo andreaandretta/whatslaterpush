@@ -28,7 +28,7 @@ export default function HeroSection() {
 
         {/* Phone mockup — D scenario: scheduled match summons */}
         <div className="flex flex-col items-center gap-4">
-          <p className="text-xs sm:text-sm text-white/70 italic text-center max-w-[280px] leading-snug">
+          <p className="text-xs sm:text-sm text-white/90 italic text-center max-w-[280px] leading-snug">
             Schedulato giovedì sera dalla dashboard, inviato dal tuo numero sabato mattina alle 9
           </p>
           <div className="w-[220px] sm:w-[260px] bg-[#0b141a] rounded-[2rem] border-2 border-white/10 overflow-hidden p-2 sm:p-3">

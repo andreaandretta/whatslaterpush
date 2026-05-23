@@ -5,7 +5,7 @@ test.describe('/connect page', () => {
     await page.goto('/connect');
     await expect(page.getByText(/Connetti|Collega/i).first()).toBeVisible();
     await expect(page.getByPlaceholder('3331234567')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Procedi' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Mostra il QR' })).toBeVisible();
   });
 
   test('has WhatsLater branding (navbar)', async ({ page }) => {
@@ -31,7 +31,7 @@ test.describe('/connect page', () => {
   test('shows error phase on invalid phone', async ({ page }) => {
     await page.goto('/connect');
     await page.getByPlaceholder('3331234567').fill('abc');
-    await page.getByRole('button', { name: 'Procedi' }).click();
+    await page.getByRole('button', { name: 'Mostra il QR' }).click();
     await expect(page.getByRole('alert')).toBeVisible({ timeout: 8000 });
     await expect(page.getByRole('button', { name: 'Riprova' })).toBeVisible();
   });
