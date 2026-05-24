@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import StepNumero from '../components/connect/StepNumero';
 import StepCodice from '../components/connect/StepCodice';
@@ -14,7 +14,20 @@ import StepPronto from '../components/connect/StepPronto';
 // Each step is a self-contained component. This file owns the state machine
 // and talks to the existing /api/auth/* endpoints that already drive the
 // Evolution API + Supabase session table.
+//
+// useSearchParams() forces this client component to bail out of static
+// prerendering, which Next 14 only allows inside a Suspense boundary — so
+// the actual flow lives in <ConnectFlow/> and the default export just wraps
+// it. Fallback is null because the flow renders identical UI on first paint.
 export default function ConnectPage() {
+  return (
+    <Suspense fallback={null}>
+      <ConnectFlow />
+    </Suspense>
+  );
+}
+
+function ConnectFlow() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
