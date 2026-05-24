@@ -1,29 +1,17 @@
 import { Clock, SmartphoneNfc, Lock } from 'lucide-react';
 
+// Cream benefit strip (between hero and "Come funziona"). Avoid green-on-green
+// stacking with the dark-green hero by going to cream. Icons are mint-soft so
+// they pop without competing with the primary FAB green elsewhere.
 const benefits = [
-  {
-    icon: Clock,
-    title: 'Setup in 2 minuti',
-    description: 'Codice a 8 cifre. Niente account, niente carta.',
-  },
-  {
-    icon: SmartphoneNfc,
-    title: 'Nessuna app da installare',
-    description: 'Tutto via browser. Funziona anche col telefono spento.',
-  },
-  {
-    icon: Lock,
-    title: 'Dal tuo numero personale',
-    description: 'Niente bot, niente sender aziendale. Solo la tua chat.',
-  },
+  { icon: Clock, title: 'Setup in 2 minuti', description: 'Codice a 8 cifre. Niente account, niente carta.' },
+  { icon: SmartphoneNfc, title: 'Nessuna app da installare', description: 'Tutto via browser. Funziona anche col telefono spento.' },
+  { icon: Lock, title: 'Dal tuo numero personale', description: 'Niente bot, niente sender aziendale. Solo la tua chat.' },
 ];
 
-// Cream-on-green-on-cream rhythm: hero (dark green) → this band (cream)
-// → "Come Funziona" (white) → pricing (white) → faq (cream) → footer (green).
-// Never two same-color sections back-to-back.
 export default function StatsBar() {
   return (
-    <section className="bg-[#ECE5DD] py-12 border-y border-[#D7CFC4]/40">
+    <section className="bg-[#ECE5DD] py-14 border-y border-[#075E54]/10">
       <div className="max-w-5xl mx-auto px-6 grid grid-cols-1 sm:grid-cols-3 gap-8 sm:gap-6">
         {benefits.map((b, i) => (
           <div
@@ -36,12 +24,8 @@ export default function StatsBar() {
               <b.icon className="w-5 h-5 text-white" strokeWidth={2.25} />
             </div>
             <div className="text-left">
-              <div className="text-[#075E54] font-semibold text-base leading-tight">
-                {b.title}
-              </div>
-              <div className="text-[#54656F] text-sm mt-1 leading-snug">
-                {b.description}
-              </div>
+              <div className="text-[#075E54] font-semibold text-base leading-tight">{b.title}</div>
+              <div className="text-[#54656F] text-sm mt-1 leading-snug">{b.description}</div>
             </div>
           </div>
         ))}

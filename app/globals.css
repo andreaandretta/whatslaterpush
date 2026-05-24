@@ -8,138 +8,63 @@
   }
 
   body {
-    @apply bg-white text-text-primary;
+    @apply bg-background text-text-primary;
   }
 }
 
-@layer utilities {
-  /* Smooth scrolling */
-  html {
-    scroll-behavior: smooth;
-  }
-
-  /* Custom scrollbar */
-  ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-
-  ::-webkit-scrollbar-track {
-    @apply bg-transparent;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    @apply bg-text-secondary/20 rounded-full;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-text-secondary/30;
-  }
-
-  /* Focus styles */
-  .focus-ring {
-    @apply focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-2 focus:ring-offset-white;
-  }
-
-  /* Animation utilities */
-  .animate-in {
-    animation: animateIn 0.3s ease-out;
-  }
-
-  @keyframes animateIn {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  /* Connect page background */
-  .connect-bg {
-    background:
-      radial-gradient(circle at 20% 20%, rgba(37, 211, 102, 0.10) 0%, transparent 45%),
-      radial-gradient(circle at 80% 70%, rgba(18, 140, 126, 0.15) 0%, transparent 45%),
-      linear-gradient(135deg, #075E54 0%, #0a4f47 100%);
-    position: relative;
-  }
-  .connect-bg::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.06) 1px, transparent 0);
-    background-size: 28px 28px;
-    pointer-events: none;
-  }
-}
-
-/* Selection styles */
-::selection {
-  @apply bg-primary/20 text-text-primary;
-}
-
-/* Placeholder styles */
-::placeholder {
-  @apply text-text-secondary/50;
-}
-
-/* Fade-in-up for scroll reveal */
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.fade-in-up {
-  opacity: 0;
-  animation: fadeInUp 0.4s ease-out forwards;
-}
-
-/* WhatsApp-style attention ripple for FABs.
-   Single ring expands & fades, rests, repeats. Pair with a delayed sibling
-   for a continuous double-pulse. */
+/* === FAB attention ripple — single ring (variant C). Used on the dashboard
+   "Manda messaggio" FAB. */
 @keyframes waPing {
-  0% {
-    transform: scale(1);
-    opacity: 0.55;
-  }
-  80% {
-    transform: scale(1.8);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(1.8);
-    opacity: 0;
-  }
+  0%   { transform: scale(1);    opacity: 0.55; }
+  80%  { transform: scale(1.8);  opacity: 0; }
+  100% { transform: scale(1.8);  opacity: 0; }
 }
-
 .wa-ping {
   animation: waPing 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
   transform-origin: center;
 }
 
-/* WhatsApp subtle background pattern */
+/* === Subtle WA "wallpaper" dot pattern used by hero / mint bands / connect.
+   Inherits its base color from whatever bg-class the parent sets, so it can
+   sit on white, mint, or cream without re-defining the gradient stops. */
+.wa-doodle {
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(7, 94, 84, 0.06) 1.5px, transparent 2.5px),
+    radial-gradient(circle at 78% 32%, rgba(7, 94, 84, 0.06) 1.5px, transparent 2.5px),
+    radial-gradient(circle at 42% 62%, rgba(7, 94, 84, 0.06) 1.5px, transparent 2.5px),
+    radial-gradient(circle at 88% 78%, rgba(7, 94, 84, 0.06) 1.5px, transparent 2.5px),
+    radial-gradient(circle at 22% 88%, rgba(7, 94, 84, 0.06) 1.5px, transparent 2.5px);
+  background-size: 110px 110px;
+}
+/* Same pattern but with stronger contrast for mint backgrounds. */
+.wa-doodle-strong {
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(7, 94, 84, 0.10) 1.8px, transparent 3px),
+    radial-gradient(circle at 78% 32%, rgba(7, 94, 84, 0.10) 1.8px, transparent 3px),
+    radial-gradient(circle at 42% 62%, rgba(7, 94, 84, 0.10) 1.8px, transparent 3px),
+    radial-gradient(circle at 88% 78%, rgba(7, 94, 84, 0.10) 1.8px, transparent 3px);
+  background-size: 130px 130px;
+}
+
+/* Legacy wa-pattern alias — kept so existing components don't break. */
 .wa-pattern {
-  position: relative;
+  background-image: radial-gradient(circle at 1px 1px, rgba(7, 94, 84, 0.07) 1px, transparent 0);
+  background-size: 24px 24px;
 }
-.wa-pattern::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  opacity: 0.04;
-  pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Cg fill='none' stroke='%23ffffff' stroke-width='1.5' opacity='1'%3E%3Ccircle cx='25' cy='25' r='6'/%3E%3Cpath d='M23 25h4'/%3E%3Cpath d='M25 22v3'/%3E%3Crect x='70' y='15' width='12' height='15' rx='2'/%3E%3Ccircle cx='76' cy='26' r='1.5'/%3E%3Cpath d='M140 20a5 5 0 1 1-10 0 5 5 0 0 1 10 0z'/%3E%3Cpath d='M135 17v3l2 1'/%3E%3Cpath d='M30 80l5 5 10-10'/%3E%3Ccircle cx='90' cy='75' r='6'/%3E%3Cpath d='M88 75h4'/%3E%3Cpath d='M90 72v3'/%3E%3Crect x='145' y='70' width='12' height='15' rx='2'/%3E%3Ccircle cx='151' cy='81' r='1.5'/%3E%3Cpath d='M50 140a5 5 0 1 1-10 0 5 5 0 0 1 10 0z'/%3E%3Cpath d='M45 137v3l2 1'/%3E%3Cpath d='M110 130l5 5 10-10'/%3E%3Ccircle cx='170' cy='135' r='6'/%3E%3Cpath d='M168 135h4'/%3E%3Cpath d='M170 132v3'/%3E%3Crect x='15' y='170' width='12' height='15' rx='2'/%3E%3Ccircle cx='21' cy='181' r='1.5'/%3E%3Cpath d='M85 175a5 5 0 1 1-10 0 5 5 0 0 1 10 0z'/%3E%3Cpath d='M80 172v3l2 1'/%3E%3Cpath d='M155 170l5 5 10-10'/%3E%3C/g%3E%3C/svg%3E");
-  background-repeat: repeat;
-  z-index: 0;
+
+/* Fade-in-up used by HowItWorks step cards (intersection-observer driven). */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-.wa-pattern > * {
-  position: relative;
-  z-index: 1;
+.fade-in-up {
+  animation: fade-in-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Soft shadow utility used by step cards / pricing cards. */
+.shadow-soft {
+  box-shadow: 0 4px 16px -4px rgba(0, 0, 0, 0.08);
+}
+.shadow-soft-lg {
+  box-shadow: 0 14px 40px -10px rgba(0, 0, 0, 0.15);
 }
