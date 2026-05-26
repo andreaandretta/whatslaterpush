@@ -5,6 +5,7 @@ import { shouldSendMessage, rescheduleTomorrow } from '../../../lib/cron-utils';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
 import { nextOccurrence } from '../../../lib/recurrence';
+import { computeTypingDelay, sendTypingPresence } from '../../../lib/typing-presence';
 
 export const dynamic = 'force-dynamic';
 
@@ -255,6 +256,23 @@ export async function GET(req: NextRequest) {
         // like a burst pattern to Baileys/WhatsApp. Still within the 8s
         // lambda budget on Vercel Hobby (5 parallel × max 2.5s = 2.5s wall).
         await new Promise(r => setTimeout(r, 800 + Math.random() * 1700));
+
+        // Typing simulation: show "is typing…" indicator on the recipient's
+        // device proportional to message length (max 4s). Recipients see a
+        // human-shaped activity pattern. Failure of /chat/sendPresence is
+        // graceful — we log and still send the real message.
+        const typingMs = computeTypingDelay((msg.parsed_message || '').length);
+        if (typingMs > 0) {
+          await sendTypingPresence({
+            evoUrl: process.env.EVOLUTION_API_URL!,
+            evoKey: process.env.EVOLUTION_API_KEY!,
+            instanceName,
+            recipientJid: msg.recipient_number,
+            typingMs,
+          });
+          await new Promise(r => setTimeout(r, typingMs));
+        }
+
         console.log('CRON: Sending msg ' + msg.id + ' via instance=' + instanceName + ' to=' + msg.recipient_number);
         const sendCtrl = new AbortController();
         const sendTimeout = setTimeout(() => sendCtrl.abort(), 8000);

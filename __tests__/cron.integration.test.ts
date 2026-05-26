@@ -241,6 +241,9 @@ describe('Cron integration: empty queue', () => {
 });
 
 describe('Cron integration: batch processing', () => {
+  // Each send now waits intra-batch jitter (max 2.5s) + typing delay
+  // (max 4s, here ~600ms for "Ciao Marco!"). 7 msg in 2 batches ≈ 7s wall,
+  // exceeds Jest's default 5s timeout. Bump explicitly.
   test('processes multiple messages in batches', async () => {
     const messages = Array.from({ length: 7 }, (_, i) =>
       makePendingMsg({
@@ -259,7 +262,7 @@ describe('Cron integration: batch processing', () => {
 
     // All 7 should be sent (processed in 2 batches: 5 + 2)
     expect(body.sent).toBe(7);
-  });
+  }, 15000);
 });
 
 // Simulates the Postgres atomic UPSERT (INSERT ... ON CONFLICT DO UPDATE with
