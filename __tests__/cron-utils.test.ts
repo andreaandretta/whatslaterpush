@@ -1,4 +1,4 @@
-import { shouldSendMessage, rescheduleTomorrow, PendingMessage, UserInstance } from '../app/lib/cron-utils';
+import { shouldSendMessage, rescheduleTomorrow, applyJitter, PendingMessage, UserInstance } from '../app/lib/cron-utils';
 
 function makeMessage(overrides: { user_instances?: Partial<UserInstance> | null } & Partial<Omit<PendingMessage, 'user_instances'>> = {}): PendingMessage {
   const defaultInstance: UserInstance = {
@@ -126,5 +126,51 @@ describe('rescheduleTomorrow', () => {
   test('preserves time component', () => {
     const result = rescheduleTomorrow('2026-06-15T08:30:45.123Z');
     expect(result).toBe('2026-06-16T08:30:45.123Z');
+  });
+});
+
+describe('applyJitter', () => {
+  const BASE = '2026-06-15T18:00:00.000Z';
+  const BASE_MS = new Date(BASE).getTime();
+
+  test('returns a timestamp >= base (offset is non-negative)', () => {
+    for (let i = 0; i < 50; i++) {
+      const shifted = new Date(applyJitter(BASE)).getTime();
+      expect(shifted).toBeGreaterThanOrEqual(BASE_MS);
+    }
+  });
+
+  test('default max jitter is 15000ms (15 seconds)', () => {
+    for (let i = 0; i < 100; i++) {
+      const shifted = new Date(applyJitter(BASE)).getTime();
+      expect(shifted - BASE_MS).toBeLessThanOrEqual(15_000);
+    }
+  });
+
+  test('respects custom maxJitterMs', () => {
+    const customMax = 5_000;
+    for (let i = 0; i < 100; i++) {
+      const shifted = new Date(applyJitter(BASE, customMax)).getTime();
+      const offset = shifted - BASE_MS;
+      expect(offset).toBeGreaterThanOrEqual(0);
+      expect(offset).toBeLessThanOrEqual(customMax);
+    }
+  });
+
+  test('distributes across the window (100 calls produce >=20 unique offsets)', () => {
+    // With 15s of jitter at ms precision, 100 random samples should produce
+    // far more than 20 distinct values. Catches accidental "always returns 0"
+    // bugs and verifies real randomness.
+    const offsets = new Set<number>();
+    for (let i = 0; i < 100; i++) {
+      const shifted = new Date(applyJitter(BASE)).getTime();
+      offsets.add(shifted - BASE_MS);
+    }
+    expect(offsets.size).toBeGreaterThanOrEqual(20);
+  });
+
+  test('preserves ISO 8601 format', () => {
+    const result = applyJitter(BASE);
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
   });
 });

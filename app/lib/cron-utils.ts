@@ -66,3 +66,20 @@ export function rescheduleTomorrow(scheduledAt: string): string {
   tomorrow.setDate(tomorrow.getDate() + 1);
   return tomorrow.toISOString();
 }
+
+/**
+ * Anti-ban jitter: shifts a scheduled_at timestamp by a random offset in
+ * [0, maxJitterMs]. Two messages from the same user that share an identical
+ * timestamp (e.g. "Convocazione 18:00" sent to 5 contacts) get distributed
+ * across the jitter window, breaking the burst pattern that triggers
+ * WhatsApp/Baileys rate limiting on the sender's personal number.
+ *
+ * Default 15s is below the 5-minute cron polling window (so the next cron
+ * still picks the message up on time) and below user-perceptible delay for
+ * the ICP-D use case (reminders, convocations).
+ */
+export function applyJitter(scheduledAt: string, maxJitterMs = 15_000): string {
+  const base = new Date(scheduledAt).getTime();
+  const offset = Math.floor(Math.random() * (maxJitterMs + 1));
+  return new Date(base + offset).toISOString();
+}

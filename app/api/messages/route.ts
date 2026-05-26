@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getPlanLimits } from '../../lib/plans';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { validatePhone } from '../../lib/phone';
+import { applyJitter } from '../../lib/cron-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -192,7 +193,7 @@ export async function POST(req: NextRequest) {
       recipient_name: cleanName,
       caption: cleanMessage,
       parsed_message: cleanMessage,
-      scheduled_at: scheduledDate.toISOString(),
+      scheduled_at: applyJitter(scheduledDate.toISOString()),
       status: 'pending',
       retry_count: 0,
       max_retries: 3,

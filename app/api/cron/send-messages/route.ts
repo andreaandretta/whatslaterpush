@@ -249,8 +249,11 @@ export async function GET(req: NextRequest) {
           return 'skipped' as const;
         }
 
-        // Minimal jitter (200-400ms)
-        await new Promise(r => setTimeout(r, 200 + Math.random() * 200));
+        // Anti-ban intra-batch jitter (800-2500ms). Extended from the prior
+        // 200-400ms because 5 parallel sends within a few hundred ms looked
+        // like a burst pattern to Baileys/WhatsApp. Still within the 8s
+        // lambda budget on Vercel Hobby (5 parallel × max 2.5s = 2.5s wall).
+        await new Promise(r => setTimeout(r, 800 + Math.random() * 1700));
         console.log('CRON: Sending msg ' + msg.id + ' via instance=' + instanceName + ' to=' + msg.recipient_number);
         const sendCtrl = new AbortController();
         const sendTimeout = setTimeout(() => sendCtrl.abort(), 8000);
