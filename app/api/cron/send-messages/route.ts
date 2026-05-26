@@ -3,48 +3,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { normalizeItalianPhone } from '../../../lib/phone';
 import { shouldSendMessage, rescheduleTomorrow } from '../../../lib/cron-utils';
 import { getPlanLimits } from '../../../lib/plans';
+import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
-interface RateState {
-  minuteCount: number;
-  minuteReset: number;
-  dailyCount: number;
-  dailyReset: number;
-  blocked: boolean;
-  blockReason?: string;
-}
-
-const rateLimits = new Map<string, RateState>();
-const LIMITS = { PER_USER_PER_MINUTE: 15, PER_USER_PER_DAY: 100, PER_INSTANCE_PER_MINUTE: 18, SPAM_THRESHOLD: 50 };
-
-function getRateState(key: string): RateState {
-  const now = Date.now();
-  let state = rateLimits.get(key);
-  if (!state) { state = { minuteCount: 0, minuteReset: now + 60000, dailyCount: 0, dailyReset: now + 86400000, blocked: false }; rateLimits.set(key, state); return state; }
-  if (now >= state.minuteReset) { state.minuteCount = 0; state.minuteReset = now + 60000; }
-  if (now >= state.dailyReset) { state.dailyCount = 0; state.dailyReset = now + 86400000; state.blocked = false; state.blockReason = undefined; }
-  return state;
-}
-
-function canSend(userPhone: string, instanceName: string) {
-  const u = getRateState('user:' + userPhone), i = getRateState('inst:' + instanceName);
-  if (u.blocked) return { allowed: false, reason: 'Blocked: ' + u.blockReason };
-  if (u.dailyCount >= LIMITS.PER_USER_PER_DAY) return { allowed: false, reason: 'Daily limit' };
-  if (u.minuteCount >= LIMITS.PER_USER_PER_MINUTE) return { allowed: false, reason: 'Minute limit' };
-  if (i.minuteCount >= LIMITS.PER_INSTANCE_PER_MINUTE) return { allowed: false, reason: 'Instance limit' };
-  return { allowed: true };
-}
-
-function recordSend(userPhone: string, instanceName: string) {
-  const u = getRateState('user:' + userPhone), i = getRateState('inst:' + instanceName);
-  u.minuteCount++; u.dailyCount++; i.minuteCount++;
-  if (u.dailyCount >= LIMITS.SPAM_THRESHOLD) { u.blocked = true; u.blockReason = u.dailyCount + '/day'; }
-}
-
 async function checkFailures(supabase: ReturnType<typeof createClient>, userPhone: string) {
   const { count } = await supabase.from('scheduled_messages').select('id', { count: 'exact', head: true }).eq('instance_phone', userPhone).eq('status', 'failed').gte('created_at', new Date(Date.now() - 86400000).toISOString());
-  if ((count || 0) >= 5) { const s = getRateState('user:' + userPhone); s.blocked = true; s.blockReason = count + ' failed in 24h'; return true; }
+  if ((count || 0) >= 5) {
+    await markBlocked(supabase, 'user:' + userPhone, count + ' failed in 24h');
+    return true;
+  }
   return false;
 }
 
@@ -264,7 +232,7 @@ export async function GET(req: NextRequest) {
           return 'skipped' as const;
         }
 
-        const check = canSend(ownerPhone, instanceName);
+        const check = await canSend(supabase, ownerPhone, instanceName);
         if (!check.allowed) {
           console.log('CRON: RATE LIMITED:', ownerPhone, check.reason);
           return 'rate_limited' as const;
@@ -304,7 +272,7 @@ export async function GET(req: NextRequest) {
           const errText = await res.text();
           throw new Error('HTTP ' + res.status + ': ' + errText);
         }
-        recordSend(ownerPhone, instanceName);
+        await recordSend(supabase, ownerPhone, instanceName);
         await supabase.from('scheduled_messages')
           .update({ status: 'sent', sent_at: new Date().toISOString(), user_notified: true })
           .eq('id', msg.id);

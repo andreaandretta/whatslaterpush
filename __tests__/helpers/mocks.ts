@@ -74,8 +74,14 @@ export function createMockSupabase() {
   }
 
   const rpcResponseMap = new Map<string, { data: any; error: any }>();
+  const rpcHandlerMap = new Map<string, (args: any) => { data: any; error: any } | Promise<{ data: any; error: any }>>();
   function setRpcResponse(name: string, data: any, error: any = null) {
     rpcResponseMap.set(name, { data, error });
+  }
+  // For tests that need dynamic per-call responses (e.g. simulating atomic
+  // Postgres UPSERT to verify concurrent recordSend never loses an increment).
+  function setRpcHandler(name: string, handler: (args: any) => { data: any; error: any } | Promise<{ data: any; error: any }>) {
+    rpcHandlerMap.set(name, handler);
   }
 
   const client = {
@@ -89,6 +95,8 @@ export function createMockSupabase() {
     rpc: (name: string, args?: any) => {
       // Track in the same `calls` array so existing assertions still work.
       calls.push({ table: '__rpc__', operation: name, args: [args], chain: [] });
+      const handler = rpcHandlerMap.get(name);
+      if (handler) return Promise.resolve(handler(args));
       const resp = rpcResponseMap.get(name) || { data: null, error: null };
       return Promise.resolve(resp);
     },
@@ -98,7 +106,7 @@ export function createMockSupabase() {
     removeChannel: () => {},
   };
 
-  return { client, calls, setResponse, setRpcResponse };
+  return { client, calls, setResponse, setRpcResponse, setRpcHandler };
 }
 
 // Fetch mock helper

@@ -28,6 +28,18 @@ beforeEach(() => {
     CRON_SECRET: 'test-secret',
   };
   (global as any).fetch = fetchMock.mockFetch;
+  // Default safe response for rate_limit_record RPC so happy-path tests don't
+  // need to know about the new persistence layer. Tests that exercise the
+  // rate-limit logic itself install their own handler via setRpcHandler.
+  mockSupa.setRpcResponse('rate_limit_record', {
+    key: 'default',
+    minute_count: 1,
+    minute_reset: Date.now() + 60000,
+    daily_count: 1,
+    daily_reset: Date.now() + 86400000,
+    blocked: false,
+    block_reason: null,
+  });
 });
 
 afterEach(() => {
@@ -247,5 +259,77 @@ describe('Cron integration: batch processing', () => {
 
     // All 7 should be sent (processed in 2 batches: 5 + 2)
     expect(body.sent).toBe(7);
+  });
+});
+
+// Simulates the Postgres atomic UPSERT (INSERT ... ON CONFLICT DO UPDATE with
+// CASE-based window reset) that the rate_limit_record RPC performs.
+// Used in the two tests below to verify the rate-limit module's behavior.
+function installAtomicRpcHandler() {
+  const stateMap = new Map<string, any>();
+  mockSupa.setRpcHandler('rate_limit_record', (args: any) => {
+    const existing = stateMap.get(args.p_key);
+    let next: any;
+    if (!existing) {
+      next = {
+        key: args.p_key,
+        minute_count: 1,
+        minute_reset: args.p_minute_reset,
+        daily_count: 1,
+        daily_reset: args.p_daily_reset,
+        blocked: false,
+        block_reason: null,
+      };
+    } else {
+      const minuteExpired = args.p_now >= existing.minute_reset;
+      const dailyExpired = args.p_now >= existing.daily_reset;
+      next = {
+        ...existing,
+        minute_count: minuteExpired ? 1 : existing.minute_count + 1,
+        minute_reset: minuteExpired ? args.p_minute_reset : existing.minute_reset,
+        daily_count: dailyExpired ? 1 : existing.daily_count + 1,
+        daily_reset: dailyExpired ? args.p_daily_reset : existing.daily_reset,
+        blocked: dailyExpired ? false : existing.blocked,
+        block_reason: dailyExpired ? null : existing.block_reason,
+      };
+    }
+    stateMap.set(args.p_key, next);
+    return { data: next, error: null };
+  });
+  return stateMap;
+}
+
+describe('Rate limit: persistence and atomicity', () => {
+  test('5 sequential recordSend persist count across calls (no in-memory reset)', async () => {
+    const stateMap = installAtomicRpcHandler();
+    const { recordSend } = await import('../app/lib/rate-limit');
+
+    for (let i = 0; i < 5; i++) {
+      await recordSend(mockSupa.client as any, '+39test1', 'inst-test1');
+    }
+
+    const userState = stateMap.get('user:+39test1');
+    expect(userState).toBeDefined();
+    expect(userState.minute_count).toBe(5);
+    expect(userState.daily_count).toBe(5);
+    expect(userState.blocked).toBe(false);
+  });
+
+  test('10 parallel recordSend → count = exactly 10 (no lost increments)', async () => {
+    const stateMap = installAtomicRpcHandler();
+    const { recordSend } = await import('../app/lib/rate-limit');
+
+    await Promise.all(
+      Array.from({ length: 10 }, () => recordSend(mockSupa.client as any, '+39test2', 'inst-test2'))
+    );
+
+    const userState = stateMap.get('user:+39test2');
+    expect(userState).toBeDefined();
+    expect(userState.minute_count).toBe(10);
+    expect(userState.daily_count).toBe(10);
+
+    const instState = stateMap.get('inst:inst-test2');
+    expect(instState).toBeDefined();
+    expect(instState.minute_count).toBe(10);
   });
 });
