@@ -4,6 +4,7 @@ import { getPlanLimits } from '../../lib/plans';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { validatePhone } from '../../lib/phone';
 import { applyJitter } from '../../lib/cron-utils';
+import { isValidRule } from '../../lib/recurrence';
 
 export const dynamic = 'force-dynamic';
 
@@ -119,7 +120,7 @@ export async function POST(req: NextRequest) {
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
-  const { recipient_number: rawNumber, recipient_name, message, scheduled_at } = body || {};
+  const { recipient_number: rawNumber, recipient_name, message, scheduled_at, recurrence_rule } = body || {};
 
   if (typeof rawNumber !== 'string' || rawNumber.includes('@g.us') || rawNumber.includes('@broadcast')) {
     return NextResponse.json({ error: 'invalid_phone' }, { status: 400 });
@@ -142,6 +143,16 @@ export async function POST(req: NextRequest) {
   const scheduledDate = new Date(scheduled_at);
   if (isNaN(scheduledDate.getTime()) || scheduledDate.getTime() < Date.now() + 60_000) {
     return NextResponse.json({ error: 'invalid_datetime' }, { status: 400 });
+  }
+
+  // recurrence_rule is optional. If present, must be a valid RRULE subset
+  // (see app/lib/recurrence.ts). Null/undefined/empty means one-shot send.
+  let normalizedRule: string | null = null;
+  if (recurrence_rule != null && recurrence_rule !== '') {
+    if (typeof recurrence_rule !== 'string' || !isValidRule(recurrence_rule)) {
+      return NextResponse.json({ error: 'invalid_recurrence_rule' }, { status: 400 });
+    }
+    normalizedRule = recurrence_rule;
   }
 
   const supabase = getSupabase();
@@ -198,6 +209,7 @@ export async function POST(req: NextRequest) {
       retry_count: 0,
       max_retries: 3,
       wa_message_id: null,
+      recurrence_rule: normalizedRule,
     })
     .select('id, scheduled_at')
     .single();

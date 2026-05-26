@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, ArrowLeft, Calendar as CalendarIcon, UserCheck, Bell, ChevronRight, ChevronDown, Settings } from 'lucide-react';
+import { X, ArrowLeft, Calendar as CalendarIcon, UserCheck, Bell, ChevronRight, ChevronDown, Settings, Repeat } from 'lucide-react';
 import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { DarkCalendarDialog } from './schedule/DarkCalendarDialog';
 import { AnalogClockDialog } from './schedule/AnalogClockDialog';
 import { ReminderBottomSheet, ReminderValue } from './schedule/ReminderBottomSheet';
+import { RecurrenceBottomSheet, RecurrenceValue, buildRRule, recurrenceLabel } from './schedule/RecurrenceBottomSheet';
 import { SendFab } from './schedule/SendFab';
 
 interface ScheduleModalProps {
@@ -48,6 +49,7 @@ function translateError(code: string): string {
     case 'invalid_phone': return 'Numero non valido.';
     case 'invalid_message': return 'Messaggio non valido (vuoto o oltre 3500 caratteri).';
     case 'invalid_datetime': return 'Data/ora non valida (deve essere almeno 1 minuto nel futuro).';
+    case 'invalid_recurrence_rule': return 'Ripetizione non valida.';
     case 'self_target': return 'Non puoi schedulare a te stesso.';
     default: return 'Errore: ' + code;
   }
@@ -60,6 +62,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const [description, setDescription] = useState('');
   const [message, setMessage] = useState(initialMessage);
   const [reminder, setReminder] = useState<ReminderValue>('never');
+  const [recurrence, setRecurrence] = useState<RecurrenceValue>('none');
   const [approval, setApproval] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
@@ -68,6 +71,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [clockOpen, setClockOpen] = useState(false);
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false);
+  const [recurrenceSheetOpen, setRecurrenceSheetOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
@@ -78,12 +82,14 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       setDescription('');
       setMessage(initialMessage);
       setReminder('never');
+      setRecurrence('none');
       setApproval(false);
       setError(null);
       setSubmitting(false);
       setCalendarOpen(false);
       setClockOpen(false);
       setReminderSheetOpen(false);
+      setRecurrenceSheetOpen(false);
       setAdvancedOpen(false);
     }
   }, [open]);
@@ -99,11 +105,13 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const dateLabel = format(scheduledDate, 'EEE d MMM', { locale: it });
 
   const hasReminder = reminder !== 'never';
-  const advancedSummary = !approval && !hasReminder
+  const hasRecurrence = recurrence !== 'none';
+  const advancedSummary = !approval && !hasReminder && !hasRecurrence
     ? 'Nessuna notifica · invio automatico'
     : [
         approval ? 'Approvazione richiesta' : null,
         hasReminder ? `Promemoria: ${REMINDER_LABELS[reminder]}` : null,
+        hasRecurrence ? `Ripeti: ${recurrenceLabel(recurrence, scheduledDate).toLowerCase()}` : null,
       ].filter(Boolean).join(' · ');
 
   async function handleSubmit() {
@@ -120,6 +128,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           recipient_name: contact.name || undefined,
           message: message.trim(),
           scheduled_at: scheduledDate.toISOString(),
+          recurrence_rule: buildRRule(recurrence, scheduledDate),
         }),
       });
 
@@ -270,6 +279,17 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                 <div className="text-primary text-base">{REMINDER_LABELS[reminder]}</div>
                 <ChevronRight className="w-5 h-5 text-gray-500" />
               </button>
+
+              <button
+                type="button"
+                onClick={() => setRecurrenceSheetOpen(true)}
+                className="w-full flex items-center gap-4 py-3 hover:bg-white/5 text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <Repeat className="w-5 h-5 text-gray-400 shrink-0" />
+                <div className="flex-1 text-white text-base">Ripeti</div>
+                <div className="text-primary text-base">{recurrenceLabel(recurrence, scheduledDate)}</div>
+                <ChevronRight className="w-5 h-5 text-gray-500" />
+              </button>
             </div>
           )}
 
@@ -314,6 +334,13 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           onClose={() => setReminderSheetOpen(false)}
           value={reminder}
           onChange={(v) => setReminder(v)}
+        />
+        <RecurrenceBottomSheet
+          open={recurrenceSheetOpen}
+          onClose={() => setRecurrenceSheetOpen(false)}
+          value={recurrence}
+          onChange={(v) => setRecurrence(v)}
+          referenceDate={scheduledDate}
         />
       </div>
     </div>

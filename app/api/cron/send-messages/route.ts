@@ -4,6 +4,7 @@ import { normalizeItalianPhone } from '../../../lib/phone';
 import { shouldSendMessage, rescheduleTomorrow } from '../../../lib/cron-utils';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
+import { nextOccurrence } from '../../../lib/recurrence';
 
 export const dynamic = 'force-dynamic';
 
@@ -279,6 +280,31 @@ export async function GET(req: NextRequest) {
         await supabase.from('scheduled_messages')
           .update({ status: 'sent', sent_at: new Date().toISOString(), user_notified: true })
           .eq('id', msg.id);
+
+        // Recurrence: if this row was part of a recurring schedule, compute
+        // the next occurrence and insert a new pending row. parent_recurrence_id
+        // propagates through the chain (first row's id is the group id).
+        if (msg.recurrence_rule) {
+          const next = nextOccurrence(msg.recurrence_rule, new Date(msg.scheduled_at));
+          if (next) {
+            const parentId = msg.parent_recurrence_id || msg.id;
+            await supabase.from('scheduled_messages').insert({
+              user_instance_id: msg.user_instance_id,
+              instance_phone: ownerPhone,
+              recipient_number: msg.recipient_number,
+              recipient_name: msg.recipient_name,
+              caption: msg.caption,
+              parsed_message: msg.parsed_message,
+              scheduled_at: next.toISOString(),
+              status: 'pending',
+              retry_count: 0,
+              max_retries: 3,
+              wa_message_id: null,
+              recurrence_rule: msg.recurrence_rule,
+              parent_recurrence_id: parentId,
+            });
+          }
+        }
 
         // Increment daily counter
         const newSentToday = sentToday + 1;

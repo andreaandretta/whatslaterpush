@@ -299,6 +299,76 @@ function installAtomicRpcHandler() {
   return stateMap;
 }
 
+describe('Cron integration: recurring schedules', () => {
+  test('after sending a recurring row, inserts the next occurrence', async () => {
+    // Monday 18:00 UTC, weekly on Mondays → next is Monday +7d
+    const scheduledAt = new Date('2026-06-15T18:00:00.000Z'); // Monday
+    scheduledAt.setTime(scheduledAt.getTime() - 60000); // 1 min ago so it's due
+    const msg = makePendingMsg({
+      id: 'msg-recur-1',
+      recurrence_rule: 'FREQ=WEEKLY;BYDAY=MO',
+      scheduled_at: scheduledAt.toISOString(),
+      user_instance_id: 'ui-1',
+      caption: 'Allenamento',
+      parsed_message: 'Allenamento',
+    });
+
+    mockSupa.setResponse('scheduled_messages:update', [{ id: 'msg-recur-1' }]);
+    mockSupa.setResponse('scheduled_messages:select', [msg]);
+    fetchMock.setJsonResponse('/message/sendText/', { key: { id: 'evo-msg-recur-1' } });
+
+    const res = await callCronRoute();
+    const body = await res.json();
+    expect(body.sent).toBe(1);
+
+    // Find the recurrence INSERT (NOT the existing update path)
+    const insertCalls = mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'insert');
+    expect(insertCalls.length).toBeGreaterThanOrEqual(1);
+    const inserted = insertCalls[0].args[0];
+
+    expect(inserted.recurrence_rule).toBe('FREQ=WEEKLY;BYDAY=MO');
+    expect(inserted.status).toBe('pending');
+    expect(inserted.parent_recurrence_id).toBe('msg-recur-1');
+    expect(inserted.recipient_number).toBe(msg.recipient_number);
+    expect(inserted.parsed_message).toBe('Allenamento');
+    // Next Monday relative to a Monday is +7d (preserves local time across no-DST window).
+    // Test uses a date well within CEST (June), so the UTC offset is stable.
+    expect(new Date(inserted.scheduled_at).toISOString()).toMatch(/2026-06-22T/);
+  });
+
+  test('non-recurring rows do not trigger an insert', async () => {
+    const msg = makePendingMsg({ id: 'msg-oneshot' });
+    mockSupa.setResponse('scheduled_messages:update', [{ id: 'msg-oneshot' }]);
+    mockSupa.setResponse('scheduled_messages:select', [msg]);
+    fetchMock.setJsonResponse('/message/sendText/', { ok: true });
+
+    await callCronRoute();
+
+    const insertCalls = mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'insert');
+    expect(insertCalls.length).toBe(0);
+  });
+
+  test('propagates parent_recurrence_id from existing chain', async () => {
+    const scheduledAt = new Date(Date.now() - 60000);
+    const msg = makePendingMsg({
+      id: 'msg-chain-mid',
+      parent_recurrence_id: 'msg-chain-root',
+      recurrence_rule: 'FREQ=DAILY',
+      scheduled_at: scheduledAt.toISOString(),
+    });
+
+    mockSupa.setResponse('scheduled_messages:update', [{ id: 'msg-chain-mid' }]);
+    mockSupa.setResponse('scheduled_messages:select', [msg]);
+    fetchMock.setJsonResponse('/message/sendText/', { ok: true });
+
+    await callCronRoute();
+
+    const insertCalls = mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'insert');
+    expect(insertCalls.length).toBe(1);
+    expect(insertCalls[0].args[0].parent_recurrence_id).toBe('msg-chain-root');
+  });
+});
+
 describe('Rate limit: persistence and atomicity', () => {
   test('5 sequential recordSend persist count across calls (no in-memory reset)', async () => {
     const stateMap = installAtomicRpcHandler();

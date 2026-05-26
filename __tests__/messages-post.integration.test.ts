@@ -235,4 +235,49 @@ describe('POST /api/messages', () => {
       expect(body.status).toBe('pending');
     });
   });
+
+  describe('recurrence_rule', () => {
+    test('accepts valid FREQ=WEEKLY rule and persists it on the row', async () => {
+      mockUserInstance('personal');
+      mockInsertedRow();
+      const res = await callPost({
+        recipient_number: '3339998877',
+        recipient_name: 'Marco',
+        message: 'Allenamento martedì',
+        scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
+        recurrence_rule: 'FREQ=WEEKLY;BYDAY=TU',
+      });
+      expect(res.status).toBe(200);
+
+      const insertCall = mockSupa.calls.find((c) => c.table === 'scheduled_messages' && c.operation === 'insert');
+      expect(insertCall!.args[0].recurrence_rule).toBe('FREQ=WEEKLY;BYDAY=TU');
+    });
+
+    test('null/undefined/empty recurrence_rule stores null (one-shot)', async () => {
+      mockUserInstance('personal');
+      mockInsertedRow();
+      const res = await callPost({
+        recipient_number: '3339998877',
+        message: 'Ciao',
+        scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
+        recurrence_rule: null,
+      });
+      expect(res.status).toBe(200);
+      const insertCall = mockSupa.calls.find((c) => c.table === 'scheduled_messages' && c.operation === 'insert');
+      expect(insertCall!.args[0].recurrence_rule).toBeNull();
+    });
+
+    test('rejects invalid recurrence_rule with 400', async () => {
+      mockUserInstance('personal');
+      const res = await callPost({
+        recipient_number: '3339998877',
+        message: 'Ciao',
+        scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
+        recurrence_rule: 'NONSENSE=YES',
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('invalid_recurrence_rule');
+    });
+  });
 });
