@@ -161,8 +161,13 @@ export function createFetchMock() {
 // Helper to create a mock NextRequest-like object
 export function mockRequest(body: any, headers: Record<string, string> = {}) {
   const headerMap = new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
+  // Webhook route now reads raw body via req.text() to enable HMAC verification.
+  // We provide both .json() and .text() so existing tests that pass parsed bodies
+  // continue to work, and signature-aware paths get a deterministic raw string.
+  const rawText = typeof body === 'string' ? body : JSON.stringify(body);
   return {
     json: () => Promise.resolve(body),
+    text: () => Promise.resolve(rawText),
     headers: {
       get: (name: string) => headerMap.get(name.toLowerCase()) || null,
     },

@@ -757,8 +757,41 @@ export async function POST(req) {
       }
     }
 
-    const payload = await req.json();
-    rawBody = JSON.stringify(payload).substring(0, 500);
+    // Read raw body text first so we can both HMAC-verify and parse it.
+    // req.json() would consume the body and prevent the signature check.
+    const rawText = await req.text();
+
+    // Optional HMAC body verification. Evolution can be configured to sign
+    // outgoing webhooks; if it does, header `x-hub-signature-256` (preferred)
+    // or `x-webhook-signature` carries the base64url HMAC-SHA256. We accept
+    // either header name to stay tolerant of Evolution config variations.
+    // Behavior:
+    //   header missing  → log warn, continue (back-compat with current setup
+    //                     which only uses the secret-presence check above)
+    //   header present and invalid → 401 (clear sign of tampering or
+    //                                 misconfigured secret on Evolution side)
+    //   header present and valid   → continue
+    const sigHeader = req.headers.get('x-hub-signature-256') || req.headers.get('x-webhook-signature');
+    if (sigHeader) {
+      const { verifySignature } = await import('../../lib/hmac');
+      const sigValue = sigHeader.replace(/^sha256=/, '');
+      const valid = await verifySignature(rawText, sigValue, webhookSecret);
+      if (!valid) {
+        console.error('WEBHOOK: invalid HMAC signature — rejecting (likely tampered body or stale secret)');
+        return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+      }
+    } else {
+      console.warn('WEBHOOK: signature header missing — accepting on secret-presence only. Configure Evolution to send x-hub-signature-256 for stronger auth.');
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(rawText);
+    } catch {
+      console.error('WEBHOOK: body is not valid JSON');
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+    rawBody = rawText.substring(0, 500);
     console.log('WEBHOOK incoming:', rawBody);
 
     const eventType = payload?.event || payload?.type || 'unknown';

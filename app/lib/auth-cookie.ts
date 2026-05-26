@@ -1,3 +1,5 @@
+import { signPayload, verifySignature, b64urlDecode, b64urlEncode } from './hmac';
+
 export interface AuthCookiePayload {
   phone: string;
   instanceName: string;
@@ -16,34 +18,6 @@ function getSecret(): string {
   return s;
 }
 
-// base64url helpers using built-in atob/btoa (available on Edge + Node 16+)
-function b64urlEncode(bytes: Uint8Array): string {
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function b64urlDecode(str: string): Uint8Array {
-  const padded = str.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (str.length % 4)) % 4);
-  const bin = atob(padded);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
-}
-
-async function getHmacKey(secret: string): Promise<CryptoKey> {
-  const enc = new TextEncoder().encode(secret);
-  return globalThis.crypto.subtle.importKey('raw', enc, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
-}
-
-// Constant-time compare for two Uint8Arrays of equal length
-function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
-  return diff === 0;
-}
-
 export async function signCookie(input: { phone: string; instanceName: string }): Promise<string> {
   const secret = getSecret();
   const now = Math.floor(Date.now() / 1000);
@@ -56,11 +30,8 @@ export async function signCookie(input: { phone: string; instanceName: string })
   const payloadJson = JSON.stringify(payload);
   const payloadBytes = new TextEncoder().encode(payloadJson);
   const payloadB64 = b64urlEncode(payloadBytes);
-
-  const key = await getHmacKey(secret);
-  const sigBuffer = await globalThis.crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payloadB64));
-  const sig = new Uint8Array(sigBuffer);
-  return `${payloadB64}.${b64urlEncode(sig)}`;
+  const sig = await signPayload(payloadB64, secret);
+  return `${payloadB64}.${sig}`;
 }
 
 export async function verifyCookie(raw: string | undefined): Promise<AuthCookiePayload | null> {
@@ -76,24 +47,8 @@ export async function verifyCookie(raw: string | undefined): Promise<AuthCookieP
     return null;
   }
 
-  let providedSig: Uint8Array;
-  try {
-    providedSig = b64urlDecode(sigB64);
-  } catch {
-    return null;
-  }
-
-  let key: CryptoKey;
-  try {
-    key = await getHmacKey(secret);
-  } catch {
-    return null;
-  }
-
-  const expectedBuffer = await globalThis.crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payloadB64));
-  const expectedSig = new Uint8Array(expectedBuffer);
-
-  if (!timingSafeEqualBytes(providedSig, expectedSig)) return null;
+  const valid = await verifySignature(payloadB64, sigB64, secret);
+  if (!valid) return null;
 
   let payload: AuthCookiePayload;
   try {
