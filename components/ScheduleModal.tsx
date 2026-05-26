@@ -1,14 +1,18 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, ArrowLeft, Calendar as CalendarIcon, UserCheck, Bell, ChevronRight, ChevronDown, Settings, Repeat } from 'lucide-react';
+import { X, ArrowLeft, Calendar as CalendarIcon, UserCheck, Bell, ChevronRight, ChevronDown, Settings, Repeat, FileText } from 'lucide-react';
 import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { DarkCalendarDialog } from './schedule/DarkCalendarDialog';
 import { AnalogClockDialog } from './schedule/AnalogClockDialog';
 import { ReminderBottomSheet, ReminderValue } from './schedule/ReminderBottomSheet';
 import { RecurrenceBottomSheet, RecurrenceValue, buildRRule, recurrenceLabel } from './schedule/RecurrenceBottomSheet';
+import { TemplateBottomSheet, SaveTemplateDialog, TemplatePick } from './schedule/TemplateBottomSheet';
 import { SendFab } from './schedule/SendFab';
+import { levenshteinRatio } from '../app/lib/levenshtein';
+
+const TEMPLATE_DIFF_THRESHOLD = 0.3;
 
 interface ScheduleModalProps {
   open: boolean;
@@ -65,6 +69,12 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const [recurrence, setRecurrence] = useState<RecurrenceValue>('none');
   const [approval, setApproval] = useState(false);
 
+  // Template selection state. selectedSeedId/Body are set when user picks a
+  // seed template (so we can diff-check on submit). selectedSeedTitle/Emoji
+  // are passed to SaveTemplateDialog as defaults.
+  const [selectedSeedId, setSelectedSeedId] = useState<string | null>(null);
+  const [selectedSeedBody, setSelectedSeedBody] = useState<string | null>(null);
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,6 +82,8 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const [clockOpen, setClockOpen] = useState(false);
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false);
   const [recurrenceSheetOpen, setRecurrenceSheetOpen] = useState(false);
+  const [templateSheetOpen, setTemplateSheetOpen] = useState(false);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
@@ -84,12 +96,16 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       setReminder('never');
       setRecurrence('none');
       setApproval(false);
+      setSelectedSeedId(null);
+      setSelectedSeedBody(null);
       setError(null);
       setSubmitting(false);
       setCalendarOpen(false);
       setClockOpen(false);
       setReminderSheetOpen(false);
       setRecurrenceSheetOpen(false);
+      setTemplateSheetOpen(false);
+      setSaveDialogOpen(false);
       setAdvancedOpen(false);
     }
   }, [open]);
@@ -114,6 +130,57 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
         hasRecurrence ? `Ripeti: ${recurrenceLabel(recurrence, scheduledDate).toLowerCase()}` : null,
       ].filter(Boolean).join(' · ');
 
+  function pickTemplate(pick: TemplatePick) {
+    setMessage(pick.body);
+    if (pick.kind === 'seed') {
+      setSelectedSeedId(pick.id);
+      setSelectedSeedBody(pick.body);
+    } else {
+      // Personal template — no diff check needed on submit.
+      setSelectedSeedId(null);
+      setSelectedSeedBody(null);
+    }
+  }
+
+  function shouldOfferSave(editedBody: string): boolean {
+    // Pragmatic lower bound: don't pester users to save throw-away one-liners
+    // like "Ciao". Worth saving as a template only when it carries enough
+    // structure to be reused.
+    if (editedBody.length < 20) return false;
+    if (selectedSeedId === null || selectedSeedBody === null) {
+      // User started from blank textarea (or picked a personal template,
+      // which clears selectedSeedId). Either way, offer to save.
+      return true;
+    }
+    return levenshteinRatio(editedBody, selectedSeedBody) > TEMPLATE_DIFF_THRESHOLD;
+  }
+
+  async function saveAsTemplate(title: string) {
+    const editedBody = message.trim();
+    try {
+      await fetch('/api/templates/personal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          body: editedBody,
+          source_template_id: selectedSeedId,
+        }),
+      });
+    } catch {
+      // Save is best-effort. The schedule already succeeded — swallow errors.
+    }
+    setSaveDialogOpen(false);
+    onScheduled();
+    onClose();
+  }
+
+  function dismissSaveDialog() {
+    setSaveDialogOpen(false);
+    onScheduled();
+    onClose();
+  }
+
   async function handleSubmit() {
     if (!canSubmit || !contact) return;
     setSubmitting(true);
@@ -133,8 +200,14 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       });
 
       if (res.status === 200) {
-        onScheduled();
-        onClose();
+        if (shouldOfferSave(message.trim())) {
+          // 200ms grace as per spec — gives the implicit success feedback
+          // a beat before the save dialog jumps in.
+          setTimeout(() => setSaveDialogOpen(true), 200);
+        } else {
+          onScheduled();
+          onClose();
+        }
         return;
       }
 
@@ -290,6 +363,17 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                 <div className="text-primary text-base">{recurrenceLabel(recurrence, scheduledDate)}</div>
                 <ChevronRight className="w-5 h-5 text-gray-500" />
               </button>
+
+              <button
+                type="button"
+                onClick={() => setTemplateSheetOpen(true)}
+                className="w-full flex items-center gap-4 py-3 hover:bg-white/5 text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <FileText className="w-5 h-5 text-gray-400 shrink-0" />
+                <div className="flex-1 text-white text-base">Template</div>
+                <div className="text-primary text-base">{selectedSeedId ? 'Modificato' : 'Scegli…'}</div>
+                <ChevronRight className="w-5 h-5 text-gray-500" />
+              </button>
             </div>
           )}
 
@@ -341,6 +425,18 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           value={recurrence}
           onChange={(v) => setRecurrence(v)}
           referenceDate={scheduledDate}
+        />
+        <TemplateBottomSheet
+          open={templateSheetOpen}
+          onClose={() => setTemplateSheetOpen(false)}
+          onSelect={pickTemplate}
+        />
+        <SaveTemplateDialog
+          open={saveDialogOpen}
+          defaultTitle={description.trim() || (contact.name ? `Per ${contact.name}` : 'Mio template')}
+          defaultEmoji={null}
+          onCancel={dismissSaveDialog}
+          onSave={saveAsTemplate}
         />
       </div>
     </div>

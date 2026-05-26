@@ -1,0 +1,44 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
+
+export const dynamic = 'force-dynamic';
+
+function getSupabase() {
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) throw new Error('Missing Supabase credentials');
+  return createClient(url, key);
+}
+
+async function getAuthedPhone(req: NextRequest): Promise<string | null> {
+  const raw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
+  const payload = await verifyCookie(raw);
+  return payload?.phone ?? null;
+}
+
+// GET /api/templates — list seed templates (filter by ?category=X).
+// Authenticated; no per-user filtering (seeds are global, immutable from API).
+export async function GET(req: NextRequest) {
+  const phone = await getAuthedPhone(req);
+  if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const url = new URL(req.url);
+  const category = url.searchParams.get('category');
+
+  const supabase = getSupabase();
+  let query = supabase
+    .from('message_templates')
+    .select('id, category, emoji, title, body, variables, display_order, is_beta')
+    .eq('is_active', true)
+    .order('display_order', { ascending: true });
+
+  if (category) {
+    query = query.eq('category', category);
+  }
+
+  const { data, error } = await query;
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({ templates: data || [] });
+}
