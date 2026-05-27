@@ -13,6 +13,7 @@ import FAQSection from '../components/FAQSection';
 import Footer from '../components/Footer';
 import MessagesSection, { type ScheduledMessage as MessagesSectionMessage } from '../components/MessagesSection';
 import { DeliveryStatusIcon } from '../components/DeliveryStatusIcon';
+import { OnboardingTour } from '../../components/onboarding/OnboardingTour';
 import { getPlanLimits, getPlanName } from '../lib/plans';
 
 const supabaseClient = typeof window !== 'undefined' ? createClient(
@@ -362,6 +363,7 @@ export default function DashboardPage() {
           className="absolute inset-0 rounded-full bg-primary wa-ping pointer-events-none"
         ></span>
         <button
+          data-onboarding-target="fab"
           onClick={() => setContactPickerOpen(true)}
           className="relative w-14 h-14 bg-primary text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
           aria-label="Manda messaggio"
@@ -376,6 +378,7 @@ export default function DashboardPage() {
           className="absolute inset-0 rounded-full bg-primary wa-ping pointer-events-none"
         ></span>
         <button
+          data-onboarding-target="fab"
           onClick={() => setContactPickerOpen(true)}
           className="relative bg-primary text-white rounded-full shadow-2xl px-6 py-4 flex items-center gap-2 font-semibold hover:scale-105 active:scale-95 transition-transform"
         >
@@ -383,6 +386,11 @@ export default function DashboardPage() {
           Manda messaggio
         </button>
       </div>
+
+      <OnboardingTour
+        contactPickerOpen={contactPickerOpen}
+        scheduleModalOpen={scheduleOpen}
+      />
 
       {showFAQ && <FAQSection theme="dark" />}
       <Footer theme="dark" />
