@@ -96,7 +96,21 @@ export async function GET(req: NextRequest) {
       if (addedManually) entry.addedManually = true;
       raw.push(entry);
     }
-    const out = raw.filter(isVisibleInPicker);
+    let out = raw.filter(isVisibleInPicker);
+
+    // Optional label filter: ?label=<uuid> → only contacts in that label.
+    // Pulls the assignment list for the user+label and intersects with `out`.
+    const labelId = new URL(req.url).searchParams.get('label');
+    if (labelId) {
+      const { data: assignments } = await supabase
+        .from('contact_label_assignments')
+        .select('contact_number')
+        .eq('user_phone', phone)
+        .eq('label_id', labelId);
+      const allowed = new Set((assignments || []).map(a => a.contact_number));
+      out = out.filter(c => allowed.has(c.number));
+    }
+
     out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
 
     // Recenti: 10 destinatari distinti più recenti, esclusi i cancelled.

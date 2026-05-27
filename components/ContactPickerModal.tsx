@@ -5,6 +5,7 @@ import { X, Search, UserPlus, ChevronDown, ChevronUp, AlertCircle, Loader2 } fro
 import { validatePhone } from '../app/lib/phone';
 import { Button } from './Button';
 import { ContactAvatar } from './ContactAvatar';
+import { LabelPicker } from './LabelPicker';
 
 interface Contact {
   number: string;
@@ -40,6 +41,9 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   const [manualName, setManualName] = useState('');
   const [manualNumber, setManualNumber] = useState('');
   const [manualError, setManualError] = useState<string | null>(null);
+  // Label filter — null = no filter, string = filter by label_id.
+  // Refetches /api/contacts when changed.
+  const [labelFilterId, setLabelFilterId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -49,11 +53,16 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     setManualName('');
     setManualNumber('');
     setManualError(null);
+    setLabelFilterId(null);
+  }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), 8000);
 
-    fetch('/api/contacts', { signal: abort.signal })
+    const qs = labelFilterId ? `?label=${encodeURIComponent(labelFilterId)}` : '';
+    fetch('/api/contacts' + qs, { signal: abort.signal })
       .then(async (res) => {
         clearTimeout(timer);
         if (res.status === 401) { setState({ kind: 'error', reason: 'unauthorized' }); return; }
@@ -62,7 +71,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
         const contacts: Contact[] = Array.isArray(body.contacts) ? body.contacts : [];
         const recents: Contact[] = Array.isArray(body.recents) ? body.recents : [];
         setState({ kind: 'list', contacts, recents });
-        if (contacts.length === 0) setManualOpen(true);
+        if (contacts.length === 0 && !labelFilterId) setManualOpen(true);
       })
       .catch((e) => {
         clearTimeout(timer);
@@ -71,7 +80,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
       });
 
     return () => { clearTimeout(timer); abort.abort(); };
-  }, [open]);
+  }, [open, labelFilterId]);
 
   useEffect(() => {
     if (state.kind === 'error') setManualOpen(true);
@@ -152,6 +161,8 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        <LabelPicker selectedId={labelFilterId} onChange={setLabelFilterId} />
 
         <div className="px-4 py-2" style={{ backgroundColor: '#111B21' }}>
           <div className="relative">
