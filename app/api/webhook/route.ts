@@ -854,6 +854,44 @@ export async function POST(req) {
       return NextResponse.json({ ok: true });
     }
 
+    // ── Message status updates (delivered / read) ──
+    // Baileys WAMessageStatus: 2=SERVER_ACK (sent), 3=DELIVERY_ACK (✓✓),
+    // 4=READ (✓✓ blue), 5=PLAYED (audio). We track 3 and 4.
+    if (eventType === 'messages.update' || eventType === 'MESSAGES_UPDATE') {
+      const updates = Array.isArray(payload?.data) ? payload.data : [payload?.data].filter(Boolean);
+      let touched = 0;
+      const nowIso = new Date().toISOString();
+      for (const upd of updates) {
+        const msgId = upd?.key?.id || upd?.keyId;
+        const status = typeof upd?.update?.status === 'number'
+          ? upd.update.status
+          : (typeof upd?.status === 'number' ? upd.status : null);
+        if (!msgId || (status !== 3 && status !== 4)) continue;
+
+        // delivered_at: set if missing for both DELIVERY_ACK and READ
+        // (READ implies DELIVERED on WhatsApp).
+        const { data: delRows } = await supabase
+          .from('scheduled_messages')
+          .update({ delivered_at: nowIso })
+          .eq('evolution_message_id', msgId)
+          .is('delivered_at', null)
+          .select('id');
+        if (delRows?.length) touched += delRows.length;
+
+        if (status === 4) {
+          const { data: readRows } = await supabase
+            .from('scheduled_messages')
+            .update({ read_at: nowIso })
+            .eq('evolution_message_id', msgId)
+            .is('read_at', null)
+            .select('id');
+          if (readRows?.length) touched += readRows.length;
+        }
+      }
+      console.log('WEBHOOK: messages.update rows_touched=' + touched);
+      return NextResponse.json({ ok: true, touched });
+    }
+
     // ── Contact + history events → cache into whatsapp_contacts ──
     if (
       eventType === 'CONTACTS_SET' ||

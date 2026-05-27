@@ -12,6 +12,7 @@ import PricingSection from '../components/PricingSection';
 import FAQSection from '../components/FAQSection';
 import Footer from '../components/Footer';
 import MessagesSection, { type ScheduledMessage as MessagesSectionMessage } from '../components/MessagesSection';
+import { DeliveryStatusIcon } from '../components/DeliveryStatusIcon';
 import { getPlanLimits, getPlanName } from '../lib/plans';
 
 const supabaseClient = typeof window !== 'undefined' ? createClient(
@@ -36,6 +37,9 @@ interface ScheduledMessage {
   retry_count?: number;
   error_message?: string;
   photo_url?: string | null;
+  sent_at?: string | null;
+  delivered_at?: string | null;
+  read_at?: string | null;
 }
 
 type Segment = 'D' | 'B' | 'C' | null;
@@ -630,6 +634,7 @@ function MessagesSectionLegacyV4({ messages, onDelete, formatScheduled, statusCo
                   </p>
                   <div className="flex items-center gap-1.5 shrink-0 text-xs text-gray-400 font-medium">
                     <span>{sched.date} {sched.time}</span>
+                    <DeliveryStatusIcon msg={msg} />
                     <span
                       className="w-2.5 h-2.5 rounded-full ring-2 ring-[#202C33]"
                       style={{ backgroundColor: status.color }}

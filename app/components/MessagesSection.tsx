@@ -4,6 +4,7 @@ import { Search, X, MoreVertical, Calendar, Inbox, Clock } from 'lucide-react';
 import { ContactAvatar } from '../../components/ContactAvatar';
 import { StatusBadge, formatCountdown, formatRelativePast } from './StatusBadge';
 import { MessageActionsSheet } from './MessageActionsSheet';
+import { DeliveryStatusIcon } from './DeliveryStatusIcon';
 
 export interface ScheduledMessage {
   id: string;
@@ -16,6 +17,9 @@ export interface ScheduledMessage {
   retry_count?: number;
   error_message?: string;
   photo_url?: string | null;
+  sent_at?: string | null;
+  delivered_at?: string | null;
+  read_at?: string | null;
 }
 
 interface Props {
@@ -340,6 +344,7 @@ function MessageRow({ msg, tab, onOpenActions }: {
 
         <div className="flex items-center gap-2">
           <StatusBadge status={msg.status} countdown={countdown} />
+          <DeliveryStatusIcon msg={msg} />
         </div>
       </div>
 

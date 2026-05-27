@@ -295,9 +295,25 @@ export async function GET(req: NextRequest) {
           const errText = await res.text();
           throw new Error('HTTP ' + res.status + ': ' + errText);
         }
+        // Extract Evolution's message id (key.id) so the webhook can later
+        // attach delivery/read receipts to this row. Best-effort: if the
+        // response shape changes or JSON parse fails, the send still
+        // succeeds — we just lose receipt tracking for this one message.
+        let evolutionMessageId: string | null = null;
+        try {
+          const respText = await res.text();
+          const respJson = JSON.parse(respText);
+          evolutionMessageId = respJson?.key?.id || null;
+        } catch {}
+
         await recordSend(supabase, ownerPhone, instanceName);
         await supabase.from('scheduled_messages')
-          .update({ status: 'sent', sent_at: new Date().toISOString(), user_notified: true })
+          .update({
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+            user_notified: true,
+            evolution_message_id: evolutionMessageId,
+          })
           .eq('id', msg.id);
 
         const driftMs = Date.now() - new Date(msg.scheduled_at).getTime();
