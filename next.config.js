@@ -4,7 +4,6 @@ const nextConfig = {
     typescript: {
           ignoreBuildErrors: true,
     },
-    serverExternalPackages: ['vcf'],
     images: {
           unoptimized: true,
           // Whitelist WhatsApp's profile picture CDN. ContactAvatar loads

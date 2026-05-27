@@ -10,7 +10,7 @@
 
 ### Stack tecnico
 - **Frontend**: Next.js 14.2.15 (App Router) + React 18.3.1 + TypeScript 5.5 + Tailwind CSS
-- **Backend**: Next.js API routes + cron schedulati. `/api/cron/send-messages` triggherato ogni 5 min da pinger esterno cron-job.org (auth via `CRON_SECRET`); Vercel cron `0 0 * * *` come fallback giornaliero. `/api/cron/daily-report` Vercel cron 06:00 UTC.
+- **Backend**: Next.js API routes + cron multilayer. `/api/cron/send-messages` ha 3 trigger (vedi sezione Monitoring sotto). `/api/cron/daily-report` Vercel cron 06:00 UTC.
 - **DB**: Supabase (Postgres) — source of truth è `supabase/migrations/`, `schema.sql` è snapshot v7 legacy
 - **WhatsApp**: Evolution API v2 self-hosted su DigitalOcean droplet (Baileys multi-istanza)
 - **LLM**: Groq (Llama) come parser primario nel webhook self-chat; OpenAI come secondario/fallback
@@ -44,9 +44,20 @@
 - Multi-device richiede re-pair (limitazione v1, OTP self-chat in v1.5)
 - Implementazione usa Web Crypto API (compatibile Edge runtime + Node)
 
+### Monitoring (cron trigger stack `/api/cron/send-messages`)
+Tre layer concorrenti, atomic lock previene doppio fire sullo stesso messaggio:
+1. **cron-job.org pinger @60s** — primario esterno, auth via `?secret=$CRON_SECRET`
+2. **instrumentation.ts self-cron @60s** — Next.js register(), Node-runtime-only, fallback se cron-job.org down o durante warmup lambda
+3. **vercel.json `0 0 * * *`** — daily safety net per cleanup task / catch-all
+
+L'atomic lock in `app/api/cron/send-messages/route.ts` (status pending → processing → sent con `UPDATE ... WHERE status='pending'`) garantisce che un singolo messaggio venga claimed da un solo trigger anche se i 3 sparano simultaneamente. Verifica salute: gaps in `audit_events` WHERE `event_type='message_sent'` segnalano trigger giù.
+
 ### Test suite
-- 319 test unit/integration verdi (`npm test`)
+- 480+ test unit/integration verdi (`npm test`) — baseline post-Sprint 2 (audit + delivery + SLA + labels + CSV + landing copy)
 - 7 suite e2e Playwright (`__tests__/e2e/*.spec.ts`) — al momento jest le scoopa per errore di config (issue pre-esistente, non bloccante per release)
+
+### Auth note
+Auth è **solo** HMAC cookie phone-first (`sw_session`, vedi sezione Auth sotto). NON usiamo Supabase Auth — gli orphan `app/login/page.tsx` + `lib/supabase/{client,server}.ts` + `components/{Button,Input}.tsx` + `lib/utils.ts` + `lib/openai/parser.ts` sono stati eliminati nello Sprint 3 cleanup (audit-2026-05-25 issue #2). `Button.tsx` è stato mantenuto perché usato da `ContactPickerModal`; il suo import `cn` è stato migrato a `app/lib/cn.ts`.
 
 ## Documenti canonici per AI sessions
 

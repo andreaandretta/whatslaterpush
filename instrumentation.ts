@@ -1,6 +1,23 @@
 // instrumentation.ts
-// BUG5 FIX: self-calling cron runner — fires every 60s on the Node.js server process
+// Self-calling cron runner — fires every 60s on the Node.js server process
 // Next.js 13.4+ automatically executes register() on server startup (not in Edge runtime)
+//
+// CRON TRIGGER STACK (3 layers, by design — see CLAUDE.md "Monitoring"):
+//   1. cron-job.org pinger @60s  → primary (external, free tier)
+//   2. This self-cron @60s       → fallback when cron-job.org is down or
+//                                  while the deployed lambda is warming up
+//   3. vercel.json @0 0 * * *    → daily safety net (handles cleanup tasks
+//                                  + catches anything stuck for >24h)
+//
+// Doubling up #1 and #2 is intentional. The atomic lock in
+// app/api/cron/send-messages/route.ts ("Atomic lock: claim message before
+// sending") prevents double-firing on the same scheduled_message row — only
+// the first claimer flips status pending → processing → sent.
+//
+// If you ever disable one of these triggers, audit:
+//   - cron-job.org panel: is the ping still firing?
+//   - Vercel logs: is `[instrumentation]` line present at boot?
+//   - audit_events table: gaps in event_type='message_sent' rows?
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'edge') return; // only run in Node.js runtime
