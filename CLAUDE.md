@@ -36,6 +36,7 @@
 - ✅ Webhook gating self-chat-only, gruppi/broadcast bloccati, atomic lock cron, timeout 8s Evolution, `WEBHOOK_SECRET` obbligatorio
 - ⚠️ **Stripe live mode SCARTATA** (2026-05-17): primi 5 paganti via bonifico/PayPal manuale per evitare blocco KYC. Si riapre dopo 3-5 paganti reali.
 - ⚠️ `MESSAGING_HISTORY_SET` non emesso da Evolution → name rubrica utente non accessibile (DA-RIVEDERE)
+- ⚠️ **Channels/Newsletter NON supportati** (Sprint 3 Cluster D investigation 2026-05-27): Baileys underlying library supporta `@newsletter` JID + sendMessage, ma Evolution API v2 attuale NON wrappa il REST endpoint. Defer in attesa di Evolution v3 o fork Evolution custom. ICP-D workaround: usare gruppi `@g.us` (già supportato). Riferimenti: doc.evolution-api.com/v2 + Baileys issues #549/#628.
 
 ### Auth (post-C1, ancora valido)
 - Cookie HTTP-only `sw_session` HMAC-SHA256 (env `AUTH_COOKIE_SECRET`, generato con `openssl rand -hex 64`)
