@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getPlanName, getPlanLimits } from '../../../lib/plans';
+import { logAuditEvent } from '../../../lib/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,9 +57,11 @@ export async function POST(req: Request) {
     if (phone && plan && (PAID_PLANS as readonly string[]).includes(plan)) {
       const { data: user } = await supabase
         .from('user_instances')
-        .select('instance_name, stripe_customer_id')
+        .select('instance_name, stripe_customer_id, subscription_plan')
         .eq('phone_number', phone)
         .single();
+
+      const fromPlan = user?.subscription_plan || 'unknown';
 
       await supabase
         .from('user_instances')
@@ -67,6 +70,24 @@ export async function POST(req: Request) {
           stripe_customer_id: user?.stripe_customer_id || (session.customer as string),
         })
         .eq('phone_number', phone);
+
+      await logAuditEvent({
+        userPhone: phone,
+        eventType: 'payment_event',
+        payload: {
+          stripe_event: event.type,
+          amount: session.amount_total,
+          currency: session.currency,
+          plan,
+        },
+      });
+      if (fromPlan !== plan) {
+        await logAuditEvent({
+          userPhone: phone,
+          eventType: 'tier_changed',
+          payload: { from_plan: fromPlan, to_plan: plan, trigger: 'checkout_completed' },
+        });
+      }
 
       // Unpause any paused messages
       await supabase
@@ -101,6 +122,17 @@ export async function POST(req: Request) {
         .from('user_instances')
         .update({ subscription_plan: 'free' })
         .eq('stripe_customer_id', customerId);
+
+      await logAuditEvent({
+        userPhone: user.phone_number,
+        eventType: 'payment_event',
+        payload: { stripe_event: event.type },
+      });
+      await logAuditEvent({
+        userPhone: user.phone_number,
+        eventType: 'tier_changed',
+        payload: { to_plan: 'free', trigger: 'subscription_deleted' },
+      });
 
       if (user.instance_name) {
         await notifyUser(user.instance_name, user.phone_number,

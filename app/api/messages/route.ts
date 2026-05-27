@@ -5,6 +5,7 @@ import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { validatePhone } from '../../lib/phone';
 import { applyJitter } from '../../lib/cron-utils';
 import { isValidRule } from '../../lib/recurrence';
+import { logAuditEvent, clientIpFromHeaders, hashContactRef } from '../../lib/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -217,6 +218,19 @@ export async function POST(req: NextRequest) {
   if (insErr) {
     return NextResponse.json({ error: insErr.message }, { status: 500 });
   }
+
+  await logAuditEvent({
+    userPhone: phone,
+    eventType: 'schedule_created',
+    payload: {
+      message_id: inserted.id,
+      scheduled_at: inserted.scheduled_at,
+      has_recurrence: normalizedRule !== null,
+      recipient_hash: await hashContactRef(normalized),
+      body_length: cleanMessage.length,
+    },
+    ipAddress: clientIpFromHeaders(req.headers),
+  });
 
   // Best-effort: ensure the manually-typed recipient has a whatsapp_contacts
   // row so the picker can list them next time even before the webhook

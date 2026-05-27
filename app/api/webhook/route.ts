@@ -772,11 +772,12 @@ export async function POST(req) {
     //                                 misconfigured secret on Evolution side)
     //   header present and valid   → continue
     const sigHeader = req.headers.get('x-hub-signature-256') || req.headers.get('x-webhook-signature');
+    let signatureValid: boolean | null = null;
     if (sigHeader) {
       const { verifySignature } = await import('../../lib/hmac');
       const sigValue = sigHeader.replace(/^sha256=/, '');
-      const valid = await verifySignature(rawText, sigValue, webhookSecret);
-      if (!valid) {
+      signatureValid = await verifySignature(rawText, sigValue, webhookSecret);
+      if (!signatureValid) {
         console.error('WEBHOOK: invalid HMAC signature — rejecting (likely tampered body or stale secret)');
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
       }
@@ -793,6 +794,18 @@ export async function POST(req) {
     }
     rawBody = rawText.substring(0, 500);
     console.log('WEBHOOK incoming:', rawBody);
+
+    // Audit: structured trail of inbound webhook events. Don't await — the
+    // webhook handler is latency-sensitive (Evolution drops if we're slow).
+    const { logAuditEvent } = await import('../../lib/audit');
+    void logAuditEvent({
+      eventType: 'webhook_received',
+      payload: {
+        event_type: payload?.event || payload?.type || 'unknown',
+        instance: payload?.instance || null,
+        signature_valid: signatureValid,
+      },
+    });
 
     const eventType = payload?.event || payload?.type || 'unknown';
     const evoInstance = payload?.instance || '';

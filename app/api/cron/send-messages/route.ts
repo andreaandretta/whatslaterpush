@@ -6,6 +6,7 @@ import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
 import { nextOccurrence } from '../../../lib/recurrence';
 import { computeTypingDelay, sendTypingPresence } from '../../../lib/typing-presence';
+import { logAuditEvent, hashContactRef } from '../../../lib/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -299,6 +300,19 @@ export async function GET(req: NextRequest) {
           .update({ status: 'sent', sent_at: new Date().toISOString(), user_notified: true })
           .eq('id', msg.id);
 
+        const driftMs = Date.now() - new Date(msg.scheduled_at).getTime();
+        await logAuditEvent({
+          userPhone: ownerPhone,
+          eventType: 'message_sent',
+          payload: {
+            message_id: msg.id,
+            drift_ms: driftMs,
+            batch_size: batch.length,
+            recipient_hash: await hashContactRef(msg.recipient_number),
+            has_recurrence: !!msg.recurrence_rule,
+          },
+        });
+
         // Recurrence: if this row was part of a recurring schedule, compute
         // the next occurrence and insert a new pending row. parent_recurrence_id
         // propagates through the chain (first row's id is the group id).
@@ -393,6 +407,16 @@ export async function GET(req: NextRequest) {
               });
             } catch (e) {}
             failed++;
+            await logAuditEvent({
+              userPhone: ownerPhone,
+              eventType: 'message_failed',
+              payload: {
+                message_id: msg.id,
+                error_code: (err as Error)?.message?.substring(0, 200) || 'unknown',
+                attempt: newRetry,
+                recipient_hash: await hashContactRef(msg.recipient_number),
+              },
+            });
           }
         }
       }

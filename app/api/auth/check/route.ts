@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { signCookie, AUTH_COOKIE_NAME, AUTH_COOKIE_MAX_AGE } from '../../../lib/auth-cookie';
+import { logAuditEvent, clientIpFromHeaders } from '../../../lib/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,6 +44,15 @@ export async function GET(req: NextRequest) {
   });
 
   await supabase.from('pending_auth_sessions').delete().eq('id', sessionId);
+
+  await logAuditEvent({
+    userPhone: session.phone,
+    eventType: 'auth_login',
+    payload: {
+      user_agent: (req.headers.get('user-agent') || '').substring(0, 200),
+    },
+    ipAddress: clientIpFromHeaders(req.headers),
+  });
 
   const res = NextResponse.json({ authenticated: true, redirect: '/dashboard' });
   res.cookies.set({
