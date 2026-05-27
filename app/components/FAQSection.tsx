@@ -13,6 +13,10 @@ const faqs = [
     a: 'Dal tuo numero personale, quello che hai collegato in fase di setup. Chi riceve vede la chat con te — niente bot, niente sender "WhatsLater". Per loro è come se l\'avessi scritto manualmente in quel momento.',
   },
   {
+    q: "Cosa significa \"senza broker\"?",
+    a: 'Altri servizi (Wati, Respond.io, Twilio) usano la WhatsApp Business API: i messaggi passano per server intermedi e i tuoi contatti vedono un numero generico. WhatsLater usa il TUO numero personale via Evolution API: i messaggi partono come se li scrivessi tu, e nessun broker ha accesso alle conversazioni.',
+  },
+  {
     q: 'È contro i termini di WhatsApp? Rischio il ban?',
     a: 'No. WhatsLater usa la stessa tecnologia di WhatsApp Web (linked devices ufficiali). Non simuliamo click, non usiamo API non autorizzate, non facciamo invii massivi. Tu schedula i messaggi che mandi comunque ogni giorno — semplicemente li scrivi prima.',
   },

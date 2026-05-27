@@ -24,16 +24,32 @@ export default function HeroSection() {
             Per chi vive di WhatsApp
           </span>
 
-          <h1 className="font-heading text-5xl sm:text-6xl lg:text-7xl font-black text-[#1A1F2C] leading-[1.02] tracking-tight">
-            <span className="text-[#4FBE7C]">Programma</span>
-            <br />
-            i messaggi <span className="text-[#4FBE7C]">WhatsApp</span>
+          <h1 className="font-heading text-4xl sm:text-5xl lg:text-6xl font-black text-[#1A1F2C] leading-[1.05] tracking-tight">
+            Programma <span className="text-[#4FBE7C]">WhatsApp</span> dal tuo <span className="text-[#4FBE7C]">numero personale</span>
+            <span className="block mt-3 text-3xl sm:text-4xl lg:text-5xl text-[#5A6573] font-extrabold">
+              — senza broker, senza app.
+            </span>
           </h1>
 
           <p className="mt-6 text-base sm:text-lg text-[#5A6573] leading-relaxed max-w-xl mx-auto lg:mx-0">
-            Programma i messaggi che <strong className="text-[#1A1F2C]">dimentichi sempre di mandare</strong> &mdash; o quelli che <strong className="text-[#1A1F2C]">ripeti ogni settimana</strong> alle stesse persone.{' '}
-            <strong className="text-[#1A1F2C]">Dal tuo numero personale</strong>, anche quando non ci sei.
+            Nessun intermediario tra te e i tuoi contatti. I messaggi partono dal tuo{' '}
+            <strong className="text-[#1A1F2C]">+39</strong>, come se li scrivessi tu.
           </p>
+
+          <ul className="mt-5 space-y-1.5 text-sm sm:text-base text-[#1A1F2C] max-w-xl mx-auto lg:mx-0">
+            <li className="flex items-start gap-2">
+              <span className="text-[#4FBE7C] font-black shrink-0">✓</span>
+              <span>Niente WhatsApp Business API</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-[#4FBE7C] font-black shrink-0">✓</span>
+              <span>Niente broker, niente Twilio</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-[#4FBE7C] font-black shrink-0">✓</span>
+              <span>Niente broker che leggono i tuoi messaggi</span>
+            </li>
+          </ul>
 
           <div className="mt-8 flex items-center justify-center lg:justify-start gap-4 flex-wrap">
             <Link

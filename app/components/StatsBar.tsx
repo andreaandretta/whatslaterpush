@@ -6,7 +6,7 @@ import { Clock, SmartphoneNfc, Lock } from 'lucide-react';
 const benefits = [
   { icon: Clock, title: 'Setup in 2 minuti', description: 'Codice a 8 cifre. Niente account, niente carta.' },
   { icon: SmartphoneNfc, title: 'Nessuna app da installare', description: 'Tutto via browser. Funziona anche col telefono spento.' },
-  { icon: Lock, title: 'Dal tuo numero personale', description: 'Niente bot, niente sender aziendale. Solo la tua chat.' },
+  { icon: Lock, title: 'Dal tuo numero personale', description: 'Niente WhatsApp Business API, niente broker. I messaggi partono dal tuo +39.' },
 ];
 
 export default function StatsBar() {
