@@ -26,6 +26,10 @@ beforeEach(() => {
     SUPABASE_SERVICE_ROLE_KEY: 'test-role-key',
     RESEND_API_KEY: 'test-resend-key',
     MONITORING_SECRET: 'test-secret',
+    // ADMIN_PHONE/ADMIN_EMAIL now mandatory in operatorPhone()/operatorEmail()
+    // — set sentinel values for tests (audit-2026-05-25 fix #5).
+    ADMIN_PHONE: '393000000000',
+    ADMIN_EMAIL: 'test@example.com',
   };
   (global as any).fetch = fetchMock.mockFetch;
 });

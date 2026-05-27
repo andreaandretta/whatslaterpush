@@ -256,8 +256,21 @@ export async function shouldAlert(checkName: string): Promise<boolean> {
 
 // --- Alert Cascade ---
 
-const OPERATOR_PHONE = process.env.ADMIN_PHONE || '393442582226';
-const OPERATOR_EMAIL = process.env.ADMIN_EMAIL || 'musicizthekey@gmail.com';
+// Fail-fast read: if ADMIN_PHONE / ADMIN_EMAIL are unset, surface the
+// misconfiguration at call site rather than silently routing alerts to a
+// hardcoded fallback (audit-2026-05-25 issue #5: PII operatore committed
+// to public repo). Throws are deferred to actual usage to keep import-time
+// side-effects minimal.
+function operatorPhone(): string {
+  const v = process.env.ADMIN_PHONE;
+  if (!v) throw new Error('ADMIN_PHONE env var is required for operator alerts');
+  return v;
+}
+function operatorEmail(): string {
+  const v = process.env.ADMIN_EMAIL;
+  if (!v) throw new Error('ADMIN_EMAIL env var is required for operator alerts');
+  return v;
+}
 
 const CHECK_DESCRIPTIONS: Record<string, string> = {
   evolution_api: 'Evolution API non raggiungibile',
@@ -290,7 +303,7 @@ async function getAlertInstance(): Promise<string | null> {
     const { data } = await supabase
       .from('user_instances')
       .select('instance_name')
-      .eq('phone_number', OPERATOR_PHONE)
+      .eq('phone_number', operatorPhone())
       .limit(1);
     return data?.[0]?.instance_name || null;
   } catch {
@@ -310,7 +323,7 @@ async function sendWhatsApp(text: string): Promise<boolean> {
         {
           method: 'POST',
           headers: { apikey: process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ number: OPERATOR_PHONE, text }),
+          body: JSON.stringify({ number: operatorPhone(), text }),
           signal: controller.signal,
         }
       );
@@ -333,7 +346,7 @@ async function sendEmail(check: CheckResult, text: string): Promise<boolean> {
       },
       body: JSON.stringify({
         from: 'onboarding@resend.dev',
-        to: OPERATOR_EMAIL,
+        to: operatorEmail(),
         subject: `⚠️ WhatsLater: ${check.name} — ${check.status}`,
         text,
       }),

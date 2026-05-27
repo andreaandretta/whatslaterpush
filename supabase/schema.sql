@@ -2,6 +2,10 @@
 -- SchedWhats Database Schema v7.0
 -- Modern Soft UI Edition
 -- =====================================================
+-- DEPRECATED snapshot. The source of truth is supabase/migrations/.
+-- This file is kept ONLY as a historical reference of v7 schema state.
+-- DO NOT apply this in production — apply the migrations in order instead.
+-- =====================================================
 
 -- Enable necessary extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

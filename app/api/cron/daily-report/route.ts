@@ -11,7 +11,14 @@ function getSupabase() {
   );
 }
 
-const OPERATOR_PHONE = process.env.ADMIN_PHONE || '393442582226';
+// Fail-fast read: throw at call site if ADMIN_PHONE is unset rather than
+// silently routing the daily report to a hardcoded fallback (audit-2026-05-25
+// issue #5: PII operatore committed to public repo).
+function operatorPhone(): string {
+  const v = process.env.ADMIN_PHONE;
+  if (!v) throw new Error('ADMIN_PHONE env var is required for daily report');
+  return v;
+}
 
 export interface DailyReportData {
   report_date: string;
@@ -185,7 +192,7 @@ async function sendReportWhatsApp(text: string): Promise<boolean> {
     const { data } = await supabase
       .from('user_instances')
       .select('instance_name')
-      .eq('phone_number', OPERATOR_PHONE)
+      .eq('phone_number', operatorPhone())
       .limit(1);
     const instanceName = data?.[0]?.instance_name;
     if (!instanceName) return false;
@@ -194,7 +201,7 @@ async function sendReportWhatsApp(text: string): Promise<boolean> {
       {
         method: 'POST',
         headers: { apikey: process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ number: OPERATOR_PHONE, text }),
+        body: JSON.stringify({ number: operatorPhone(), text }),
       }
     );
     return res.ok;

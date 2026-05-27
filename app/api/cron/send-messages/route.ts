@@ -105,7 +105,7 @@ export async function GET(req: NextRequest) {
           headers: { apikey: process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             number: trial.phone_number,
-            text: '⏰ Il tuo trial WhatsLater è scaduto.\n\nHai 3 messaggi gratuiti al giorno. Per 20/giorno, passa a Personal a €4,99/mese:\nhttps://whatslaterpush.vercel.app/dashboard'
+            text: `⏰ Il tuo trial WhatsLater è scaduto.\n\nHai 3 messaggi gratuiti al giorno. Per 20/giorno, passa a Personal a €4,99/mese:\n${process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app'}/dashboard`
           }),
         });
       } catch (e) {}
@@ -187,7 +187,7 @@ export async function GET(req: NextRequest) {
             await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
               method: 'POST',
               headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ number: ownerPhone, text: '⏰ Il tuo trial WhatsLater è scaduto. I messaggi programmati sono stati sospesi.\n\nVai su https://whatslaterpush.vercel.app/dashboard per continuare a usare il servizio.' })
+              body: JSON.stringify({ number: ownerPhone, text: `⏰ Il tuo trial WhatsLater è scaduto. I messaggi programmati sono stati sospesi.\n\nVai su ${process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app'}/dashboard per continuare a usare il servizio.` })
             });
           } catch (e) {}
           return 'trial_expired' as const;
@@ -414,7 +414,7 @@ export async function GET(req: NextRequest) {
               headers: { apikey: process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 number: ownerPhone,
-                text: `📊 Hai usato ${newSentToday} dei tuoi ${planLimits.dailyLimit} messaggi oggi.\n\nPassa a ${nextPlan} per ${nextLimit}/giorno a ${nextPrice}/mese:\nhttps://whatslaterpush.vercel.app/dashboard`
+                text: `📊 Hai usato ${newSentToday} dei tuoi ${planLimits.dailyLimit} messaggi oggi.\n\nPassa a ${nextPlan} per ${nextLimit}/giorno a ${nextPrice}/mese:\n${process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app'}/dashboard`
               }),
             });
             await supabase.from('user_instances')
