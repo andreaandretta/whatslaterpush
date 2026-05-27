@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { normalizeItalianPhone } from '../../../lib/phone';
-import { shouldSendMessage, rescheduleTomorrow } from '../../../lib/cron-utils';
+import { shouldSendMessage, rescheduleTomorrow, rescheduleSoon } from '../../../lib/cron-utils';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
 import { nextOccurrence } from '../../../lib/recurrence';
@@ -138,6 +138,11 @@ export async function GET(req: NextRequest) {
 
     // Track which disconnected instances we've already logged
     const disconnectedInstances = new Set<string>();
+    // Track which instances we've already attempted the threshold-crossing
+    // user notification for in THIS cron run. Without this, a batch of 5 msg
+    // from the same disconnected user all crossing the 12-retry threshold
+    // would fire 5 identical sendText (all failing because instance is down).
+    const thresholdNotifiedInstances = new Set<string>();
 
     // Process messages in batches of 5 for speed (P11: avoid Vercel Hobby 10s timeout)
     const TIMEOUT_MS = 8000; // bail out before Vercel's 10s limit
@@ -165,14 +170,55 @@ export async function GET(req: NextRequest) {
         const ownerPhone = msg.user_instances.phone_number;
 
         if (decision === 'disconnected') {
+          // Smart-retry staircase: 12 attempts × 5min = ≈1h retry window.
+          // After 12 retries we defer to next day AND notify the user (best-
+          // effort, the notification itself uses the same disconnected
+          // instance and may fail silently — that's accepted).
+          const RETRY_THRESHOLD = 12;
+          const RETRY_MINUTES = 5;
+          const prevCount = (msg as any).disconnect_retry_count ?? 0;
+          const newCount = prevCount + 1;
           if (!disconnectedInstances.has(instanceName)) {
             disconnectedInstances.add(instanceName);
-            console.log('CRON: Instance ' + instanceName + ' is ' + (msg.user_instances.connection_status || 'unknown') + ', rescheduling to tomorrow');
+            console.log('CRON: Instance ' + instanceName + ' is ' + (msg.user_instances.connection_status || 'unknown') + ', smart-retry count=' + newCount + '/' + RETRY_THRESHOLD);
           }
-          const tomorrowIso = rescheduleTomorrow(msg.scheduled_at);
+
+          let newScheduledAt: string;
+          let errorMessage: string;
+          if (newCount < RETRY_THRESHOLD) {
+            newScheduledAt = rescheduleSoon(msg.scheduled_at, RETRY_MINUTES);
+            errorMessage = `Istanza disconnessa, retry ${newCount}/${RETRY_THRESHOLD} fra ${RETRY_MINUTES} min`;
+          } else {
+            newScheduledAt = rescheduleTomorrow(msg.scheduled_at);
+            errorMessage = `Istanza disconnessa per ${RETRY_THRESHOLD}× ${RETRY_MINUTES}min, riprogrammato a domani`;
+            // Best-effort user notification with /connect link, deduped at
+            // instance level so a batch of 5 cross-threshold msg doesn't
+            // fire 5 identical sendText (all likely to fail because the
+            // instance is still down). The notification fetch itself uses
+            // the same disconnected instance so it may fail silently —
+            // that's accepted, the deferred message will surface next time
+            // the user opens the dashboard.
+            if (!thresholdNotifiedInstances.has(instanceName)) {
+              thresholdNotifiedInstances.add(instanceName);
+              try {
+                await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
+                  method: 'POST',
+                  headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    number: ownerPhone,
+                    text: `⚠️ WhatsApp non risponde da più di 1 ora. Ho posticipato i messaggi a domani. Riconnetti su https://${process.env.NEXT_PUBLIC_APP_URL?.replace(/^https?:\/\//, '') || 'whatslaterpush.vercel.app'}/connect`,
+                  }),
+                });
+              } catch (e) {
+                console.warn('CRON: Threshold notification failed for ' + instanceName + ' (instance still down? expected)');
+              }
+            }
+          }
+
           await supabase.from('scheduled_messages').update({
-            scheduled_at: tomorrowIso,
-            error_message: 'Instance disconnected, rescheduled to ' + tomorrowIso
+            scheduled_at: newScheduledAt,
+            disconnect_retry_count: newCount,
+            error_message: errorMessage,
           }).eq('id', msg.id);
           return 'disconnected' as const;
         }
@@ -215,10 +261,15 @@ export async function GET(req: NextRequest) {
 
         if ((recentToRecipient || 0) >= 3) {
           console.log('CRON: COOLDOWN — 3 msgs already sent to ' + msg.recipient_number + ' in 24h');
-          const tomorrowIso = rescheduleTomorrow(msg.scheduled_at);
+          // Smart-retry: a 30-minute deferral lets the natural recipient
+          // gap re-open without punishing the message with a full-day shift.
+          // The cool-down query above re-evaluates each cron cycle, so if
+          // an older "sent" rolls out of the 24h window the next attempt
+          // succeeds without further retries.
+          const soonIso = rescheduleSoon(msg.scheduled_at, 30);
           await supabase.from('scheduled_messages').update({
-            scheduled_at: tomorrowIso,
-            error_message: 'Cool-down: max 3 messaggi allo stesso contatto in 24h. Riprogrammato.'
+            scheduled_at: soonIso,
+            error_message: 'Cool-down: max 3 messaggi allo stesso contatto in 24h. Riprogrammato +30 min.'
           }).eq('id', msg.id);
           return 'rate_limited' as const;
         }
@@ -347,6 +398,10 @@ export async function GET(req: NextRequest) {
             sent_at: new Date().toISOString(),
             user_notified: true,
             evolution_message_id: evolutionMessageId,
+            // Reset the smart-retry counter on successful send so future
+            // disconnects on the same row (if it ever re-enters pending,
+            // e.g. via recurrence) start from 0.
+            disconnect_retry_count: 0,
           })
           .eq('id', msg.id);
 

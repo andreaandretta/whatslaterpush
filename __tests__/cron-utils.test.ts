@@ -1,4 +1,4 @@
-import { shouldSendMessage, rescheduleTomorrow, applyJitter, PendingMessage, UserInstance } from '../app/lib/cron-utils';
+import { shouldSendMessage, rescheduleTomorrow, rescheduleSoon, applyJitter, PendingMessage, UserInstance } from '../app/lib/cron-utils';
 
 function makeMessage(overrides: { user_instances?: Partial<UserInstance> | null } & Partial<Omit<PendingMessage, 'user_instances'>> = {}): PendingMessage {
   const defaultInstance: UserInstance = {
@@ -126,6 +126,28 @@ describe('rescheduleTomorrow', () => {
   test('preserves time component', () => {
     const result = rescheduleTomorrow('2026-06-15T08:30:45.123Z');
     expect(result).toBe('2026-06-16T08:30:45.123Z');
+  });
+});
+
+describe('rescheduleSoon', () => {
+  test('adds default 5 minutes when no arg passed', () => {
+    const result = rescheduleSoon('2026-06-15T18:00:00.000Z');
+    expect(result).toBe('2026-06-15T18:05:00.000Z');
+  });
+
+  test('adds custom N minutes (30 — cool-down use case)', () => {
+    const result = rescheduleSoon('2026-06-15T18:00:00.000Z', 30);
+    expect(result).toBe('2026-06-15T18:30:00.000Z');
+  });
+
+  test('crosses hour boundary correctly', () => {
+    const result = rescheduleSoon('2026-06-15T17:58:00.000Z', 5);
+    expect(result).toBe('2026-06-15T18:03:00.000Z');
+  });
+
+  test('crosses day boundary at midnight', () => {
+    const result = rescheduleSoon('2026-06-15T23:50:00.000Z', 30);
+    expect(result).toBe('2026-06-16T00:20:00.000Z');
   });
 });
 

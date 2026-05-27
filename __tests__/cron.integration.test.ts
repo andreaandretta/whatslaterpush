@@ -178,10 +178,11 @@ describe('Cron integration: send flow', () => {
   });
 });
 
-describe('Cron integration: disconnected instances', () => {
-  test('reschedules message to tomorrow when instance disconnected', async () => {
+describe('Cron integration: disconnected instances (smart-retry)', () => {
+  test('under threshold: increments disconnect_retry_count + reschedules +5min, no user notification', async () => {
     const msg = makePendingMsg({
       user_instances: { connection_status: 'close' },
+      disconnect_retry_count: 3,
     });
 
     mockSupa.setResponse('scheduled_messages:update', []);
@@ -193,9 +194,72 @@ describe('Cron integration: disconnected instances', () => {
     expect(body.disconnected).toBe(1);
     expect(body.sent).toBe(0);
 
-    // Verify no Evolution API calls were made (don't try to send)
+    // Verify the UPDATE payload bumped the counter and used a "+5min" shift.
+    const updateCalls = mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'update');
+    const disconnectUpdate = updateCalls.find(c => c.args[0]?.disconnect_retry_count !== undefined);
+    expect(disconnectUpdate).toBeDefined();
+    expect(disconnectUpdate!.args[0].disconnect_retry_count).toBe(4);
+    expect(typeof disconnectUpdate!.args[0].scheduled_at).toBe('string');
+    // No Evolution sendText (user notification only fires at threshold)
     const evoCalls = fetchMock.calls.filter(c => c.url.includes('/message/sendText/'));
     expect(evoCalls.length).toBe(0);
+  });
+
+  test('at threshold (12): defers to tomorrow AND attempts best-effort user notification', async () => {
+    const msg = makePendingMsg({
+      user_instances: { connection_status: 'close' },
+      disconnect_retry_count: 11, // next attempt → 12 → threshold reached
+    });
+
+    mockSupa.setResponse('scheduled_messages:update', []);
+    mockSupa.setResponse('scheduled_messages:select', [msg]);
+    // The notification fetch is best-effort. We mock it as failing (typical:
+    // instance is still down) — the test still passes because the cron path
+    // wraps it in try/catch.
+    fetchMock.setJsonResponse('/message/sendText/', { error: 'instance offline' }, 500);
+
+    const res = await callCronRoute();
+    const body = await res.json();
+
+    expect(body.disconnected).toBe(1);
+    const updateCalls = mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'update');
+    const disconnectUpdate = updateCalls.find(c => c.args[0]?.disconnect_retry_count !== undefined);
+    expect(disconnectUpdate!.args[0].disconnect_retry_count).toBe(12);
+    // Evolution sendText WAS called (best-effort user notification with
+    // /connect link). Verify the body mentions /connect.
+    const evoCalls = fetchMock.calls.filter(c => c.url.includes('/message/sendText/'));
+    expect(evoCalls.length).toBeGreaterThanOrEqual(1);
+    const notifyBody = JSON.parse(evoCalls[0].options.body as string);
+    expect(notifyBody.text).toContain('/connect');
+  });
+
+  test('5 messages cross threshold in same batch → only 1 notification attempted (instance-level dedupe)', async () => {
+    // All 5 msg belong to the SAME disconnected instance and all sit at
+    // prev_count=11 (next attempt = 12 = threshold reached). Without dedupe
+    // the cron would fire 5 identical sendText. With thresholdNotifiedInstances
+    // Set, only the first crossing of the instance triggers the notification.
+    const messages = Array.from({ length: 5 }, (_, i) =>
+      makePendingMsg({
+        id: `msg-thr-${i}`,
+        recipient_number: `39340111111${i}`,
+        user_instances: { connection_status: 'close' },
+        disconnect_retry_count: 11,
+      })
+    );
+
+    mockSupa.setResponse('scheduled_messages:update', []);
+    mockSupa.setResponse('scheduled_messages:select', messages);
+    fetchMock.setJsonResponse('/message/sendText/', { error: 'instance offline' }, 500);
+
+    const res = await callCronRoute();
+    const body = await res.json();
+
+    expect(body.disconnected).toBe(5);
+    // Exactly ONE sendText call across the batch — the threshold notification.
+    // (No other sendText paths fire here because all 5 are disconnected →
+    // they never reach the actual send path.)
+    const evoCalls = fetchMock.calls.filter(c => c.url.includes('/message/sendText/'));
+    expect(evoCalls.length).toBe(1);
   });
 });
 
