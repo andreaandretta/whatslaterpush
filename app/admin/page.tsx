@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { SlaSection } from './SlaSection';
 
 // --- Types ---
 
@@ -552,6 +553,8 @@ function AdminPage() {
             </div>
           </section>
         )}
+
+        <SlaSection secret={secret} />
       </div>
     </div>
   );
