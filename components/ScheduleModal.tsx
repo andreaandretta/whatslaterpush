@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, ArrowLeft, Calendar as CalendarIcon, UserCheck, Bell, ChevronRight, ChevronDown, Settings, Repeat, FileText } from 'lucide-react';
+import { X, ArrowLeft, Calendar as CalendarIcon, UserCheck, Bell, ChevronRight, ChevronDown, Settings, Repeat, FileText, Paperclip } from 'lucide-react';
 import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { DarkCalendarDialog } from './schedule/DarkCalendarDialog';
@@ -9,6 +9,7 @@ import { AnalogClockDialog } from './schedule/AnalogClockDialog';
 import { ReminderBottomSheet, ReminderValue } from './schedule/ReminderBottomSheet';
 import { RecurrenceBottomSheet, RecurrenceValue, buildRRule, recurrenceLabel } from './schedule/RecurrenceBottomSheet';
 import { TemplateBottomSheet, SaveTemplateDialog, TemplatePick } from './schedule/TemplateBottomSheet';
+import { MediaPicker, MediaAttachmentChip, MediaAttachment } from './schedule/MediaPicker';
 import { SendFab } from './schedule/SendFab';
 import { levenshteinRatio } from '../app/lib/levenshtein';
 
@@ -84,6 +85,8 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const [recurrenceSheetOpen, setRecurrenceSheetOpen] = useState(false);
   const [templateSheetOpen, setTemplateSheetOpen] = useState(false);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+  const [media, setMedia] = useState<MediaAttachment | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
@@ -106,6 +109,8 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       setRecurrenceSheetOpen(false);
       setTemplateSheetOpen(false);
       setSaveDialogOpen(false);
+      setMediaPickerOpen(false);
+      setMedia(null);
       setAdvancedOpen(false);
     }
   }, [open]);
@@ -114,7 +119,10 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
 
   const scheduledDate = combineDateTime(selectedDate, selectedTime);
   const isValidDate = scheduledDate.getTime() >= Date.now() + 60_000;
-  const isValidMessage = message.trim().length > 0 && message.length <= 3500;
+  // With media, an empty body is OK (the media is the message). Without
+  // media, the body remains mandatory like before.
+  const isValidMessage = (media !== null && message.length <= 3500)
+    || (message.trim().length > 0 && message.length <= 3500);
   const canSubmit = isValidDate && isValidMessage && !submitting;
 
   const contactLabel = contact.name || `+${contact.number}`;
@@ -196,6 +204,12 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           message: message.trim(),
           scheduled_at: scheduledDate.toISOString(),
           recurrence_rule: buildRRule(recurrence, scheduledDate),
+          ...(media ? {
+            media_type: media.media_type,
+            media_url: media.media_url,
+            media_filename: media.media_filename,
+            media_caption: message.trim() || undefined,
+          } : {}),
         }),
       });
 
@@ -374,6 +388,23 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                 <div className="text-primary text-base">{selectedSeedId ? 'Modificato' : 'Scegli…'}</div>
                 <ChevronRight className="w-5 h-5 text-gray-500" />
               </button>
+
+              <button
+                type="button"
+                onClick={() => setMediaPickerOpen(true)}
+                className="w-full flex items-center gap-4 py-3 hover:bg-white/5 text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <Paperclip className="w-5 h-5 text-gray-400 shrink-0" />
+                <div className="flex-1 text-white text-base">Allega media</div>
+                <div className="text-primary text-base">{media ? 'Allegato' : 'Aggiungi…'}</div>
+                <ChevronRight className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+          )}
+
+          {media && (
+            <div className="mt-3">
+              <MediaAttachmentChip media={media} onClear={() => setMedia(null)} />
             </div>
           )}
 
@@ -437,6 +468,11 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           defaultEmoji={null}
           onCancel={dismissSaveDialog}
           onSave={saveAsTemplate}
+        />
+        <MediaPicker
+          open={mediaPickerOpen}
+          onClose={() => setMediaPickerOpen(false)}
+          onAttached={(m) => setMedia(m)}
         />
       </div>
     </div>

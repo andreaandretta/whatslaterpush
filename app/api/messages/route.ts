@@ -121,7 +121,17 @@ export async function POST(req: NextRequest) {
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
-  const { recipient_number: rawNumber, recipient_name, message, scheduled_at, recurrence_rule } = body || {};
+  const {
+    recipient_number: rawNumber,
+    recipient_name,
+    message,
+    scheduled_at,
+    recurrence_rule,
+    media_type,
+    media_url,
+    media_filename,
+    media_caption,
+  } = body || {};
 
   if (typeof rawNumber !== 'string' || rawNumber.includes('@g.us') || rawNumber.includes('@broadcast')) {
     return NextResponse.json({ error: 'invalid_phone' }, { status: 400 });
@@ -134,8 +144,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'self_target' }, { status: 400 });
   }
 
-  if (typeof message !== 'string' || message.trim().length === 0 || message.length > 3500) {
-    return NextResponse.json({ error: 'invalid_message' }, { status: 400 });
+  // When media is attached, the message body becomes optional (used as
+  // caption). Without media, the body is mandatory like before.
+  const hasMedia = typeof media_type === 'string' && typeof media_url === 'string' && media_url.length > 0;
+  const messageStr = typeof message === 'string' ? message : '';
+  if (!hasMedia) {
+    if (messageStr.trim().length === 0 || messageStr.length > 3500) {
+      return NextResponse.json({ error: 'invalid_message' }, { status: 400 });
+    }
+  } else {
+    // With media: allow empty body, just cap length.
+    if (messageStr.length > 3500) {
+      return NextResponse.json({ error: 'invalid_message' }, { status: 400 });
+    }
+    const ALLOWED_MEDIA = ['image', 'video', 'document', 'audio', 'sticker', 'location', 'contact'];
+    if (!ALLOWED_MEDIA.includes(media_type)) {
+      return NextResponse.json({ error: 'invalid_media_type' }, { status: 400 });
+    }
   }
 
   if (typeof scheduled_at !== 'string') {
@@ -191,9 +216,15 @@ export async function POST(req: NextRequest) {
     }, { status: 403 });
   }
 
-  const cleanMessage = message.trim();
+  const cleanMessage = messageStr.trim();
   const cleanName = typeof recipient_name === 'string' && recipient_name.trim().length > 0
     ? recipient_name.trim().slice(0, 100)
+    : null;
+  const cleanMediaCaption = typeof media_caption === 'string' && media_caption.length > 0
+    ? media_caption.slice(0, 3500)
+    : null;
+  const cleanMediaFilename = typeof media_filename === 'string' && media_filename.length > 0
+    ? media_filename.slice(0, 200)
     : null;
 
   const { data: inserted, error: insErr } = await supabase
@@ -211,6 +242,10 @@ export async function POST(req: NextRequest) {
       max_retries: 3,
       wa_message_id: null,
       recurrence_rule: normalizedRule,
+      media_type: hasMedia ? media_type : null,
+      media_url: hasMedia ? media_url : null,
+      media_filename: cleanMediaFilename,
+      media_caption: cleanMediaCaption,
     })
     .select('id, scheduled_at')
     .single();

@@ -274,20 +274,54 @@ export async function GET(req: NextRequest) {
           await new Promise(r => setTimeout(r, typingMs));
         }
 
-        console.log('CRON: Sending msg ' + msg.id + ' via instance=' + instanceName + ' to=' + msg.recipient_number);
+        // If media is attached, sign the storage path and route through
+        // Evolution's /message/sendMedia endpoint instead of /sendText.
+        // The signed URL is valid 1h — well above the cron's 8s budget,
+        // so Evolution can fetch it during the send call.
+        let signedMediaUrl: string | null = null;
+        if (msg.media_url && msg.media_type) {
+          const { data: signed } = await supabase.storage
+            .from('message-media')
+            .createSignedUrl(msg.media_url, 3600);
+          signedMediaUrl = signed?.signedUrl || null;
+          if (!signedMediaUrl) {
+            throw new Error('Failed to sign media URL for ' + msg.media_url);
+          }
+        }
+
+        const sendKind = signedMediaUrl ? 'media' : 'text';
+        console.log('CRON: Sending msg ' + msg.id + ' kind=' + sendKind + ' via instance=' + instanceName + ' to=' + msg.recipient_number);
         const sendCtrl = new AbortController();
         const sendTimeout = setTimeout(() => sendCtrl.abort(), 8000);
         let res;
         try {
-          res = await fetch(
-            process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName,
-            {
-              method: 'POST',
-              headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ number: msg.recipient_number, text: msg.parsed_message }),
-              signal: sendCtrl.signal,
-            }
-          );
+          if (signedMediaUrl) {
+            res = await fetch(
+              process.env.EVOLUTION_API_URL + '/message/sendMedia/' + instanceName,
+              {
+                method: 'POST',
+                headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  number: msg.recipient_number,
+                  mediatype: msg.media_type,
+                  media: signedMediaUrl,
+                  caption: msg.media_caption || msg.parsed_message || undefined,
+                  fileName: msg.media_filename || undefined,
+                }),
+                signal: sendCtrl.signal,
+              }
+            );
+          } else {
+            res = await fetch(
+              process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName,
+              {
+                method: 'POST',
+                headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ number: msg.recipient_number, text: msg.parsed_message }),
+                signal: sendCtrl.signal,
+              }
+            );
+          }
         } finally {
           clearTimeout(sendTimeout);
         }
@@ -348,6 +382,14 @@ export async function GET(req: NextRequest) {
               retry_count: 0,
               max_retries: 3,
               wa_message_id: null,
+              // Recurring media messages re-use the same storage path —
+              // no re-upload needed each cycle. The cron re-signs the URL
+              // at send time, so as long as the file exists in the bucket
+              // it'll be reachable.
+              media_type: msg.media_type || null,
+              media_url: msg.media_url || null,
+              media_filename: msg.media_filename || null,
+              media_caption: msg.media_caption || null,
               recurrence_rule: msg.recurrence_rule,
               parent_recurrence_id: parentId,
             });
