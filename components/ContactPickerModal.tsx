@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { X, Search, UserPlus, ChevronDown, ChevronUp, AlertCircle, Loader2 } from 'lucide-react';
+import { X, Search, UserPlus, ChevronDown, ChevronUp, AlertCircle, Loader2, Upload } from 'lucide-react';
 import { validatePhone } from '../app/lib/phone';
 import { Button } from './Button';
 import { ContactAvatar } from './ContactAvatar';
 import { LabelPicker } from './LabelPicker';
+import { CsvImportDialog } from './CsvImportDialog';
 
 interface Contact {
   number: string;
@@ -44,6 +45,10 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   // Label filter — null = no filter, string = filter by label_id.
   // Refetches /api/contacts when changed.
   const [labelFilterId, setLabelFilterId] = useState<string | null>(null);
+  // CSV import dialog.
+  const [csvOpen, setCsvOpen] = useState(false);
+  // Bump to force refetch (e.g. after CSV import adds new contacts).
+  const [refetchKey, setRefetchKey] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -80,7 +85,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
       });
 
     return () => { clearTimeout(timer); abort.abort(); };
-  }, [open, labelFilterId]);
+  }, [open, labelFilterId, refetchKey]);
 
   useEffect(() => {
     if (state.kind === 'error') setManualOpen(true);
@@ -157,10 +162,26 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
           style={{ backgroundColor: '#1F2C34' }}
         >
           <h2 className="font-semibold">Nuovo messaggio</h2>
-          <button onClick={onClose} aria-label="Chiudi" className="p-1 rounded-full hover:bg-white/10">
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setCsvOpen(true)}
+              aria-label="Importa da CSV"
+              title="Importa da CSV"
+              className="p-1.5 rounded-full hover:bg-white/10"
+            >
+              <Upload className="w-4 h-4" />
+            </button>
+            <button onClick={onClose} aria-label="Chiudi" className="p-1 rounded-full hover:bg-white/10">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
+
+        <CsvImportDialog
+          open={csvOpen}
+          onClose={() => setCsvOpen(false)}
+          onImported={() => setRefetchKey(k => k + 1)}
+        />
 
         <LabelPicker selectedId={labelFilterId} onChange={setLabelFilterId} />
 
