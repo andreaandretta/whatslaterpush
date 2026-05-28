@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
+import { isValidLabelColor } from '../../lib/labels';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,8 +17,6 @@ async function authedPhone(req: NextRequest): Promise<string | null> {
   const payload = await verifyCookie(raw);
   return payload?.phone ?? null;
 }
-
-const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 
 // GET /api/labels — list user's labels with assignment counts
 export async function GET(req: NextRequest) {
@@ -63,7 +62,9 @@ export async function POST(req: NextRequest) {
   if (typeof name !== 'string' || name.trim().length === 0 || name.length > 60) {
     return NextResponse.json({ error: 'invalid_name' }, { status: 400 });
   }
-  const cleanColor = typeof color === 'string' && HEX_COLOR.test(color) ? color : '#25D366';
+  if (typeof color !== 'string' || !isValidLabelColor(color)) {
+    return NextResponse.json({ error: 'invalid_color' }, { status: 400 });
+  }
 
   const supabase = getSupabase();
   const { data, error } = await supabase
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
     .insert({
       user_phone: phone,
       name: name.trim().slice(0, 60),
-      color: cleanColor,
+      color,
       display_order: typeof display_order === 'number' ? display_order : 0,
     })
     .select('id, name, color, display_order, created_at')

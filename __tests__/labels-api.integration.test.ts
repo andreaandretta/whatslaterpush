@@ -77,34 +77,40 @@ describe('POST /api/labels', () => {
 
   test('200 creates label with cleaned name + color', async () => {
     mockSupa.setResponse('contact_labels:insert', {
-      id: 'L-new', name: 'Fornitori', color: '#FF6B6B', display_order: 0, created_at: '',
+      id: 'L-new', name: 'Fornitori', color: '#0F9D58', display_order: 0, created_at: '',
     });
-    const req = await authedReq({ name: 'Fornitori', color: '#FF6B6B' });
+    const req = await authedReq({ name: 'Fornitori', color: '#0F9D58' });
     const { POST } = await import('../app/api/labels/route');
     const res = await POST(req);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.label.name).toBe('Fornitori');
-    expect(body.label.color).toBe('#FF6B6B');
+    expect(body.label.color).toBe('#0F9D58');
     expect(body.label.contact_count).toBe(0);
   });
 
-  test('200 falls back to default color when format invalid', async () => {
-    mockSupa.setResponse('contact_labels:insert', {
-      id: 'L-c', name: 'X', color: '#25D366', display_order: 0, created_at: '',
-    });
-    const req = await authedReq({ name: 'X', color: 'rebeccapurple' });
+  test('400 invalid_color when color not in palette', async () => {
+    const req = await authedReq({ name: 'X', color: '#FF6B6B' });
     const { POST } = await import('../app/api/labels/route');
     const res = await POST(req);
-    expect(res.status).toBe(200);
-    // Verify the INSERT got the fallback color, not the invalid input.
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('invalid_color');
+    // No insert should be attempted on validation failure.
     const insertCall = mockSupa.calls.find(c => c.table === 'contact_labels' && c.operation === 'insert');
-    expect(insertCall!.args[0].color).toBe('#25D366');
+    expect(insertCall).toBeUndefined();
+  });
+
+  test('400 invalid_color when color missing', async () => {
+    const req = await authedReq({ name: 'X' });
+    const { POST } = await import('../app/api/labels/route');
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('invalid_color');
   });
 
   test('409 on duplicate name (Postgres 23505)', async () => {
     mockSupa.setResponse('contact_labels:insert', null, { code: '23505', message: 'duplicate' });
-    const req = await authedReq({ name: 'U12' });
+    const req = await authedReq({ name: 'U12', color: '#0F9D58' });
     const { POST } = await import('../app/api/labels/route');
     const res = await POST(req);
     expect(res.status).toBe(409);
