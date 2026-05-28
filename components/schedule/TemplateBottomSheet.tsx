@@ -126,7 +126,7 @@ export function TemplateBottomSheet({ open, onClose, onSelect }: Props) {
                 tab === 'mine' ? 'bg-primary text-white' : 'text-gray-300 hover:bg-white/5'
               }`}
             >
-              ⭐ I miei {mine.length > 0 && `(${mine.length})`}
+              ⭐ I miei {mine.length > 0 && <span className="text-gray-500">({mine.length})</span>}
             </button>
             <button
               type="button"
@@ -137,7 +137,7 @@ export function TemplateBottomSheet({ open, onClose, onSelect }: Props) {
                 tab === 'suggested' ? 'bg-primary text-white' : 'text-gray-300 hover:bg-white/5'
               }`}
             >
-              🧪 Suggeriti Beta
+              ✨ Pronti per te
             </button>
           </div>
         </div>
@@ -209,8 +209,8 @@ function SuggestedTab({
 }) {
   return (
     <div>
-      <div className="text-xs text-amber-400 bg-amber-950/30 rounded-lg px-3 py-2 mx-2 mb-2">
-        🧪 Beta — aiutaci a migliorarli editando il testo prima di inviare
+      <div className="px-5 pt-3 pb-1 text-[11px] text-gray-500 italic">
+        Editali liberamente prima di mandarli.
       </div>
 
       <div className="flex gap-2 overflow-x-auto px-2 pb-2 mb-1 -mx-2">
