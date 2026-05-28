@@ -147,7 +147,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/60 sm:flex sm:items-center sm:justify-center sm:px-4"
+      className="fixed inset-0 z-modal bg-black/60 sm:flex sm:items-center sm:justify-center sm:px-4"
       role="dialog"
       aria-modal="true"
       onClick={onClose}

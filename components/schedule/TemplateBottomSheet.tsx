@@ -99,7 +99,7 @@ export function TemplateBottomSheet({ open, onClose, onSelect }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-end justify-center"
+      className="fixed inset-0 z-sheet flex items-end justify-center"
       role="dialog"
       aria-modal="true"
       aria-label="Scegli template"

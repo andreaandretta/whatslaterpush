@@ -133,7 +133,7 @@ export function CsvImportDialog({ open, onClose, onImported }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-dialog flex items-center justify-center p-4" role="dialog" aria-modal="true">
       <button type="button" aria-label="Chiudi" tabIndex={-1} className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div className="relative bg-[#1F2C33] rounded-2xl w-full max-w-md p-5 text-white">
         <div className="flex items-center justify-between mb-4">
