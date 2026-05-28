@@ -1,4 +1,4 @@
-import { parseRule, isValidRule, nextOccurrence } from '../app/lib/recurrence';
+import { parseRule, isValidRule, nextOccurrence, nextOccurrences } from '../app/lib/recurrence';
 
 describe('parseRule', () => {
   test('parses FREQ=DAILY', () => {
@@ -140,5 +140,41 @@ describe('nextOccurrence — invalid rules', () => {
   test('returns null for invalid rule', () => {
     const from = new Date('2026-06-15T18:00:00.000Z');
     expect(nextOccurrence('not-a-rule', from)).toBeNull();
+  });
+});
+
+describe('nextOccurrences', () => {
+  test('returns N daily occurrences, time-of-day preserved', () => {
+    const from = new Date('2026-06-15T18:00:00.000Z');
+    const out = nextOccurrences('FREQ=DAILY', from, 3);
+    expect(out.map(d => d.toISOString())).toEqual([
+      '2026-06-16T18:00:00.000Z',
+      '2026-06-17T18:00:00.000Z',
+      '2026-06-18T18:00:00.000Z',
+    ]);
+  });
+
+  test('returns 3 consecutive weekly occurrences (BYDAY=TU from Monday)', () => {
+    const from = new Date('2026-06-15T18:00:00.000Z'); // Monday
+    const out = nextOccurrences('FREQ=WEEKLY;BYDAY=TU', from, 3);
+    expect(out.map(d => d.toISOString())).toEqual([
+      '2026-06-16T18:00:00.000Z',
+      '2026-06-23T18:00:00.000Z',
+      '2026-06-30T18:00:00.000Z',
+    ]);
+  });
+
+  test('returns 3 monthly occurrences for BYMONTHDAY=15 (summer, no DST crossing)', () => {
+    const from = new Date('2026-05-15T18:00:00.000Z');
+    const out = nextOccurrences('FREQ=MONTHLY;BYMONTHDAY=15', from, 3);
+    expect(out.map(d => d.toISOString())).toEqual([
+      '2026-06-15T18:00:00.000Z',
+      '2026-07-15T18:00:00.000Z',
+      '2026-08-15T18:00:00.000Z',
+    ]);
+  });
+
+  test('returns empty array when rule is invalid', () => {
+    expect(nextOccurrences('INVALID', new Date(), 3)).toEqual([]);
   });
 });
