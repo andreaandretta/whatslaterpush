@@ -32,6 +32,15 @@ const KIND_LABELS: Record<string, { icon: any; label: string }> = {
   audio: { icon: Mic, label: '🎤 Audio' },
 };
 
+// Per-kind color treatment for the icon disc (picker grid) and chip.
+// Class strings are inlined so Tailwind's JIT scanner picks them up.
+const KIND_VISUAL: Record<MediaAttachment['media_type'], { tint: string; ink: string }> = {
+  image:    { tint: 'bg-emerald-500/20', ink: 'text-emerald-400' },
+  video:    { tint: 'bg-violet-500/20',  ink: 'text-violet-400'  },
+  document: { tint: 'bg-sky-500/20',     ink: 'text-sky-400'     },
+  audio:    { tint: 'bg-orange-500/20',  ink: 'text-orange-400'  },
+};
+
 export function MediaPicker({ open, onClose, onAttached }: Props) {
   const [kind, setKind] = useState<'image' | 'video' | 'document' | 'audio' | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -127,7 +136,9 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
                   onClick={() => pick(k)}
                   className="flex flex-col items-center justify-center gap-2 py-4 rounded-xl bg-[#2A3942] hover:bg-[#374851] text-white"
                 >
-                  <Icon className="w-6 h-6" />
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${KIND_VISUAL[k].tint}`}>
+                    <Icon className={`w-6 h-6 ${KIND_VISUAL[k].ink}`} />
+                  </div>
                   <span className="text-sm font-medium">{KIND_LABELS[k].label}</span>
                 </button>
               );
@@ -159,8 +170,8 @@ export function MediaAttachmentChip({ media, onClear }: { media: MediaAttachment
   const sizeLabel = sizeKb < 1024 ? `${sizeKb} KB` : `${(sizeKb / 1024).toFixed(1)} MB`;
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 bg-[#1F2C34] rounded-xl mx-4">
-      <div className="w-9 h-9 rounded-lg bg-primary/20 flex items-center justify-center shrink-0">
-        <Icon className="w-4 h-4 text-primary" />
+      <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${KIND_VISUAL[media.media_type].tint}`}>
+        <Icon className={`w-4 h-4 ${KIND_VISUAL[media.media_type].ink}`} />
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-sm text-white truncate font-medium">{media.media_filename}</div>
