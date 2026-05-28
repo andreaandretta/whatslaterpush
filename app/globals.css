@@ -73,3 +73,34 @@
 .shadow-soft-lg {
   box-shadow: 0 14px 40px -10px rgba(0, 0, 0, 0.15);
 }
+
+/* Classic WhatsApp wallpaper used by the hero chat preview. */
+.wa-classic {
+  background-color: #ECE5DD;
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(7, 94, 84, 0.05) 1.5px, transparent 2.5px),
+    radial-gradient(circle at 78% 32%, rgba(7, 94, 84, 0.05) 1.5px, transparent 2.5px),
+    radial-gradient(circle at 42% 62%, rgba(7, 94, 84, 0.05) 1.5px, transparent 2.5px),
+    radial-gradient(circle at 88% 78%, rgba(7, 94, 84, 0.05) 1.5px, transparent 2.5px);
+  background-size: 90px 90px;
+}
+
+/* Hero chat micro-animations. Gated by prefers-reduced-motion: no-preference
+   so users who request reduced motion get a static layout. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes hero-float {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-5px); }
+  }
+  .hero-float {
+    animation: hero-float 3.5s ease-in-out infinite;
+  }
+  @keyframes hero-pop {
+    0%   { transform: scale(0.85); opacity: 0; }
+    60%  { transform: scale(1.05); }
+    100% { transform: scale(1);    opacity: 1; }
+  }
+  .hero-pop {
+    animation: hero-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.3s both;
+  }
+}
