@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hero v4 — implementation spec for Bud</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  code, pre { font-family: 'JetBrains Mono', monospace; }
+</style>
+</head>
+<body class="bg-[#0a0e12] text-white min-h-screen">
+
+  <header class="border-b border-white/5 sticky top-0 bg-[#0a0e12]/95 backdrop-blur z-50">
+    <div class="max-w-4xl mx-auto px-6 py-5">
+      <div class="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-0.5">Handoff · Hero redesign</div>
+      <h1 class="text-lg font-bold">HeroSection.tsx — implementation spec</h1>
+    </div>
+  </header>
+
+  <!-- DUE DILIGENCE -->
+  <section class="max-w-4xl mx-auto px-6 py-10">
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-amber-400/30 mb-8">
+      <h2 class="text-sm font-bold uppercase tracking-widest text-amber-400 mb-3">Due diligence — verifiche fatte</h2>
+      <ul class="space-y-2.5 text-sm text-gray-200">
+        <li class="flex gap-2"><span class="text-[#25D366]">✓</span> Letto <code class="bg-black/30 px-1 rounded text-xs">app/components/HeroSection.tsx</code> live: oggi è 2-colonne con <code class="bg-black/30 px-1 rounded text-xs">PhonesCluster</code> + bullet tech ("Twilio / Business API / broker"). Da sostituire interamente.</li>
+        <li class="flex gap-2"><span class="text-[#25D366]">✓</span> Classe <code class="bg-black/30 px-1 rounded text-xs">wa-doodle</code> già definita in globals.css (push v4 precedente) — riutilizzabile.</li>
+        <li class="flex gap-2"><span class="text-[#25D366]">✓</span> Token <code class="bg-black/30 px-1 rounded text-xs">primary</code> / <code class="bg-black/30 px-1 rounded text-xs">primary-hover</code> attesi in tailwind.config: #25D366 / #1DA851. Confermare presenti.</li>
+        <li class="flex gap-2"><span class="text-[#25D366]">✓</span> Rotta <code class="bg-black/30 px-1 rounded text-xs">/connect</code> esiste → il bottone "Inizia gratis" punta lì.</li>
+        <li class="flex gap-2"><span class="text-amber-400">!</span> Ancora <code class="bg-black/30 px-1 rounded text-xs">#come-funziona</code>: verificare che <code class="bg-black/30 px-1 rounded text-xs">HowItWorksSection</code> abbia <code class="bg-black/30 px-1 rounded text-xs">id="come-funziona"</code> per lo scroll della CTA secondaria. Se assente, aggiungerlo.</li>
+        <li class="flex gap-2"><span class="text-amber-400">!</span> Animazioni <code class="bg-black/30 px-1 rounded text-xs">float</code> / <code class="bg-black/30 px-1 rounded text-xs">pop</code>: avvolgere in <code class="bg-black/30 px-1 rounded text-xs">@media (prefers-reduced-motion: no-preference)</code>.</li>
+      </ul>
+    </div>
+
+    <!-- SCOPE -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5 mb-8">
+      <h2 class="text-base font-bold mb-3">Scope</h2>
+      <p class="text-sm text-gray-300 mb-3">Riscrittura completa di <code class="bg-black/30 px-1 rounded text-xs">app/components/HeroSection.tsx</code>. Nessun nuovo file. Reference visiva: <code class="bg-black/30 px-1 rounded text-xs">sprint5/hero-v4-final.html</code>.</p>
+      <p class="text-sm text-gray-400">Le altre 5 fasi del flusso (Connect, Dashboard, Schedule, clusters A-F) sono già coperte da <code class="bg-black/30 px-1 rounded text-xs">sprint5/SPEC-FINAL.html</code>. Questo doc copre solo l'hero.</p>
+    </div>
+
+    <!-- COPY -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5 mb-8">
+      <h2 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-3">1. Copy esatto (italiano)</h2>
+      <table class="w-full text-sm">
+        <tbody class="divide-y divide-[#2A3942]/60">
+          <tr><td class="py-2 pr-4 text-gray-400 align-top w-32">Badge</td><td class="py-2 text-gray-100">Per chi gestisce un gruppo WhatsApp <span class="text-gray-500">(dot verde a sx, sfondo grigio #F0F2F5)</span></td></tr>
+          <tr><td class="py-2 pr-4 text-gray-400 align-top">Headline</td><td class="py-2 text-gray-100">I messaggi che <strong class="text-[#4FBE7C]">dimentichi</strong> di mandare, partono da soli.</td></tr>
+          <tr><td class="py-2 pr-4 text-gray-400 align-top">Sottotitolo</td><td class="py-2 text-gray-100">Partono <strong>dal tuo numero</strong>, all'ora che scegli tu.</td></tr>
+          <tr><td class="py-2 pr-4 text-gray-400 align-top">Bullet</td><td class="py-2 text-gray-100">✓ Scrivi oggi, parte quando vuoi tu<br>✓ Dal tuo numero, non da un mittente strano<br>✓ Pronto in 2 minuti, senza installare niente</td></tr>
+          <tr><td class="py-2 pr-4 text-gray-400 align-top">Chat header</td><td class="py-2 text-gray-100">Gruppo Allenamento · 18 partecipanti</td></tr>
+          <tr><td class="py-2 pr-4 text-gray-400 align-top">Bolla</td><td class="py-2 text-gray-100">Ci vediamo domani alle <strong>18:00</strong> al campo per l'allenamento. Ricordatevi la borraccia! 💪</td></tr>
+          <tr><td class="py-2 pr-4 text-gray-400 align-top">Chip eroe</td><td class="py-2 text-gray-100">⏱ Programmato → ✓ Inviato 09:00</td></tr>
+          <tr><td class="py-2 pr-4 text-gray-400 align-top">Caption</td><td class="py-2 text-gray-100">L'hai scritto <strong>ieri sera</strong>. È partito da solo stamattina.</td></tr>
+          <tr><td class="py-2 pr-4 text-gray-400 align-top">CTA primaria</td><td class="py-2 text-gray-100">Inizia gratis → <span class="text-gray-500">(href /connect)</span></td></tr>
+          <tr><td class="py-2 pr-4 text-gray-400 align-top">Sub-CTA</td><td class="py-2 text-gray-100">In 2 minuti · Niente carta</td></tr>
+          <tr><td class="py-2 pr-4 text-gray-400 align-top">CTA secondaria</td><td class="py-2 text-gray-100">Come funziona ↓ <span class="text-gray-500">(href #come-funziona, verde scuro #075E54)</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- COLOR TOKENS -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5 mb-8">
+      <h2 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-3">2. Colori esatti</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+        <div class="flex items-center gap-2"><span class="w-6 h-6 rounded bg-[#25D366]"></span><code>#25D366 primary / CTA</code></div>
+        <div class="flex items-center gap-2"><span class="w-6 h-6 rounded bg-[#4FBE7C]"></span><code>#4FBE7C accent verde</code></div>
+        <div class="flex items-center gap-2"><span class="w-6 h-6 rounded bg-[#075E54]"></span><code>#075E54 header chat / sub-CTA</code></div>
+        <div class="flex items-center gap-2"><span class="w-6 h-6 rounded bg-[#ECE5DD]"></span><code>#ECE5DD wallpaper chat</code></div>
+        <div class="flex items-center gap-2"><span class="w-6 h-6 rounded bg-[#DCF8C6]"></span><code>#DCF8C6 bolla outbound</code></div>
+        <div class="flex items-center gap-2"><span class="w-6 h-6 rounded bg-[#53BDEB]"></span><code>#53BDEB spunta ✓✓ blu</code></div>
+        <div class="flex items-center gap-2"><span class="w-6 h-6 rounded bg-[#F0F2F5]"></span><code>#F0F2F5 badge bg</code></div>
+        <div class="flex items-center gap-2"><span class="w-6 h-6 rounded bg-[#EAECEF]"></span><code>#EAECEF cerchietto ✓</code></div>
+        <div class="flex items-center gap-2"><span class="w-6 h-6 rounded bg-[#1A1F2C]"></span><code>#1A1F2C testo</code></div>
+        <div class="flex items-center gap-2"><span class="w-6 h-6 rounded bg-[#5A6573]"></span><code>#5A6573 testo dim</code></div>
+      </div>
+    </div>
+
+    <!-- HIERARCHY RULE -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5 mb-8">
+      <h2 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-3">3. Regola gerarchia verde (critico)</h2>
+      <ul class="space-y-2 text-sm text-gray-200 list-disc pl-5">
+        <li>L'<strong>unico verde pieno saturo #25D366</strong> = bottone "Inizia gratis".</li>
+        <li>Spunte bullet = cerchietto grigio <code class="bg-black/30 px-1 rounded text-xs">#EAECEF</code> con ✓ grigio scuro, <strong>non</strong> verde.</li>
+        <li>Badge = grigio <code class="bg-black/30 px-1 rounded text-xs">#F0F2F5</code> con solo dot verde 6px.</li>
+        <li>Header chat #075E54 e bolla #DCF8C6 restano verdi perché <em>sono</em> WhatsApp — non sono "decorazione verde" ma fedeltà al prodotto.</li>
+      </ul>
+    </div>
+
+    <!-- LAYOUT -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5 mb-8">
+      <h2 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-3">4. Layout & responsive</h2>
+      <ul class="space-y-2 text-sm text-gray-200 list-disc pl-5">
+        <li>Mobile-first single column. La chat (header verde + wallpaper + bolla + chip) è un blocco a tutta larghezza dopo i bullet.</li>
+        <li>Desktop (<code class="bg-black/30 px-1 rounded text-xs">lg:</code>): copy a sinistra, "telefono chat" a destra in card con ombra. Max-width contenuto <code class="bg-black/30 px-1 rounded text-xs">max-w-6xl</code>.</li>
+        <li>Chip "Programmato → Inviato" in cima alla chat, animazione <code class="bg-black/30 px-1 rounded text-xs">pop</code> (scale 0.85→1.05→1, delay 0.3s).</li>
+        <li>Bolla animazione <code class="bg-black/30 px-1 rounded text-xs">float</code> (translateY ±5px, 3.5s). Entrambe sotto <code class="bg-black/30 px-1 rounded text-xs">prefers-reduced-motion</code>.</li>
+        <li>Tap target CTA ≥48px. Sub-CTA "Come funziona" tap area piena larghezza.</li>
+      </ul>
+    </div>
+
+    <!-- TEST -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h2 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-3">5. Checklist test</h2>
+      <ul class="space-y-2 text-sm text-gray-200 list-disc pl-5">
+        <li>375px (iPhone SE): headline non va in overflow, bolla leggibile, chip non taglia.</li>
+        <li>"Come funziona ↓" scrolla a <code class="bg-black/30 px-1 rounded text-xs">#come-funziona</code> (aggiungere id se manca).</li>
+        <li>"Inizia gratis" naviga a /connect.</li>
+        <li>Contrasto AA: testo #5A6573 su bianco (4.6:1 ok), badge #54656F su #F0F2F5.</li>
+        <li>prefers-reduced-motion: animazioni disattivate.</li>
+        <li>Build pulito, nessun import inutilizzato (rimosso PhonesCluster e Image se non più usati).</li>
+      </ul>
+    </div>
+  </section>
+
+</body>
+</html>

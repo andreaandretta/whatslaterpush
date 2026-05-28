@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hero v3 — chat classica WhatsApp</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  /* Classic WhatsApp light wallpaper — beige + faint doodle */
+  .wa-classic {
+    background-color: #ECE5DD;
+    background-image:
+      radial-gradient(circle at 12% 18%, rgba(7,94,84,0.05) 1.5px, transparent 2.5px),
+      radial-gradient(circle at 78% 32%, rgba(7,94,84,0.05) 1.5px, transparent 2.5px),
+      radial-gradient(circle at 42% 62%, rgba(7,94,84,0.05) 1.5px, transparent 2.5px),
+      radial-gradient(circle at 88% 78%, rgba(7,94,84,0.05) 1.5px, transparent 2.5px);
+    background-size: 90px 90px;
+  }
+  @keyframes float { 0%,100% { transform: translateY(0);} 50% { transform: translateY(-6px);} }
+  .float { animation: float 3.5s ease-in-out infinite; }
+</style>
+</head>
+<body class="bg-[#0a0e12] text-white min-h-screen px-4 sm:px-8 py-10">
+
+  <header class="max-w-3xl mx-auto mb-10 text-center">
+    <div class="inline-flex items-center gap-2 bg-[#25D366]/15 text-[#25D366] text-xs font-bold uppercase tracking-widest px-3 py-1.5 rounded-full mb-3">
+      Hero v3 · 3 commenti risolti
+    </div>
+    <h1 class="text-2xl sm:text-3xl font-bold tracking-tight mb-2">Chat classica WhatsApp (niente più riquadro nero)</h1>
+    <p class="text-gray-400 text-sm leading-relaxed max-w-xl mx-auto">
+      Sfondo chat beige + header verde, come WhatsApp vero. Hero tutto chiaro e caldo, nessuno stacco brusco.
+    </p>
+  </header>
+
+  <!-- HERO MOCK 375px -->
+  <section class="max-w-[375px] mx-auto">
+    <div class="bg-white rounded-[28px] overflow-hidden shadow-2xl ring-1 ring-[#25D366]/20">
+      <div class="h-9 px-5 flex items-center justify-between text-[11px] font-semibold text-gray-700">
+        <span>9:41</span>
+        <span class="flex items-center gap-1"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M2 17h20v2H2zm1.15-4.05L4 11l.85 1.95L7 13.5l-2.15.55L4 16l-.85-2.45L1 13.5z"/></svg></span>
+      </div>
+
+      <div class="px-5 pt-4 text-[#1A1F2C]">
+        <!-- PAIN-LED badge (comment 1) -->
+        <span class="inline-flex items-center gap-1.5 bg-[#A8E6CF] text-[#075E54] px-2.5 py-1 rounded-full text-[10px] font-bold mb-4">
+          😅 Ti dimentichi sempre di scrivere in tempo?
+        </span>
+        <h2 class="text-[27px] font-black leading-[1.08] tracking-tight">
+          I messaggi che <span class="text-[#4FBE7C]">dimentichi</span> di mandare, partono da soli.
+        </h2>
+        <p class="mt-3 text-sm text-[#5A6573] leading-relaxed">
+          Scrivili adesso, partono all'ora che decidi tu — <strong class="text-[#1A1F2C]">dal tuo numero</strong>, come se li scrivessi sul momento.
+        </p>
+
+        <ul class="mt-4 space-y-2 text-sm font-medium">
+          <li class="flex items-center gap-2.5"><span class="w-5 h-5 rounded-full bg-[#25D366]/15 text-[#25D366] flex items-center justify-center text-xs font-black shrink-0">✓</span> Scrivi oggi, parte quando vuoi tu</li>
+          <li class="flex items-center gap-2.5"><span class="w-5 h-5 rounded-full bg-[#25D366]/15 text-[#25D366] flex items-center justify-center text-xs font-black shrink-0">✓</span> Dal tuo numero, non da un mittente strano</li>
+          <li class="flex items-center gap-2.5"><span class="w-5 h-5 rounded-full bg-[#25D366]/15 text-[#25D366] flex items-center justify-center text-xs font-black shrink-0">✓</span> Pronto in 2 minuti, senza installare niente</li>
+        </ul>
+      </div>
+
+      <!-- CLASSIC WHATSAPP CHAT (comment 3) -->
+      <div class="mt-5">
+        <!-- green header bar like real WhatsApp -->
+        <div class="bg-[#075E54] px-4 py-2.5 flex items-center gap-2.5">
+          <svg class="w-5 h-5 text-white/90 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+          <div class="w-8 h-8 rounded-full bg-[#A8E6CF] text-[#075E54] flex items-center justify-center shrink-0">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-white text-sm font-semibold leading-tight">Gruppo Allenamento</div>
+            <div class="text-white/70 text-[11px]">18 partecipanti</div>
+          </div>
+          <svg class="w-4 h-4 text-white/80" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+        </div>
+
+        <!-- wallpaper + bubble -->
+        <div class="wa-classic px-4 pt-4 pb-5">
+          <div class="flex justify-end float">
+            <div class="max-w-[80%] bg-[#DCF8C6] text-[#111B21] rounded-2xl rounded-tr-sm px-3 py-2 shadow-sm">
+              <p class="text-[13px] leading-snug">Ci vediamo domani alle <strong>18:00</strong> al campo per l'allenamento. Ricordatevi la borraccia! 💪</p>
+              <div class="flex items-center justify-end gap-1 mt-1">
+                <span class="text-[10px] text-[#667781]">09:00</span>
+                <svg class="w-4 h-4" viewBox="0 0 18 18" fill="none">
+                  <path d="M2 9.5l3 3 6-7" stroke="#53BDEB" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M6.5 9.5l3 3 6-7" stroke="#53BDEB" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex justify-center mt-4">
+            <div class="inline-flex items-center gap-1.5 bg-white/80 backdrop-blur text-[#075E54] text-[11px] font-medium px-3 py-1.5 rounded-full shadow-sm">
+              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              L'hai scritto ieri sera · partito stamattina alle 09:00
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="px-5 py-5 bg-white">
+        <button class="w-full inline-flex items-center justify-center gap-2 bg-[#25D366] text-white px-5 h-12 rounded-full text-sm font-bold shadow-lg shadow-[#25D366]/30">
+          Inizia gratis
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </button>
+        <p class="text-center text-[11px] text-[#5A6573] mt-2">In 2 minuti · Niente carta</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- COMMENT RESPONSES -->
+  <section class="max-w-3xl mx-auto mt-14 space-y-6">
+
+    <!-- comment 3 -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-[#25D366]/30">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-2">✓ Commento 3 — riquadro nero → chat classica</h3>
+      <p class="text-gray-200 leading-relaxed text-sm">
+        Hai ragione, il <code class="bg-black/30 px-1 rounded">#111B21</code> scuro era uno stacco violento. Ora la chat usa il <strong>tema classico WhatsApp</strong>: header verde <code class="bg-black/30 px-1 rounded">#075E54</code>, sfondo beige <code class="bg-black/30 px-1 rounded">#ECE5DD</code> col doodle, bolla verde chiaro. Caldo, familiare, coerente con l'hero bianco. Il chip "programmato" è diventato bianco semi-trasparente per stare sul beige.
+      </p>
+    </div>
+
+    <!-- comment 1 -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-amber-400/30">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-amber-400 mb-2">Commento 1 — badge che mostra il dolore</h3>
+      <p class="text-gray-200 leading-relaxed text-sm mb-4">
+        Concordo: un badge-domanda che tocca il dolore aggancia più di una descrizione. Applicato di default:
+        <strong class="text-white">"😅 Ti dimentichi sempre di scrivere in tempo?"</strong>. Altre 2 varianti pain-led se preferisci:
+      </p>
+      <div class="flex flex-wrap gap-2">
+        <span class="inline-flex items-center gap-1.5 bg-[#A8E6CF] text-[#075E54] px-3 py-1.5 rounded-full text-sm font-bold ring-2 ring-[#25D366]">😅 Ti dimentichi sempre di scrivere in tempo? <span class="text-[9px] bg-[#25D366] text-white px-1.5 py-0.5 rounded-full">scelto</span></span>
+        <span class="inline-flex items-center gap-1.5 bg-[#A8E6CF]/40 text-[#075E54] px-3 py-1.5 rounded-full text-sm font-medium">⏰ Quante volte ti sei ricordato troppo tardi?</span>
+        <span class="inline-flex items-center gap-1.5 bg-[#A8E6CF]/40 text-[#075E54] px-3 py-1.5 rounded-full text-sm font-medium">🤦 "Scusa, mi ero dimenticato di avvisarti"</span>
+      </div>
+    </div>
+
+    <!-- comment 2 -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/10">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-gray-300 mb-2">Commento 2 — Set B con bullet pratico</h3>
+      <p class="text-gray-200 leading-relaxed text-sm mb-4">
+        La tua proposta: Set B con al 2° posto "Pronto in 2 minuti" (il 3° di Set A). Ecco com'è:
+      </p>
+      <div class="bg-[#0B141A] rounded-xl p-4 mb-4">
+        <ul class="space-y-2 text-sm">
+          <li class="flex items-start gap-2"><span class="text-[#25D366] font-black">✓</span> Non dimentichi più un messaggio importante</li>
+          <li class="flex items-start gap-2"><span class="text-[#25D366] font-black">✓</span> <span class="text-[#25D366]">Pronto in 2 minuti, senza installare niente</span></li>
+          <li class="flex items-start gap-2"><span class="text-[#25D366] font-black">✓</span> Niente più "scusa, mi ero dimenticato"</li>
+        </ul>
+      </div>
+      <p class="text-amber-200 leading-relaxed text-sm">
+        <strong>Il mio parere onesto:</strong> il bullet pratico ("Pronto in 2 minuti") in mezzo a due bullet emotivi spezza il ritmo — il primo e terzo parlano di <em>emozioni</em> (dimenticare, scusarsi), quello centrale di <em>logistica</em>. Funziona meglio tenerlo coerente: o tutti emotivi, o sposta "Pronto in 2 minuti" come <strong>quarto</strong> bullet di chiusura. La mia preferenza: lascialo emotivo a 3 e metti "Pronto in 2 minuti" sotto al bottone (dov'è già: "In 2 minuti · Niente carta"). Così non lo ripeti.
+      </p>
+    </div>
+
+    <div class="text-center pt-2">
+      <p class="text-lg text-white font-semibold mb-2">Confermi così?</p>
+      <p class="text-sm text-gray-400">Badge pain-led + chat classica + bullet Set A. Dimmi <span class="text-[#25D366] font-mono">OK</span> o cosa cambiare.</p>
+    </div>
+  </section>
+
+</body>
+</html>

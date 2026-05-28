@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cluster E — Z-index Tailwind token scale</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  code, pre { font-family: 'JetBrains Mono', monospace; }
+</style>
+</head>
+<body class="bg-[#0a0e12] text-white min-h-screen px-4 sm:px-8 py-10">
+
+  <header class="max-w-3xl mx-auto mb-10 text-center">
+    <div class="inline-flex items-center gap-2 bg-[#25D366]/15 text-[#25D366] text-xs font-bold uppercase tracking-widest px-3 py-1.5 rounded-full mb-3">
+      Cluster E · Z-index token scale
+    </div>
+    <h1 class="text-2xl sm:text-3xl font-bold tracking-tight mb-2">Da <code>z-[60]</code>, <code>z-[70]</code>, <code>z-[80]</code> arbitrari → scale tokenizzata</h1>
+    <p class="text-gray-400 text-sm leading-relaxed max-w-xl mx-auto">
+      Zero impatto visivo per l'utente finale, alta riduzione di bug futuri.
+      Un sheet aperto sopra un sheet aperto sopra l'OnboardingTour può creare layering caotico oggi.
+    </p>
+  </header>
+
+  <!-- BEFORE / AFTER tables -->
+  <section class="max-w-4xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+    <!-- ============ BEFORE ============ -->
+    <div>
+      <div class="mb-3 inline-flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-red-400"></span>
+        <span class="text-xs font-bold uppercase tracking-widest text-gray-400">Adesso — z-[N] arbitrari</span>
+      </div>
+
+      <div class="bg-[#1F2C33] rounded-2xl overflow-hidden ring-1 ring-white/5">
+        <table class="w-full text-sm">
+          <thead class="bg-[#0B141A] text-[11px] uppercase tracking-widest text-gray-500">
+            <tr>
+              <th class="text-left px-4 py-2.5 font-semibold">File</th>
+              <th class="text-left px-3 py-2.5 font-semibold">Linea</th>
+              <th class="text-right px-4 py-2.5 font-semibold">Z</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[#2A3942]/60">
+            <tr>
+              <td class="px-4 py-2.5 text-gray-300">ContactPickerModal.tsx</td>
+              <td class="px-3 py-2.5 text-gray-500 text-xs">~134</td>
+              <td class="px-4 py-2.5 text-right"><code class="text-red-300">z-50</code></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5 text-gray-300">RecurrenceBottomSheet.tsx</td>
+              <td class="px-3 py-2.5 text-gray-500 text-xs">42</td>
+              <td class="px-4 py-2.5 text-right"><code class="text-red-300">z-[60]</code></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5 text-gray-300">TemplateBottomSheet.tsx</td>
+              <td class="px-3 py-2.5 text-gray-500 text-xs">96</td>
+              <td class="px-4 py-2.5 text-right"><code class="text-red-300">z-[60]</code></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5 text-gray-300">MediaPicker.tsx</td>
+              <td class="px-3 py-2.5 text-gray-500 text-xs">90</td>
+              <td class="px-4 py-2.5 text-right"><code class="text-red-300">z-[60]</code></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5 text-gray-300">ReminderBottomSheet.tsx</td>
+              <td class="px-3 py-2.5 text-gray-500 text-xs">~30</td>
+              <td class="px-4 py-2.5 text-right"><code class="text-red-300">z-[60]</code></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5 text-gray-300">MessageActionsSheet.tsx</td>
+              <td class="px-3 py-2.5 text-gray-500 text-xs">~25</td>
+              <td class="px-4 py-2.5 text-right"><code class="text-red-300">z-[60]</code></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5 text-gray-300">CsvImportDialog.tsx</td>
+              <td class="px-3 py-2.5 text-gray-500 text-xs">132</td>
+              <td class="px-4 py-2.5 text-right"><code class="text-red-300">z-[70]</code></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5 text-gray-300">SaveTemplateDialog (in Template..)</td>
+              <td class="px-3 py-2.5 text-gray-500 text-xs">266</td>
+              <td class="px-4 py-2.5 text-right"><code class="text-red-300">z-[70]</code></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5 text-gray-300">OnboardingTour.tsx</td>
+              <td class="px-3 py-2.5 text-gray-500 text-xs">169 / 195 / 251</td>
+              <td class="px-4 py-2.5 text-right"><code class="text-red-300">z-[80]</code></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5 text-gray-300">Toast (in app/dashboard/page.tsx)</td>
+              <td class="px-3 py-2.5 text-gray-500 text-xs">~?</td>
+              <td class="px-4 py-2.5 text-right"><code class="text-red-300">z-50</code></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="bg-red-950/30 ring-1 ring-red-400/20 px-4 py-3 text-xs text-red-200 leading-relaxed">
+          <strong>Problemi reali oggi:</strong><br>
+          • Toast a <code>z-50</code> nasconde dietro qualsiasi sheet (<code>z-[60]</code>).<br>
+          • Onboarding (<code>z-[80]</code>) si stampa <em>sopra</em> al sheet aperto invece di guidarlo dietro.<br>
+          • Se aggiungo un nuovo modal devo "indovinare" il prossimo numero libero.
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ AFTER ============ -->
+    <div>
+      <div class="mb-3 inline-flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-[#25D366]"></span>
+        <span class="text-xs font-bold uppercase tracking-widest text-[#25D366]">Proposta — token scale semantica</span>
+      </div>
+
+      <div class="bg-[#1F2C33] rounded-2xl overflow-hidden ring-1 ring-[#25D366]/20">
+        <table class="w-full text-sm">
+          <thead class="bg-[#0B141A] text-[11px] uppercase tracking-widest text-gray-500">
+            <tr>
+              <th class="text-left px-4 py-2.5 font-semibold">Token</th>
+              <th class="text-left px-3 py-2.5 font-semibold">Z</th>
+              <th class="text-left px-4 py-2.5 font-semibold">Quando usarlo</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[#2A3942]/60">
+            <tr>
+              <td class="px-4 py-2.5"><code class="text-gray-300">z-fab</code></td>
+              <td class="px-3 py-2.5"><code class="text-[#25D366]">40</code></td>
+              <td class="px-4 py-2.5 text-gray-400 text-xs">FAB / navbar fissi</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5"><code class="text-gray-300">z-modal</code></td>
+              <td class="px-3 py-2.5"><code class="text-[#25D366]">50</code></td>
+              <td class="px-4 py-2.5 text-gray-400 text-xs">Modali base full-screen<br>(ContactPicker, Schedule)</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5"><code class="text-gray-300">z-sheet</code></td>
+              <td class="px-3 py-2.5"><code class="text-[#25D366]">60</code></td>
+              <td class="px-4 py-2.5 text-gray-400 text-xs">Bottom sheet (Recurrence,<br>Template, Media, Reminder)</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5"><code class="text-gray-300">z-dialog</code></td>
+              <td class="px-3 py-2.5"><code class="text-[#25D366]">70</code></td>
+              <td class="px-4 py-2.5 text-gray-400 text-xs">Dialog su un sheet aperto<br>(Save template, CSV import)</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5"><code class="text-gray-300">z-onboarding</code></td>
+              <td class="px-3 py-2.5"><code class="text-[#25D366]">80</code></td>
+              <td class="px-4 py-2.5 text-gray-400 text-xs">Tour overlay (eccezione, regista degli altri)</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5"><code class="text-gray-300">z-toast</code></td>
+              <td class="px-3 py-2.5"><code class="text-[#25D366]">90</code></td>
+              <td class="px-4 py-2.5 text-gray-400 text-xs">Toast / feedback effimero<br>(sempre sopra a tutto)</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="bg-[#25D366]/10 ring-1 ring-[#25D366]/20 px-4 py-3 text-xs text-[#a8e6cf] leading-relaxed">
+          <strong>Logica della scala:</strong><br>
+          • Numero crescente = priorità visiva crescente.<br>
+          • Buchi di 10 per inserire layer intermedi senza renumber.<br>
+          • Solo eccezione: <code>z-onboarding</code> resta deliberatamente <em>sotto</em> il toast — un errore deve sempre essere visto.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TAILWIND CONFIG -->
+  <section class="max-w-4xl mx-auto mt-10">
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-3">tailwind.config.ts — extend zIndex</h3>
+<pre class="text-xs bg-[#0B141A] rounded-lg p-4 overflow-x-auto text-gray-200"><code>// tailwind.config.ts
+export default {
+  theme: {
+    extend: {
+      zIndex: {
+        fab: '40',
+        modal: '50',
+        sheet: '60',
+        dialog: '70',
+        onboarding: '80',
+        toast: '90',
+      },
+    },
+  },
+};</code></pre>
+      <p class="text-xs text-gray-400 mt-3">
+        Tailwind genera classi <code class="text-[#25D366]">z-fab</code>, <code class="text-[#25D366]">z-modal</code>, ecc. utilizzabili direttamente nei <code>className</code>.
+      </p>
+    </div>
+  </section>
+
+  <!-- LAYERING VISUALIZATION -->
+  <section class="max-w-4xl mx-auto mt-10">
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-4">Visualizzazione stacking</h3>
+      <p class="text-xs text-gray-400 mb-6">Scenario reale: utente apre Schedule → tocca "Salva template" → Sentry rileva errore di rete → toast.</p>
+
+      <div class="relative h-64 max-w-md mx-auto">
+        <!-- Layer fab -->
+        <div class="absolute left-0 top-56 w-full bg-[#0B141A] ring-1 ring-white/10 rounded-lg px-3 py-1.5 flex items-center justify-between text-xs">
+          <span class="text-gray-400">FAB "Manda messaggio"</span>
+          <code class="text-gray-500">z-fab · 40</code>
+        </div>
+        <!-- Layer modal -->
+        <div class="absolute left-2 top-48 w-[calc(100%-1rem)] bg-[#1F2C33] ring-1 ring-white/10 rounded-lg px-3 py-1.5 flex items-center justify-between text-xs">
+          <span class="text-gray-300">Schedule modal</span>
+          <code class="text-gray-500">z-modal · 50</code>
+        </div>
+        <!-- Layer sheet -->
+        <div class="absolute left-4 top-40 w-[calc(100%-2rem)] bg-[#1F2C33] ring-1 ring-white/15 rounded-lg px-3 py-1.5 flex items-center justify-between text-xs">
+          <span class="text-gray-300">Recurrence sheet</span>
+          <code class="text-gray-500">z-sheet · 60</code>
+        </div>
+        <!-- Layer dialog -->
+        <div class="absolute left-6 top-32 w-[calc(100%-3rem)] bg-[#1F2C33] ring-1 ring-white/20 rounded-lg px-3 py-1.5 flex items-center justify-between text-xs">
+          <span class="text-gray-200">Save template dialog</span>
+          <code class="text-gray-400">z-dialog · 70</code>
+        </div>
+        <!-- Layer onboarding -->
+        <div class="absolute left-8 top-24 w-[calc(100%-4rem)] bg-[#1F2C33] ring-1 ring-amber-400/30 rounded-lg px-3 py-1.5 flex items-center justify-between text-xs">
+          <span class="text-amber-200">Onboarding overlay</span>
+          <code class="text-amber-400">z-onboarding · 80</code>
+        </div>
+        <!-- Layer toast — sempre sopra -->
+        <div class="absolute left-10 top-16 w-[calc(100%-5rem)] bg-[#25D366]/20 ring-2 ring-[#25D366] rounded-lg px-3 py-1.5 flex items-center justify-between text-xs">
+          <span class="text-white font-semibold">Toast errore</span>
+          <code class="text-[#25D366]">z-toast · 90</code>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WHAT CHANGES + DECISIONS -->
+  <section class="max-w-3xl mx-auto mt-10 space-y-8">
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-2">Cosa cambia per l'utente</h3>
+      <p class="text-gray-200 leading-relaxed">
+        Niente, visibilmente. Ma: errori e feedback (toast) sempre visibili anche sopra modali aperti.
+        Per il dev: aggiungere un nuovo modal = scegliere il token semantico giusto, non indovinare un numero.
+      </p>
+    </div>
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-amber-400/30">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-amber-400 mb-3">Micro-decisioni che ho preso</h3>
+      <ul class="space-y-3 text-gray-200 leading-relaxed text-sm">
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">1.</span>
+          <span><strong>z-fab = 40</strong> (nuovo). Oggi il FAB non ha z-index esplicito → cade nello stacking context naturale. Esplicitarlo evita che un futuro <code>absolute</code> lo copra.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">2.</span>
+          <span><strong>z-toast = 90 (sopra onboarding)</strong>. Inverte la regola "onboarding regista". Se Sentry/network fail durante il tour, l'errore lo vede l'utente PRIMA del tour. Sentry > Tour.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">3.</span>
+          <span><strong>Buchi di 10</strong> invece di 1. Permette aggiungere <code>z-sheet-2 = 65</code> in futuro (sheet sopra sheet) senza rinumerare tutto. Trade-off: stack max 9 layer — sufficiente.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">4.</span>
+          <span><strong>Nessun token z-popover / z-tooltip</strong>. Quei pattern non esistono nel codebase. Se servono dopo, vanno tra dialog e onboarding (75) o tra toast e tutto (95).</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-3">Alternative scartate</h3>
+      <ul class="space-y-3 text-gray-300 leading-relaxed text-sm">
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">a.</span>
+          <span><strong>Scala 1, 2, 3, 4, 5</strong>. Pulito ma proibisce di inserire layer intermedi.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">b.</span>
+          <span><strong>Scala 100, 200, 300...</strong>. Stile Material. Funziona ma rumore visivo nel CSS-dev tools (numeri grandi).</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">c.</span>
+          <span><strong>Mantenere <code>z-50</code> per ContactPicker</strong> e usare token solo per i nuovi modal. Soluzione "metà incinta", mantiene il caos.</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="bg-amber-950/30 ring-1 ring-amber-500/30 rounded-2xl p-6">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-amber-400 mb-3">⚠️ Refactor required</h3>
+      <p class="text-xs text-amber-100 leading-relaxed">
+        Find &amp; replace in 10 file: <code>z-[60]</code> → <code>z-sheet</code>, <code>z-[70]</code> → <code>z-dialog</code>, ecc. Niente regressioni runtime, ma è un commit "big diff" che tocca file di feature diverse.
+      </p>
+    </div>
+
+    <div class="text-center pt-2">
+      <p class="text-lg text-white font-semibold mb-2">OK per questa versione?</p>
+      <p class="text-sm text-gray-400">Rispondi: <span class="text-[#25D366] font-mono">OK</span> · <span class="text-amber-400 font-mono">modifica X</span> · <span class="text-red-400 font-mono">redesign</span></p>
+    </div>
+
+  </section>
+
+</body>
+</html>

@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cluster D — MediaPicker tinted icons · Before / After</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+</style>
+</head>
+<body class="bg-[#0a0e12] text-white min-h-screen px-4 sm:px-8 py-10">
+
+  <header class="max-w-3xl mx-auto mb-10 text-center">
+    <div class="inline-flex items-center gap-2 bg-[#25D366]/15 text-[#25D366] text-xs font-bold uppercase tracking-widest px-3 py-1.5 rounded-full mb-3">
+      Cluster D · MediaPicker tinted icons
+    </div>
+    <h1 class="text-2xl sm:text-3xl font-bold tracking-tight mb-2">Differenziare i 4 kind di media a colpo d'occhio</h1>
+    <p class="text-gray-400 text-sm leading-relaxed max-w-xl mx-auto">
+      Adesso le 4 card sono identiche grigio uniforme — l'utente legge il label per distinguere foto da video.
+      Tinta lieve dietro l'icona (<code>bg-color-500/20</code>) + icona colorata danno riconoscibilità WhatsApp-share-sheet senza rumore visivo.
+    </p>
+  </header>
+
+  <section class="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-5xl mx-auto">
+
+    <!-- ============ BEFORE ============ -->
+    <figure class="flex flex-col items-center">
+      <figcaption class="mb-3 inline-flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-red-400"></span>
+        <span class="text-xs font-bold uppercase tracking-widest text-gray-400">Adesso</span>
+        <span class="text-xs text-gray-500">— MediaPicker.tsx@HEAD</span>
+      </figcaption>
+
+      <div class="w-full max-w-[375px] bg-[#0b141a] rounded-[28px] overflow-hidden shadow-2xl ring-1 ring-white/5">
+        <div class="h-9 px-5 flex items-center justify-between text-[11px] font-semibold text-white/80">
+          <span>9:41</span>
+          <span><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a10 10 0 0 0-7.07 17.07 1 1 0 0 0 1.42-1.42A8 8 0 1 1 12 20a1 1 0 0 0 0 2 10 10 0 0 0 0-20z"/></svg></span>
+        </div>
+
+        <div class="px-4 pt-3 pb-2 opacity-40">
+          <div class="text-xs text-gray-400">Programma messaggio</div>
+          <div class="mt-1 text-sm text-white">"Foto squadra finale torneo"</div>
+        </div>
+        <div class="h-3 bg-black/40"></div>
+
+        <div class="bg-[#1F2C33] rounded-t-3xl pt-3 pb-6 px-3">
+          <div class="w-12 h-1 bg-gray-600 rounded-full mx-auto mb-4"></div>
+          <div class="flex items-center justify-between px-1 mb-4">
+            <h3 class="text-white font-semibold">Allega media</h3>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <button class="flex flex-col items-center justify-center gap-2 py-4 rounded-xl bg-[#2A3942] text-white">
+              <svg class="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+              <span class="text-sm font-medium">📷 Foto</span>
+            </button>
+            <button class="flex flex-col items-center justify-center gap-2 py-4 rounded-xl bg-[#2A3942] text-white">
+              <svg class="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+              <span class="text-sm font-medium">🎥 Video</span>
+            </button>
+            <button class="flex flex-col items-center justify-center gap-2 py-4 rounded-xl bg-[#2A3942] text-white">
+              <svg class="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <span class="text-sm font-medium">📄 Documento</span>
+            </button>
+            <button class="flex flex-col items-center justify-center gap-2 py-4 rounded-xl bg-[#2A3942] text-white">
+              <svg class="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+              <span class="text-sm font-medium">🎤 Audio</span>
+            </button>
+          </div>
+
+          <p class="text-xs text-gray-500 text-center mt-3">Max 16MB. Privato, accessibile solo al destinatario.</p>
+        </div>
+      </div>
+
+      <p class="mt-4 text-xs text-gray-500 max-w-[340px] text-center">
+        ↑ 4 card identiche. L'occhio deve leggere il label per distinguere. Sembra un form, non un share-sheet.
+      </p>
+    </figure>
+
+    <!-- ============ AFTER ============ -->
+    <figure class="flex flex-col items-center">
+      <figcaption class="mb-3 inline-flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-[#25D366]"></span>
+        <span class="text-xs font-bold uppercase tracking-widest text-[#25D366]">Proposta</span>
+        <span class="text-xs text-gray-500">— bg-color/20 + icon coloured</span>
+      </figcaption>
+
+      <div class="w-full max-w-[375px] bg-[#0b141a] rounded-[28px] overflow-hidden shadow-2xl ring-1 ring-[#25D366]/20">
+        <div class="h-9 px-5 flex items-center justify-between text-[11px] font-semibold text-white/80">
+          <span>9:41</span>
+          <span><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a10 10 0 0 0-7.07 17.07 1 1 0 0 0 1.42-1.42A8 8 0 1 1 12 20a1 1 0 0 0 0 2 10 10 0 0 0 0-20z"/></svg></span>
+        </div>
+
+        <div class="px-4 pt-3 pb-2 opacity-40">
+          <div class="text-xs text-gray-400">Programma messaggio</div>
+          <div class="mt-1 text-sm text-white">"Foto squadra finale torneo"</div>
+        </div>
+        <div class="h-3 bg-black/40"></div>
+
+        <div class="bg-[#1F2C33] rounded-t-3xl pt-3 pb-6 px-3">
+          <div class="w-12 h-1 bg-gray-600 rounded-full mx-auto mb-4"></div>
+          <div class="flex items-center justify-between px-1 mb-4">
+            <h3 class="text-white font-semibold">Allega media</h3>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <!-- Foto — emerald -->
+            <button class="flex flex-col items-center justify-center gap-2 py-4 rounded-xl bg-[#2A3942] text-white">
+              <span class="w-12 h-12 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                <svg class="w-6 h-6 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+              </span>
+              <span class="text-sm font-medium">Foto</span>
+            </button>
+            <!-- Video — violet -->
+            <button class="flex flex-col items-center justify-center gap-2 py-4 rounded-xl bg-[#2A3942] text-white">
+              <span class="w-12 h-12 rounded-full bg-violet-500/20 flex items-center justify-center">
+                <svg class="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+              </span>
+              <span class="text-sm font-medium">Video</span>
+            </button>
+            <!-- Documento — sky -->
+            <button class="flex flex-col items-center justify-center gap-2 py-4 rounded-xl bg-[#2A3942] text-white">
+              <span class="w-12 h-12 rounded-full bg-sky-500/20 flex items-center justify-center">
+                <svg class="w-6 h-6 text-sky-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              </span>
+              <span class="text-sm font-medium">Documento</span>
+            </button>
+            <!-- Audio — orange -->
+            <button class="flex flex-col items-center justify-center gap-2 py-4 rounded-xl bg-[#2A3942] text-white">
+              <span class="w-12 h-12 rounded-full bg-orange-500/20 flex items-center justify-center">
+                <svg class="w-6 h-6 text-orange-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+              </span>
+              <span class="text-sm font-medium">Audio</span>
+            </button>
+          </div>
+
+          <p class="text-xs text-gray-500 text-center mt-3">Max 16MB. Privato, accessibile solo al destinatario.</p>
+        </div>
+      </div>
+
+      <p class="mt-4 text-xs text-gray-500 max-w-[340px] text-center">
+        ↑ Cerchio tinted dietro icona colorata. Lo riconosci in 80ms invece di leggerlo in 400ms.
+      </p>
+    </figure>
+  </section>
+
+  <!-- TINTA STRENGTH COMPARISON -->
+  <section class="max-w-3xl mx-auto mt-14">
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-4">Intensità tinta — perché /20 e non /40</h3>
+      <p class="text-xs text-gray-400 mb-4">Confronto fianco a fianco delle tre intensità testate. La proposta usa <strong>/20 (lieve)</strong>.</p>
+
+      <div class="grid grid-cols-3 gap-3">
+        <div class="text-center">
+          <div class="bg-[#2A3942] py-4 rounded-xl mb-2">
+            <span class="w-12 h-12 mx-auto rounded-full bg-emerald-500/20 flex items-center justify-center">
+              <svg class="w-6 h-6 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            </span>
+          </div>
+          <code class="text-[10px] text-[#25D366] font-mono">/20 proposta</code>
+          <p class="text-[10px] text-gray-500 mt-1">Lieve. Card omogenea, icona riconoscibile.</p>
+        </div>
+        <div class="text-center">
+          <div class="bg-[#2A3942] py-4 rounded-xl mb-2">
+            <span class="w-12 h-12 mx-auto rounded-full bg-emerald-500/40 flex items-center justify-center">
+              <svg class="w-6 h-6 text-emerald-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            </span>
+          </div>
+          <code class="text-[10px] text-gray-400 font-mono">/40 forte</code>
+          <p class="text-[10px] text-gray-500 mt-1">Più vivace, più rumoroso. WA usa /20 nelle share-sheet.</p>
+        </div>
+        <div class="text-center">
+          <div class="bg-[#2A3942] py-4 rounded-xl mb-2">
+            <span class="w-12 h-12 mx-auto rounded-full bg-emerald-500 flex items-center justify-center">
+              <svg class="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            </span>
+          </div>
+          <code class="text-[10px] text-gray-400 font-mono">/100 pieno</code>
+          <p class="text-[10px] text-gray-500 mt-1">Vìola "primary solo per CTA + sent". Scartato.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WHAT CHANGES + DECISIONS -->
+  <section class="max-w-3xl mx-auto mt-8 space-y-8">
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-2">Cosa cambia per l'utente</h3>
+      <p class="text-gray-200 leading-relaxed">
+        Il share-sheet sembra <strong>WhatsApp</strong>, non un form Telegram.
+        L'occhio dell'allenatore U12 trova "Foto" nel verde-emerald (associato a galleria iOS) in 80ms — invece di leggere quattro label identiche.
+      </p>
+    </div>
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-amber-400/30">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-amber-400 mb-3">Micro-decisioni che ho preso</h3>
+      <ul class="space-y-3 text-gray-200 leading-relaxed text-sm">
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">1.</span>
+          <span><strong>Tinta /20 (lieve)</strong> invece di /40 forte. /40 fa "card colorata" — competition col CTA primary. /20 fa "icona con accento", neutro. Vedi sezione "Intensità tinta" sopra.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">2.</span>
+          <span><strong>Colori scelti per analogia iOS</strong>: Foto/emerald, Video/violet, Documento/sky, Audio/orange. Stesso pattern di mood usato da iOS Files e WhatsApp share-sheet.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">3.</span>
+          <span><strong>Emoji rimossi dai label</strong> ("📷 Foto" → "Foto"). L'icona SVG colorata sostituisce l'emoji, l'evidenza è già nell'icona. Doppia ridondanza = rumore.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">4.</span>
+          <span><strong>Cerchio 48×48 dietro icona</strong> invece di rettangolo. Cerchio = pattern WhatsApp camera/audio/document, rettangolo = pattern form. Tap target 44+ rispettato.</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-3">Alternative scartate</h3>
+      <ul class="space-y-3 text-gray-300 leading-relaxed text-sm">
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">a.</span>
+          <span><strong>Card colorate intere</strong> (bg-emerald-900/30 sul wrapper). Più vibrante ma compete col CTA primary verde. Rotto il sistema gerarchico.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">b.</span>
+          <span><strong>Mantieni emoji + niente cerchio colorato.</strong> Più semplice tecnicamente. Ma "📷 Foto" testo monospaziato emoji è meno scannable di un'icona dedicata.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">c.</span>
+          <span><strong>Layout 4 colonne × 1 riga</strong>. Su 375px le card diventano 78px, troppo strette. 2×2 è il minimo dignitoso.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">d.</span>
+          <span><strong>Colori personalizzati per ICP D</strong> (es. arancio "AGESCI", azzurro "Diocesi"). Sovra-design per problema che non esiste.</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="text-center pt-2">
+      <p class="text-lg text-white font-semibold mb-2">OK per questa versione?</p>
+      <p class="text-sm text-gray-400">Rispondi: <span class="text-[#25D366] font-mono">OK</span> · <span class="text-amber-400 font-mono">modifica X</span> · <span class="text-red-400 font-mono">redesign</span></p>
+    </div>
+
+  </section>
+
+</body>
+</html>

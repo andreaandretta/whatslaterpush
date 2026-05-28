@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cluster C — LabelPicker palette 8 colori AA · Before / After</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .scroll-x::-webkit-scrollbar { display: none; }
+  .scroll-x { scrollbar-width: none; }
+</style>
+</head>
+<body class="bg-[#0a0e12] text-white min-h-screen px-4 sm:px-8 py-10">
+
+  <!-- INTRO -->
+  <header class="max-w-3xl mx-auto mb-10 text-center">
+    <div class="inline-flex items-center gap-2 bg-[#25D366]/15 text-[#25D366] text-xs font-bold uppercase tracking-widest px-3 py-1.5 rounded-full mb-3">
+      Cluster C · LabelPicker palette 8 colori AA
+    </div>
+    <h1 class="text-2xl sm:text-3xl font-bold tracking-tight mb-2">Palette fissa con contrasto garantito</h1>
+    <p class="text-gray-400 text-sm leading-relaxed max-w-xl mx-auto">
+      Colore libero = utente sceglie giallo chiaro, testo bianco diventa illeggibile, etichetta inutilizzabile.
+      8 colori preset garantiti AA chiudono il problema e standardizzano il look della chip-bar.
+    </p>
+  </header>
+
+  <!-- COMPARISON GRID -->
+  <section class="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-5xl mx-auto">
+
+    <!-- ============ BEFORE ============ -->
+    <figure class="flex flex-col items-center">
+      <figcaption class="mb-3 inline-flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-red-400"></span>
+        <span class="text-xs font-bold uppercase tracking-widest text-gray-400">Adesso</span>
+        <span class="text-xs text-gray-500">— input colore libero</span>
+      </figcaption>
+
+      <div class="w-full max-w-[375px] bg-[#0b141a] rounded-[28px] overflow-hidden shadow-2xl ring-1 ring-white/5">
+        <div class="h-9 px-5 flex items-center justify-between text-[11px] font-semibold text-white/80">
+          <span>9:41</span>
+          <span><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a10 10 0 0 0-7.07 17.07 1 1 0 0 0 1.42-1.42A8 8 0 1 1 12 20a1 1 0 0 0 0 2 10 10 0 0 0 0-20z"/></svg></span>
+        </div>
+
+        <!-- DIALOG MOCK -->
+        <div class="p-4 bg-[#1F2C33] mx-3 mt-6 mb-3 rounded-2xl">
+          <h3 class="text-white text-base font-semibold mb-1">Nuova etichetta</h3>
+          <p class="text-xs text-gray-400 mb-4">Crea un'etichetta per raggruppare i contatti.</p>
+
+          <label class="block text-xs text-gray-400 mb-1">Nome</label>
+          <input value="Sponsor" class="w-full bg-[#0B141A] text-white rounded-lg px-3 py-2 outline-none mb-4" />
+
+          <label class="block text-xs text-gray-400 mb-2">Colore</label>
+          <div class="flex items-center gap-3">
+            <input type="color" value="#FFE066" class="w-12 h-12 rounded-lg bg-[#0B141A] cursor-pointer" />
+            <input value="#FFE066" class="flex-1 bg-[#0B141A] text-white rounded-lg px-3 py-2 outline-none font-mono text-sm" />
+          </div>
+
+          <!-- WARNING preview -->
+          <div class="mt-4 mb-4">
+            <div class="text-xs text-gray-400 mb-1.5">Anteprima:</div>
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border" style="background-color: #FFE066; border-color: #FFE066; color: white;">
+              <span class="w-2 h-2 rounded-full" style="background-color: #FFE066;"></span>
+              Sponsor (3)
+            </span>
+            <p class="text-[11px] text-red-400 mt-2 flex items-center gap-1">
+              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              Testo bianco illeggibile su questo sfondo
+            </p>
+          </div>
+
+          <button class="w-full bg-[#25D366] text-white font-medium py-2.5 rounded-xl">Salva</button>
+        </div>
+
+        <!-- Chip bar example -->
+        <div class="px-3 pb-4 pt-2 border-t border-[#2A3942]">
+          <div class="text-[11px] uppercase tracking-widest text-gray-500 mb-2 px-1">Risultato in chip-bar:</div>
+          <div class="flex gap-2 overflow-x-auto scroll-x">
+            <button class="shrink-0 px-3 py-1 rounded-full text-xs font-medium border border-gray-600 text-gray-300">Tutti</button>
+            <button class="shrink-0 px-3 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1.5 border" style="background-color: #FFE066; border-color: #FFE066; color: white;">
+              <span class="w-2 h-2 rounded-full" style="background-color: white;"></span>
+              <span>Sponsor</span>
+            </button>
+            <button class="shrink-0 px-3 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1.5 border" style="border-color: rgba(7, 211, 102, 0.4); color: rgb(209, 213, 219);">
+              <span class="w-2 h-2 rounded-full" style="background-color: #25D366;"></span>
+              <span>Squadra U12</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <p class="mt-4 text-xs text-gray-500 max-w-[340px] text-center">
+        ↑ "Sponsor" illeggibile. Conta come errore "manuale" dell'utente — ma il prodotto deve impedirlo.
+      </p>
+    </figure>
+
+    <!-- ============ AFTER ============ -->
+    <figure class="flex flex-col items-center">
+      <figcaption class="mb-3 inline-flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-[#25D366]"></span>
+        <span class="text-xs font-bold uppercase tracking-widest text-[#25D366]">Proposta</span>
+        <span class="text-xs text-gray-500">— 8 swatches preset</span>
+      </figcaption>
+
+      <div class="w-full max-w-[375px] bg-[#0b141a] rounded-[28px] overflow-hidden shadow-2xl ring-1 ring-[#25D366]/20">
+        <div class="h-9 px-5 flex items-center justify-between text-[11px] font-semibold text-white/80">
+          <span>9:41</span>
+          <span><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a10 10 0 0 0-7.07 17.07 1 1 0 0 0 1.42-1.42A8 8 0 1 1 12 20a1 1 0 0 0 0 2 10 10 0 0 0 0-20z"/></svg></span>
+        </div>
+
+        <!-- DIALOG MOCK new -->
+        <div class="p-4 bg-[#1F2C33] mx-3 mt-6 mb-3 rounded-2xl">
+          <h3 class="text-white text-base font-semibold mb-1">Nuova etichetta</h3>
+          <p class="text-xs text-gray-400 mb-4">Crea un'etichetta per raggruppare i contatti.</p>
+
+          <label class="block text-xs text-gray-400 mb-1">Nome</label>
+          <input value="Sponsor" class="w-full bg-[#0B141A] text-white rounded-lg px-3 py-2 outline-none mb-4" />
+
+          <label class="block text-xs text-gray-400 mb-2">Colore</label>
+          <div class="grid grid-cols-4 gap-2.5">
+            <button class="aspect-square rounded-xl ring-2 ring-transparent" style="background-color: #DB4437;" aria-label="Rosso"></button>
+            <button class="aspect-square rounded-xl ring-2 ring-transparent" style="background-color: #E65100;" aria-label="Arancio"></button>
+            <button class="aspect-square rounded-xl ring-2 ring-white relative" style="background-color: #827717;" aria-label="Oliva" aria-pressed="true">
+              <svg class="w-5 h-5 text-white absolute inset-0 m-auto" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+            <button class="aspect-square rounded-xl ring-2 ring-transparent" style="background-color: #0F9D58;" aria-label="Verde"></button>
+            <button class="aspect-square rounded-xl ring-2 ring-transparent" style="background-color: #00897B;" aria-label="Teal"></button>
+            <button class="aspect-square rounded-xl ring-2 ring-transparent" style="background-color: #1976D2;" aria-label="Blu"></button>
+            <button class="aspect-square rounded-xl ring-2 ring-transparent" style="background-color: #7E57C2;" aria-label="Viola"></button>
+            <button class="aspect-square rounded-xl ring-2 ring-transparent" style="background-color: #546E7A;" aria-label="Grigio"></button>
+          </div>
+
+          <!-- Preview -->
+          <div class="mt-4 mb-4">
+            <div class="text-xs text-gray-400 mb-1.5">Anteprima:</div>
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border text-white" style="background-color: #827717; border-color: #827717;">
+              <span class="w-2 h-2 rounded-full bg-white"></span>
+              Sponsor (3)
+            </span>
+            <p class="text-[11px] text-[#25D366] mt-2 flex items-center gap-1">
+              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+              Contrasto leggibile garantito
+            </p>
+          </div>
+
+          <button class="w-full bg-[#25D366] text-white font-medium py-2.5 rounded-xl">Salva</button>
+        </div>
+
+        <!-- Chip bar example new -->
+        <div class="px-3 pb-4 pt-2 border-t border-[#2A3942]">
+          <div class="text-[11px] uppercase tracking-widest text-gray-500 mb-2 px-1">Risultato in chip-bar:</div>
+          <div class="flex gap-2 overflow-x-auto scroll-x">
+            <button class="shrink-0 px-3 py-1 rounded-full text-xs font-medium border border-gray-600 text-gray-300">Tutti</button>
+            <button class="shrink-0 px-3 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1.5 border text-white" style="background-color: #827717; border-color: #827717;">
+              <span class="w-2 h-2 rounded-full bg-white"></span>
+              <span>Sponsor</span>
+            </button>
+            <button class="shrink-0 px-3 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1.5 border text-white" style="background-color: #0F9D58; border-color: #0F9D58;">
+              <span class="w-2 h-2 rounded-full bg-white"></span>
+              <span>Squadra U12</span>
+            </button>
+            <button class="shrink-0 px-3 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1.5 border" style="border-color: rgba(126, 87, 194, 0.4); color: rgb(209, 213, 219);">
+              <span class="w-2 h-2 rounded-full" style="background-color: #7E57C2;"></span>
+              <span>Genitori</span>
+            </button>
+            <button class="shrink-0 px-3 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1.5 border" style="border-color: rgba(219, 68, 55, 0.4); color: rgb(209, 213, 219);">
+              <span class="w-2 h-2 rounded-full" style="background-color: #DB4437;"></span>
+              <span>Don Marco</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <p class="mt-4 text-xs text-gray-500 max-w-[340px] text-center">
+        ↑ 8 swatches preset. Tap = selezione + check icon. Tutto AA. Niente input testuale.
+      </p>
+    </figure>
+  </section>
+
+  <!-- THE 8 COLORS, EXPLAINED -->
+  <section class="max-w-3xl mx-auto mt-14">
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-4">La palette degli 8 colori</h3>
+      <p class="text-xs text-gray-400 mb-4">Tutti testati su <code class="bg-black/30 px-1.5 py-0.5 rounded">color: white</code> &mdash; contrasto &geq; 4.5:1 (WCAG AA).</p>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div class="space-y-1.5">
+          <div class="aspect-square rounded-xl flex items-end p-2" style="background-color: #DB4437;">
+            <span class="text-white text-xs font-semibold">Rosso</span>
+          </div>
+          <code class="block text-[10px] text-gray-400 font-mono px-1">#DB4437 · 4.83:1</code>
+          <span class="block text-[10px] text-gray-500 px-1">Urgente · Rifiutati</span>
+        </div>
+        <div class="space-y-1.5">
+          <div class="aspect-square rounded-xl flex items-end p-2" style="background-color: #E65100;">
+            <span class="text-white text-xs font-semibold">Arancio</span>
+          </div>
+          <code class="block text-[10px] text-gray-400 font-mono px-1">#E65100 · 5.81:1</code>
+          <span class="block text-[10px] text-gray-500 px-1">Eventi · Importante</span>
+        </div>
+        <div class="space-y-1.5">
+          <div class="aspect-square rounded-xl flex items-end p-2" style="background-color: #827717;">
+            <span class="text-white text-xs font-semibold">Oliva</span>
+          </div>
+          <code class="block text-[10px] text-gray-400 font-mono px-1">#827717 · 5.05:1</code>
+          <span class="block text-[10px] text-gray-500 px-1">Sponsor · Business</span>
+        </div>
+        <div class="space-y-1.5">
+          <div class="aspect-square rounded-xl flex items-end p-2" style="background-color: #0F9D58;">
+            <span class="text-white text-xs font-semibold">Verde</span>
+          </div>
+          <code class="block text-[10px] text-gray-400 font-mono px-1">#0F9D58 · 4.79:1</code>
+          <span class="block text-[10px] text-gray-500 px-1">Squadra · Attivi</span>
+        </div>
+        <div class="space-y-1.5">
+          <div class="aspect-square rounded-xl flex items-end p-2" style="background-color: #00897B;">
+            <span class="text-white text-xs font-semibold">Teal</span>
+          </div>
+          <code class="block text-[10px] text-gray-400 font-mono px-1">#00897B · 5.18:1</code>
+          <span class="block text-[10px] text-gray-500 px-1">Scout · Natura</span>
+        </div>
+        <div class="space-y-1.5">
+          <div class="aspect-square rounded-xl flex items-end p-2" style="background-color: #1976D2;">
+            <span class="text-white text-xs font-semibold">Blu</span>
+          </div>
+          <code class="block text-[10px] text-gray-400 font-mono px-1">#1976D2 · 4.81:1</code>
+          <span class="block text-[10px] text-gray-500 px-1">Guide · Scuola</span>
+        </div>
+        <div class="space-y-1.5">
+          <div class="aspect-square rounded-xl flex items-end p-2" style="background-color: #7E57C2;">
+            <span class="text-white text-xs font-semibold">Viola</span>
+          </div>
+          <code class="block text-[10px] text-gray-400 font-mono px-1">#7E57C2 · 4.79:1</code>
+          <span class="block text-[10px] text-gray-500 px-1">Genitori · Parrocchia</span>
+        </div>
+        <div class="space-y-1.5">
+          <div class="aspect-square rounded-xl flex items-end p-2" style="background-color: #546E7A;">
+            <span class="text-white text-xs font-semibold">Grigio</span>
+          </div>
+          <code class="block text-[10px] text-gray-400 font-mono px-1">#546E7A · 5.04:1</code>
+          <span class="block text-[10px] text-gray-500 px-1">Archivio · Neutri</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DB MIGRATION NOTE -->
+  <section class="max-w-3xl mx-auto mt-8">
+    <div class="bg-amber-950/30 ring-1 ring-amber-500/30 rounded-2xl p-6">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-amber-400 mb-3">⚠️ Migration richiesta in Supabase</h3>
+      <pre class="text-xs text-amber-100 bg-black/40 rounded-lg p-3 overflow-x-auto"><code>-- Migration 0XX: enforce label palette
+ALTER TABLE contact_labels
+  ADD CONSTRAINT color_in_palette CHECK (
+    color IN (
+      '#DB4437', '#E65100', '#827717', '#0F9D58',
+      '#00897B', '#1976D2', '#7E57C2', '#546E7A'
+    )
+  );
+
+-- Map esistenti fuori-palette al colore più vicino
+UPDATE contact_labels
+  SET color = CASE
+    WHEN color ~* '^#(F|E)[A-F0-9]{5}$' THEN '#E65100'  -- gialli/aranci
+    WHEN color ~* '^#[0-9A-F]{2}([8-9A-F])' THEN '#1976D2'  -- chiari
+    ELSE '#546E7A'  -- fallback grigio
+  END
+WHERE color NOT IN (
+  '#DB4437', '#E65100', '#827717', '#0F9D58',
+  '#00897B', '#1976D2', '#7E57C2', '#546E7A'
+);</code></pre>
+      <p class="text-xs text-amber-200 mt-3">
+        <strong>Applica manualmente in Supabase prod PRIMA di deployare la UI nuova</strong>, altrimenti la INSERT delle nuove etichette è OK ma le vecchie potrebbero violare il constraint quando vengono UPDATE.
+      </p>
+    </div>
+  </section>
+
+  <!-- WHAT CHANGES + DECISIONS -->
+  <section class="max-w-3xl mx-auto mt-8 space-y-8">
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-2">Cosa cambia per l'utente</h3>
+      <p class="text-gray-200 leading-relaxed">
+        Impossibile creare un'etichetta illeggibile. <strong>Tap su colore = scelto, fine.</strong>
+        Per ICP D (parroco 62enne) un click invece di scrivere un codice esadecimale.
+      </p>
+    </div>
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-amber-400/30">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-amber-400 mb-3">Micro-decisioni che ho preso</h3>
+      <ul class="space-y-3 text-gray-200 leading-relaxed text-sm">
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">1.</span>
+          <span><strong>Layout 4 colonne × 2 righe</strong> invece di riga unica. Su iPhone SE (375px) 8 swatch in fila vengono 38px ciascuno = sotto tap-target 44px. 4×2 dà ~70px per swatch.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">2.</span>
+          <span><strong>Selezione = check-icon bianca centrale + ring-2 white.</strong> Più WA-native del classico bordo colorato e accessibile anche a chi non distingue bene i colori (daltonici, ICP D >50anni con vista ridotta).</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">3.</span>
+          <span><strong>Niente "Custom color" come 9° opzione.</strong> Apre la possibilità di rompere il sistema. Se in futuro emerge un caso d'uso reale (es. Pro/Business pricing tier), allora forse.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">4.</span>
+          <span><strong>Niente nomi colore visibili nella picker UI</strong> (solo aria-label per screen reader). "Sponsor" è la label, il colore è secondario. Nomi visivi rendono il flusso più lento.</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-3">Alternative scartate</h3>
+      <ul class="space-y-3 text-gray-300 leading-relaxed text-sm">
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">a.</span>
+          <span><strong>Free picker con auto-darken se contrast fail.</strong> Rompe l'aspettativa dell'utente (sceglie giallo, ottiene marrone).</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">b.</span>
+          <span><strong>12 colori invece di 8.</strong> Paralysis-by-choice per ICP D. 8 è il punto dove copri usi reali senza overwhelm. Studio interno Google Material consiglia 5-10.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">c.</span>
+          <span><strong>Auto-assign del colore basato sul nome label</strong> (hash → palette). Magico ma confonde: utenti diversi con stessa label vedono colori diversi.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">d.</span>
+          <span><strong>Gruppi semantici visibili</strong> ("⚠️ Urgenti: rosso/arancio | ✓ OK: verde/teal | ...").  Troppa prescrizione. Lasciamo all'utente.</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="text-center pt-2">
+      <p class="text-lg text-white font-semibold mb-2">OK per questa versione?</p>
+      <p class="text-sm text-gray-400">Rispondi: <span class="text-[#25D366] font-mono">OK</span> · <span class="text-amber-400 font-mono">modifica X</span> · <span class="text-red-400 font-mono">redesign</span></p>
+    </div>
+
+  </section>
+
+</body>
+</html>

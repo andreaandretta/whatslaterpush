@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cluster B — Templates de-Beta · Before / After</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .anim-fade-in {
+    animation: fadeIn 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  .scroll-x::-webkit-scrollbar { display: none; }
+</style>
+</head>
+<body class="bg-[#0a0e12] text-white min-h-screen px-4 sm:px-8 py-10">
+
+  <!-- INTRO -->
+  <header class="max-w-3xl mx-auto mb-10 text-center">
+    <div class="inline-flex items-center gap-2 bg-[#25D366]/15 text-[#25D366] text-xs font-bold uppercase tracking-widest px-3 py-1.5 rounded-full mb-3">
+      Cluster B · Templates de-Beta
+    </div>
+    <h1 class="text-2xl sm:text-3xl font-bold tracking-tight mb-2">Rimuovere lo stigma "Beta" dai template</h1>
+    <p class="text-gray-400 text-sm leading-relaxed max-w-xl mx-auto">
+      I template Beta + banner ambra creano <strong>3 segnali di rischio sovrapposti</strong> su quella che dovrebbe essere la feature di valore più alta.
+      L'allenatore U12 li salta perché "sperimentali = rischioso". Risultato: feature più potente, conversion più bassa.
+    </p>
+  </header>
+
+  <!-- COMPARISON GRID -->
+  <section class="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-5xl mx-auto">
+
+    <!-- ============ BEFORE ============ -->
+    <figure class="flex flex-col items-center">
+      <figcaption class="mb-3 inline-flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-red-400"></span>
+        <span class="text-xs font-bold uppercase tracking-widest text-gray-400">Adesso</span>
+        <span class="text-xs text-gray-500">— TemplateBottomSheet.tsx@HEAD</span>
+      </figcaption>
+
+      <div class="w-full max-w-[375px] bg-[#0b141a] rounded-[28px] overflow-hidden shadow-2xl ring-1 ring-white/5">
+        <!-- Status bar -->
+        <div class="h-9 px-5 flex items-center justify-between text-[11px] font-semibold text-white/80">
+          <span>9:41</span>
+          <span><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a10 10 0 0 0-7.07 17.07 1 1 0 0 0 1.42-1.42A8 8 0 1 1 12 20a1 1 0 0 0 0 2 10 10 0 0 0 0-20z"/></svg></span>
+        </div>
+
+        <div class="px-4 pt-3 pb-2 opacity-40">
+          <div class="text-xs text-gray-400">Scrivi messaggio</div>
+          <div class="mt-1 text-xs text-gray-500">Tocca template per partire veloce</div>
+        </div>
+        <div class="h-3 bg-black/40"></div>
+
+        <!-- BOTTOM SHEET — current -->
+        <div class="bg-[#1F2C33] rounded-t-3xl pt-3 pb-4 max-h-[560px] flex flex-col">
+          <div class="w-12 h-1 bg-gray-600 rounded-full mx-auto mb-3"></div>
+
+          <!-- TAB PILL — current -->
+          <div class="px-3">
+            <div class="flex gap-2 bg-[#0B141A] rounded-xl p-1">
+              <button class="flex-1 py-2 px-3 rounded-lg text-sm font-medium text-gray-300">
+                ⭐ I miei (3)
+              </button>
+              <button class="flex-1 py-2 px-3 rounded-lg text-sm font-medium bg-[#25D366] text-white">
+                🧪 Suggeriti Beta
+              </button>
+            </div>
+          </div>
+
+          <!-- AMBER BANNER — current pain point -->
+          <div class="mx-5 mt-3 text-xs text-amber-400 bg-amber-950/30 rounded-lg px-3 py-2 ring-1 ring-amber-500/20">
+            🧪 Beta — aiutaci a migliorarli editando il testo prima di inviare
+          </div>
+
+          <!-- Category chips -->
+          <div class="flex gap-2 overflow-x-auto scroll-x px-3 py-2 mt-1">
+            <button class="shrink-0 px-3 py-1 rounded-full text-sm border bg-[#25D366] border-[#25D366] text-white">Tutti</button>
+            <button class="shrink-0 px-3 py-1 rounded-full text-sm border border-gray-600 text-gray-300">Allenatore</button>
+            <button class="shrink-0 px-3 py-1 rounded-full text-sm border border-gray-600 text-gray-300">Parroco</button>
+            <button class="shrink-0 px-3 py-1 rounded-full text-sm border border-gray-600 text-gray-300">Scout</button>
+          </div>
+
+          <!-- Template list -->
+          <div class="px-2 mt-1 space-y-1 overflow-y-auto">
+            <button class="w-full text-left px-4 py-3 rounded-xl">
+              <div class="flex items-center gap-2">
+                <span class="text-base">🏃</span>
+                <span class="text-white text-base font-medium flex-1 truncate">Allenamento giovedì 18:00</span>
+                <span class="text-xs text-gray-500 shrink-0">Allenatore</span>
+              </div>
+              <div class="text-gray-400 text-sm mt-1 line-clamp-2">Ciao {nome}, ti aspetto giovedì alle 18:00 al campo. Porta…</div>
+            </button>
+            <button class="w-full text-left px-4 py-3 rounded-xl">
+              <div class="flex items-center gap-2">
+                <span class="text-base">⚽</span>
+                <span class="text-white text-base font-medium flex-1 truncate">Convocazione partita</span>
+                <span class="text-xs text-gray-500 shrink-0">Allenatore</span>
+              </div>
+              <div class="text-gray-400 text-sm mt-1 line-clamp-2">Ritrovo {giorno} alle {ora} a {luogo}. Maglia ufficiale.</div>
+            </button>
+            <button class="w-full text-left px-4 py-3 rounded-xl">
+              <div class="flex items-center gap-2">
+                <span class="text-base">📣</span>
+                <span class="text-white text-base font-medium flex-1 truncate">Promemoria preghiera serale</span>
+                <span class="text-xs text-gray-500 shrink-0">Parroco</span>
+              </div>
+              <div class="text-gray-400 text-sm mt-1 line-clamp-2">Buonasera, vi ricordo la preghiera in chiesa alle 21…</div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <p class="mt-4 text-xs text-gray-500 max-w-[340px] text-center">
+        ↑ "🧪 Beta" + banner ambra + tab "Suggeriti" → 3 segnali "rischio" sullo stesso elemento.
+      </p>
+    </figure>
+
+    <!-- ============ AFTER ============ -->
+    <figure class="flex flex-col items-center">
+      <figcaption class="mb-3 inline-flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-[#25D366]"></span>
+        <span class="text-xs font-bold uppercase tracking-widest text-[#25D366]">Proposta</span>
+        <span class="text-xs text-gray-500">— de-Beta · tab "Pronti per te"</span>
+      </figcaption>
+
+      <div class="w-full max-w-[375px] bg-[#0b141a] rounded-[28px] overflow-hidden shadow-2xl ring-1 ring-[#25D366]/20">
+        <div class="h-9 px-5 flex items-center justify-between text-[11px] font-semibold text-white/80">
+          <span>9:41</span>
+          <span><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a10 10 0 0 0-7.07 17.07 1 1 0 0 0 1.42-1.42A8 8 0 1 1 12 20a1 1 0 0 0 0 2 10 10 0 0 0 0-20z"/></svg></span>
+        </div>
+
+        <div class="px-4 pt-3 pb-2 opacity-40">
+          <div class="text-xs text-gray-400">Scrivi messaggio</div>
+          <div class="mt-1 text-xs text-gray-500">Tocca template per partire veloce</div>
+        </div>
+        <div class="h-3 bg-black/40"></div>
+
+        <div class="bg-[#1F2C33] rounded-t-3xl pt-3 pb-4 max-h-[560px] flex flex-col">
+          <div class="w-12 h-1 bg-gray-600 rounded-full mx-auto mb-3"></div>
+
+          <!-- TAB PILL — renamed, no Beta -->
+          <div class="px-3">
+            <div class="flex gap-2 bg-[#0B141A] rounded-xl p-1">
+              <button class="flex-1 py-2 px-3 rounded-lg text-sm font-medium text-gray-300">
+                ⭐ I miei <span class="text-gray-500">(3)</span>
+              </button>
+              <button class="flex-1 py-2 px-3 rounded-lg text-sm font-semibold bg-[#25D366] text-white">
+                ✨ Pronti per te
+              </button>
+            </div>
+          </div>
+
+          <!-- NO amber banner -->
+          <!-- Inline subtle hint instead -->
+          <div class="px-5 pt-3 pb-1 text-[11px] text-gray-500 italic">
+            Editali liberamente prima di mandarli.
+          </div>
+
+          <!-- Category chips -->
+          <div class="flex gap-2 overflow-x-auto scroll-x px-3 py-2 mt-1">
+            <button class="shrink-0 px-3 py-1 rounded-full text-sm border bg-[#25D366] border-[#25D366] text-white">Tutti</button>
+            <button class="shrink-0 px-3 py-1 rounded-full text-sm border border-gray-600 text-gray-300">Allenatore</button>
+            <button class="shrink-0 px-3 py-1 rounded-full text-sm border border-gray-600 text-gray-300">Parroco</button>
+            <button class="shrink-0 px-3 py-1 rounded-full text-sm border border-gray-600 text-gray-300">Scout</button>
+          </div>
+
+          <!-- Template list — identico ma niente stigma -->
+          <div class="px-2 mt-1 space-y-1 overflow-y-auto">
+            <button class="w-full text-left px-4 py-3 rounded-xl">
+              <div class="flex items-center gap-2">
+                <span class="text-base">🏃</span>
+                <span class="text-white text-base font-medium flex-1 truncate">Allenamento giovedì 18:00</span>
+                <span class="text-xs text-gray-500 shrink-0">Allenatore</span>
+              </div>
+              <div class="text-gray-400 text-sm mt-1 line-clamp-2">Ciao {nome}, ti aspetto giovedì alle 18:00 al campo. Porta…</div>
+            </button>
+            <button class="w-full text-left px-4 py-3 rounded-xl">
+              <div class="flex items-center gap-2">
+                <span class="text-base">⚽</span>
+                <span class="text-white text-base font-medium flex-1 truncate">Convocazione partita</span>
+                <span class="text-xs text-gray-500 shrink-0">Allenatore</span>
+              </div>
+              <div class="text-gray-400 text-sm mt-1 line-clamp-2">Ritrovo {giorno} alle {ora} a {luogo}. Maglia ufficiale.</div>
+            </button>
+            <button class="w-full text-left px-4 py-3 rounded-xl">
+              <div class="flex items-center gap-2">
+                <span class="text-base">📣</span>
+                <span class="text-white text-base font-medium flex-1 truncate">Promemoria preghiera serale</span>
+                <span class="text-xs text-gray-500 shrink-0">Parroco</span>
+              </div>
+              <div class="text-gray-400 text-sm mt-1 line-clamp-2">Buonasera, vi ricordo la preghiera in chiesa alle 21…</div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <p class="mt-4 text-xs text-gray-500 max-w-[340px] text-center">
+        ↑ Nome warm "Pronti per te", hint discreto italics, nessun banner. Stesso codice, percezione opposta.
+      </p>
+    </figure>
+  </section>
+
+  <!-- WHAT CHANGES + DECISIONS -->
+  <section class="max-w-3xl mx-auto mt-14 space-y-8">
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-2">Cosa cambia per l'utente</h3>
+      <p class="text-gray-200 leading-relaxed">
+        I template pre-costruiti smettono di sembrare "sperimentali e rischiosi" e diventano <strong>regali pronti</strong>.
+        L'allenatore U12 non passa più 4 secondi a chiedersi "Beta? meglio scriverlo io" — apre, sceglie, parte.
+        <span class="text-gray-400">Stessa identica feature, +stimati 2-3× tap-through rate dalla tab seed.</span>
+      </p>
+    </div>
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-amber-400/30">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-amber-400 mb-3">Micro-decisioni che ho preso</h3>
+      <ul class="space-y-3 text-gray-200 leading-relaxed text-sm">
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">1.</span>
+          <span>
+            <strong>Naming: "✨ Pronti per te"</strong> (warm, possessivo, conversazionale per ICP D).
+            <em class="text-gray-400">Alternative: "Suggeriti" (asettico), "Veloci" (focus su tempo, meno warm), "Per il tuo ruolo" (lungo). Se preferisci dimmi.</em>
+          </span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">2.</span>
+          <span>
+            <strong>Hint inline:</strong> "Editali liberamente prima di mandarli." in <code class="text-xs bg-black/30 px-1 rounded">text-[11px] italic text-gray-500</code> sotto la tab attiva. Una riga, niente icona, niente banner. Visibile ma non urlante.
+          </span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">3.</span>
+          <span>
+            <strong>Emoji "I miei" cambia ⭐ → ⭐</strong> mantenuta (familiare). Per "Pronti per te" cambia 🧪→ <strong>✨</strong>: la provetta evoca "esperimento", lo sparkle evoca "regalo curato". Stesso peso visivo, opposta connotazione semantica.
+          </span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">4.</span>
+          <span>
+            <strong>Conteggio "(3)" sui "I miei"</strong> è ora gray-500 invece che ereditato. Più discreto: il dato c'è, non distrae.
+          </span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-3">Alternative scartate</h3>
+      <ul class="space-y-3 text-gray-300 leading-relaxed text-sm">
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">a.</span>
+          <span><strong>Eliminare i tab, lista unica con "I tuoi" pinnati in cima.</strong> Più WA-native ma perde il filtro categoria che è di valore. Andrebbe ripensato il filtro.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">b.</span>
+          <span><strong>Banner verde invece di ambra</strong> ("Pronti per partire — modifica e invia"). Meno stigma ma sempre un banner. Una riga italics è più WA-native.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">c.</span>
+          <span><strong>Spostare hint nel dettaglio del singolo template</strong> ("Quando lo apri: 'Personalizza prima di mandare'"). Più contestuale ma l'utente decide se aprirlo PRIMA di vederlo, quindi inutile. La hint deve stare nella lista.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">d.</span>
+          <span><strong>Tooltip / popover su "Pronti per te"</strong> con info al primo tap. Pattern ricorrente sui flussi Google ma su mobile WA si chiama "interruzione". Saltato.</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="text-center pt-2">
+      <p class="text-lg text-white font-semibold mb-2">OK per questa versione?</p>
+      <p class="text-sm text-gray-400">Rispondi: <span class="text-[#25D366] font-mono">OK</span> · <span class="text-amber-400 font-mono">modifica X</span> · <span class="text-red-400 font-mono">redesign</span></p>
+    </div>
+
+  </section>
+
+</body>
+</html>
