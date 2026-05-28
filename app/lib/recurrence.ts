@@ -96,3 +96,18 @@ export function nextOccurrence(rule: string, from: Date): Date | null {
 
   return null;
 }
+
+// Returns the next `count` occurrences strictly after `from`, time-of-day
+// preserved. Stops early (shorter array) if the rule runs out within the
+// horizon used by `nextOccurrence`.
+export function nextOccurrences(rule: string, from: Date, count: number): Date[] {
+  const out: Date[] = [];
+  let cursor = from;
+  for (let i = 0; i < count; i++) {
+    const next = nextOccurrence(rule, cursor);
+    if (!next) break;
+    out.push(next);
+    cursor = next;
+  }
+  return out;
+}

@@ -1,6 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { Clock } from 'lucide-react';
+import { nextOccurrences } from '../../app/lib/recurrence';
 
 export type RecurrenceValue = 'none' | 'daily' | 'weekly' | 'monthly';
 
@@ -15,7 +17,17 @@ interface RecurrenceBottomSheetProps {
 
 const WEEKDAY_NAMES = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
 
+const DATE_FMT = new Intl.DateTimeFormat('it-IT', { weekday: 'short', day: 'numeric', month: 'long' });
+const TIME_FMT = new Intl.DateTimeFormat('it-IT', { hour: '2-digit', minute: '2-digit' });
+
 export function RecurrenceBottomSheet({ open, onClose, value, onChange, referenceDate }: RecurrenceBottomSheetProps) {
+  // Stage the user's pick locally so they can change their mind before the
+  // explicit Confirm tap. Resync from the parent each time the sheet opens.
+  const [localValue, setLocalValue] = useState<RecurrenceValue>(value);
+  useEffect(() => {
+    if (open) setLocalValue(value);
+  }, [open, value]);
+
   if (!open) return null;
 
   const dow = WEEKDAY_NAMES[referenceDate.getDay()];
@@ -28,10 +40,18 @@ export function RecurrenceBottomSheet({ open, onClose, value, onChange, referenc
     { value: 'monthly', label: `Il ${dom} di ogni mese` },
   ];
 
-  function pick(v: RecurrenceValue) {
-    onChange(v);
+  const previewRule = buildRRule(localValue, referenceDate);
+  const preview = previewRule ? nextOccurrences(previewRule, referenceDate, 3) : [];
+
+  function confirm() {
+    onChange(localValue);
     onClose();
   }
+
+  const ctaLabel =
+    localValue === 'none'
+      ? 'Schedula una volta'
+      : `Conferma ${recurrenceLabel(localValue, referenceDate).toLowerCase()}`;
 
   return (
     <div
@@ -52,14 +72,14 @@ export function RecurrenceBottomSheet({ open, onClose, value, onChange, referenc
         <div aria-hidden="true" className="w-12 h-1 bg-gray-600 rounded-full mx-auto mb-4" />
         <div role="radiogroup" aria-label="Ripetizione">
           {options.map((opt) => {
-            const selected = value === opt.value;
+            const selected = localValue === opt.value;
             return (
               <button
                 key={opt.value}
                 type="button"
                 role="radio"
                 aria-checked={selected}
-                onClick={() => pick(opt.value)}
+                onClick={() => setLocalValue(opt.value)}
                 className="w-full flex items-center gap-4 px-4 py-3 hover:bg-white/5 rounded-xl text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
               >
                 <span
@@ -74,6 +94,40 @@ export function RecurrenceBottomSheet({ open, onClose, value, onChange, referenc
             );
           })}
         </div>
+
+        {preview.length > 0 && (
+          <div className="mx-2 mt-4 p-3 rounded-xl bg-[#0B141A] ring-1 ring-[#2A3942]">
+            <div className="flex items-center gap-2 mb-2">
+              <Clock className="w-3.5 h-3.5" style={{ color: '#8696A0' }} aria-hidden="true" />
+              <span className="text-xs uppercase tracking-wide" style={{ color: '#8696A0' }}>
+                Prossimi invii
+              </span>
+            </div>
+            <ul>
+              {preview.map((d, i) => (
+                <li
+                  key={i}
+                  className={`flex items-baseline justify-between py-2 ${
+                    i < preview.length - 1 ? 'border-b border-[#2A3942]' : ''
+                  }`}
+                >
+                  <span className="text-sm text-white">{DATE_FMT.format(d)}</span>
+                  <span className="text-sm tabular-nums" style={{ color: '#8696A0' }}>
+                    {TIME_FMT.format(d)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={confirm}
+          className="w-full mt-4 py-3 rounded-xl bg-primary text-white font-semibold hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-primary/30"
+        >
+          {ctaLabel}
+        </button>
       </div>
     </div>
   );
