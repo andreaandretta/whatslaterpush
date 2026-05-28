@@ -374,7 +374,7 @@ export default function DashboardPage() {
 
       {/* FAB — mobile round, desktop pill. Pulse ring is only present during
           onboarding hints and disappears on first tap. */}
-      <div className="sm:hidden fixed bottom-6 right-6 z-30">
+      <div className="sm:hidden fixed bottom-6 right-6 z-fab">
         {showOnboardingHints && !fabTapped && (
           <span
             aria-hidden
@@ -390,7 +390,7 @@ export default function DashboardPage() {
         </button>
       </div>
 
-      <div className="hidden sm:block fixed bottom-6 right-6 z-30">
+      <div className="hidden sm:block fixed bottom-6 right-6 z-fab">
         {showOnboardingHints && !fabTapped && (
           <span
             aria-hidden
@@ -411,7 +411,7 @@ export default function DashboardPage() {
 
       {/* Action toast — surfaces feedback from MessagesSection (duplicate/pause/delete). */}
       {toast && (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] sm:w-auto sm:max-w-md">
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-toast w-[calc(100%-2rem)] sm:w-auto sm:max-w-md">
           <div className="bg-[#2A3942] border border-[#3B4A54] rounded-xl px-4 py-3 flex items-center gap-3 shadow-2xl">
             <span className="flex-1 text-sm text-white">{toast.text}</span>
             {toast.undo && (

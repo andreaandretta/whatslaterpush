@@ -37,6 +37,14 @@ const config: Config = {
         '3xl': '1.5rem',
         '4xl': '2rem',
       },
+      zIndex: {
+        fab: '40',
+        modal: '50',
+        sheet: '60',
+        dialog: '70',
+        onboarding: '80',
+        toast: '90',
+      },
       animation: {
         'fade-in': 'fadeIn 0.3s ease-out',
         'slide-up': 'slideUp 0.4s ease-out',
