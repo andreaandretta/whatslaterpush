@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hero v4 — final</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .wa-classic {
+    background-color: #ECE5DD;
+    background-image:
+      radial-gradient(circle at 12% 18%, rgba(7,94,84,0.05) 1.5px, transparent 2.5px),
+      radial-gradient(circle at 78% 32%, rgba(7,94,84,0.05) 1.5px, transparent 2.5px),
+      radial-gradient(circle at 42% 62%, rgba(7,94,84,0.05) 1.5px, transparent 2.5px),
+      radial-gradient(circle at 88% 78%, rgba(7,94,84,0.05) 1.5px, transparent 2.5px);
+    background-size: 90px 90px;
+  }
+  @keyframes float { 0%,100% { transform: translateY(0);} 50% { transform: translateY(-5px);} }
+  .float { animation: float 3.5s ease-in-out infinite; }
+  @keyframes pop { 0% { transform: scale(0.85); opacity: 0;} 60% { transform: scale(1.05);} 100% { transform: scale(1); opacity: 1;} }
+  .pop { animation: pop 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s both; }
+</style>
+</head>
+<body class="bg-[#0a0e12] text-white min-h-screen px-4 sm:px-8 py-10">
+
+  <header class="max-w-3xl mx-auto mb-10 text-center">
+    <div class="inline-flex items-center gap-2 bg-[#25D366]/15 text-[#25D366] text-xs font-bold uppercase tracking-widest px-3 py-1.5 rounded-full mb-3">
+      Hero v4 · le 3 correzioni
+    </div>
+    <h1 class="text-2xl sm:text-3xl font-bold tracking-tight mb-2">L'ultimo 20%</h1>
+    <p class="text-gray-400 text-sm leading-relaxed max-w-xl mx-auto">
+      Badge non ridondante · chip "programmato" reso eroe · verde smorzato ovunque tranne il bottone.
+    </p>
+  </header>
+
+  <section class="max-w-[375px] mx-auto">
+    <div class="bg-white rounded-[28px] overflow-hidden shadow-2xl ring-1 ring-black/5">
+      <div class="h-9 px-5 flex items-center justify-between text-[11px] font-semibold text-gray-700">
+        <span>9:41</span>
+        <span class="flex items-center gap-1"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M2 17h20v2H2zm1.15-4.05L4 11l.85 1.95L7 13.5l-2.15.55L4 16l-.85-2.45L1 13.5z"/></svg></span>
+      </div>
+
+      <div class="px-5 pt-4 text-[#1A1F2C]">
+        <!-- FIX 1: badge qualifies audience, no "dimentichi" repeat. Neutral, not green. -->
+        <span class="inline-flex items-center gap-1.5 bg-[#F0F2F5] text-[#54656F] px-2.5 py-1 rounded-full text-[11px] font-semibold mb-4">
+          <span class="w-1.5 h-1.5 rounded-full bg-[#25D366]"></span>
+          Per chi gestisce un gruppo WhatsApp
+        </span>
+        <h2 class="text-[28px] font-black leading-[1.06] tracking-tight">
+          I messaggi che <span class="text-[#4FBE7C]">dimentichi</span> di mandare, partono da soli.
+        </h2>
+        <!-- FIX 4: tighter subtitle -->
+        <p class="mt-3 text-[15px] text-[#5A6573] leading-relaxed">
+          Partono <strong class="text-[#1A1F2C]">dal tuo numero</strong>, all'ora che scegli tu.
+        </p>
+
+        <!-- FIX 3: neutral check circles, not green-on-green -->
+        <ul class="mt-4 space-y-2 text-sm font-medium">
+          <li class="flex items-center gap-2.5"><span class="w-5 h-5 rounded-full bg-[#EAECEF] text-[#54656F] flex items-center justify-center text-xs font-black shrink-0">✓</span> Scrivi oggi, parte quando vuoi tu</li>
+          <li class="flex items-center gap-2.5"><span class="w-5 h-5 rounded-full bg-[#EAECEF] text-[#54656F] flex items-center justify-center text-xs font-black shrink-0">✓</span> Dal tuo numero, non da un mittente strano</li>
+          <li class="flex items-center gap-2.5"><span class="w-5 h-5 rounded-full bg-[#EAECEF] text-[#54656F] flex items-center justify-center text-xs font-black shrink-0">✓</span> Pronto in 2 minuti, senza installare niente</li>
+        </ul>
+      </div>
+
+      <!-- CHAT -->
+      <div class="mt-5">
+        <div class="bg-[#075E54] px-4 py-2.5 flex items-center gap-2.5">
+          <svg class="w-5 h-5 text-white/90 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+          <div class="w-8 h-8 rounded-full bg-white/20 text-white flex items-center justify-center shrink-0">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-white text-sm font-semibold leading-tight">Gruppo Allenamento</div>
+            <div class="text-white/70 text-[11px]">18 partecipanti</div>
+          </div>
+          <svg class="w-4 h-4 text-white/80" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+        </div>
+
+        <div class="wa-classic px-4 pt-4 pb-5">
+          <!-- FIX 2: the scheduled chip is now the HERO — big, on top, with timeline -->
+          <div class="pop flex justify-center mb-4">
+            <div class="inline-flex items-center gap-2 bg-white text-[#075E54] text-[12px] font-bold px-3.5 py-2 rounded-2xl shadow-lg ring-1 ring-[#075E54]/10">
+              <span class="flex items-center gap-1.5">
+                <svg class="w-4 h-4 text-[#8696A0]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                Programmato
+              </span>
+              <svg class="w-3.5 h-3.5 text-[#4FBE7C]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+              <span class="text-[#4FBE7C]">Inviato 09:00</span>
+            </div>
+          </div>
+
+          <div class="flex justify-end float">
+            <div class="max-w-[80%] bg-[#DCF8C6] text-[#111B21] rounded-2xl rounded-tr-sm px-3 py-2 shadow-sm">
+              <p class="text-[13px] leading-snug">Ci vediamo domani alle <strong>18:00</strong> al campo per l'allenamento. Ricordatevi la borraccia! 💪</p>
+              <div class="flex items-center justify-end gap-1 mt-1">
+                <span class="text-[10px] text-[#667781]">09:00</span>
+                <svg class="w-4 h-4" viewBox="0 0 18 18" fill="none">
+                  <path d="M2 9.5l3 3 6-7" stroke="#53BDEB" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M6.5 9.5l3 3 6-7" stroke="#53BDEB" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <p class="text-center text-[11px] text-[#667781] mt-3 font-medium">L'hai scritto <strong>ieri sera</strong>. È partito da solo stamattina.</p>
+        </div>
+      </div>
+
+      <!-- FIX 3: the ONLY saturated green = the action -->
+      <div class="px-5 py-5 bg-white">
+        <button class="w-full inline-flex items-center justify-center gap-2 bg-[#25D366] text-white px-5 h-12 rounded-full text-base font-bold shadow-lg shadow-[#25D366]/30">
+          Inizia gratis
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </button>
+        <p class="text-center text-[11px] text-[#5A6573] mt-2">In 2 minuti · Niente carta</p>
+        <!-- secondary CTA for the not-yet-convinced -->
+        <a href="#come-funziona" class="mt-3 w-full inline-flex items-center justify-center gap-1.5 text-[#075E54] text-sm font-semibold py-2">
+          Come funziona
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- FIXES -->
+  <section class="max-w-3xl mx-auto mt-14 space-y-6">
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-[#25D366]/30">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-3">Le 3 correzioni</h3>
+      <ul class="space-y-3 text-gray-200 leading-relaxed text-sm">
+        <li class="flex gap-3"><span class="text-[#25D366] font-mono shrink-0">1.</span><span><strong>Ridondanza tolta.</strong> Badge ora qualifica il pubblico ("Per chi gestisce un gruppo WhatsApp") invece di ripetere "dimentichi". Reso anche neutro grigio con dot verde — non compete più.</span></li>
+        <li class="flex gap-3"><span class="text-[#25D366] font-mono shrink-0">2.</span><span><strong>Chip "Programmato" è l'eroe.</strong> Spostato in cima alla chat, più grande, con timeline <em>orologio → spunta verde "Inviato 09:00"</em> + animazione pop. Ora si capisce a colpo d'occhio che è IL prodotto, non uno screenshot WhatsApp qualsiasi.</span></li>
+        <li class="flex gap-3"><span class="text-[#25D366] font-mono shrink-0">3.</span><span><strong>Verde smorzato.</strong> Spunte ora in cerchietto grigio neutro, badge grigio. L'unico verde pieno saturo è <strong>il bottone "Inizia gratis"</strong> — l'azione che conta. La bolla/header restano verde perché È WhatsApp, ma niente più "muro di verde" sui contenuti.</span></li>
+      </ul>
+    </div>
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">+ bonus</h3>
+      <p class="text-gray-300 leading-relaxed text-sm">Sottotitolo accorciato a <strong class="text-white">"Partono dal tuo numero, all'ora che scegli tu."</strong> — 7 parole invece di 18.</p>
+    </div>
+    <div class="text-center pt-2">
+      <p class="text-lg text-white font-semibold mb-2">Adesso siamo al 100%?</p>
+      <p class="text-sm text-gray-400">Se sì → blocco la spec finale per Bud. Dimmi <span class="text-[#25D366] font-mono">OK</span> o l'ultimo ritocco.</p>
+    </div>
+  </section>
+
+</body>
+</html>

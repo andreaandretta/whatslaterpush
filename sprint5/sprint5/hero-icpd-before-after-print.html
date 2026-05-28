@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hero ICP-D — Before / After</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .wa-doodle {
+    background-color: #111B21;
+    background-image:
+      radial-gradient(circle at 12% 18%, rgba(255,255,255,0.025) 1.5px, transparent 2.5px),
+      radial-gradient(circle at 78% 32%, rgba(255,255,255,0.025) 1.5px, transparent 2.5px),
+      radial-gradient(circle at 42% 62%, rgba(255,255,255,0.025) 1.5px, transparent 2.5px),
+      radial-gradient(circle at 88% 78%, rgba(255,255,255,0.025) 1.5px, transparent 2.5px);
+    background-size: 90px 90px;
+  }
+  @keyframes float {
+    0%,100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+  .float { animation: float 3.5s ease-in-out infinite; }
+</style>
+
+<style>
+  @media print {
+    @page { size: landscape; margin: 0.5cm; }
+    html, body { background: #0a0e12 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    .float { animation: none !important; }
+    section.grid { break-inside: avoid; }
+    figure { break-inside: avoid; }
+    /* keep both columns side by side */
+    .grid.lg\\:grid-cols-2 { grid-template-columns: 1fr 1fr !important; }
+  }
+</style>
+<script>
+  function __autoPrint() {
+    var done = false;
+    function go() { if (done) return; done = true; setTimeout(function(){ window.print(); }, 500); }
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(go);
+      setTimeout(go, 2500); // fallback if fonts hang
+    } else {
+      window.addEventListener('load', go);
+    }
+  }
+  window.addEventListener('load', __autoPrint);
+</script>
+</head>
+<body class="bg-[#0a0e12] text-white min-h-screen px-4 sm:px-8 py-10">
+
+  <header class="max-w-3xl mx-auto mb-10 text-center">
+    <div class="inline-flex items-center gap-2 bg-[#25D366]/15 text-[#25D366] text-xs font-bold uppercase tracking-widest px-3 py-1.5 rounded-full mb-3">
+      Hero · ICP-D friendly
+    </div>
+    <h1 class="text-2xl sm:text-3xl font-bold tracking-tight mb-2">De-gergo + bolla chat WhatsApp</h1>
+    <p class="text-gray-400 text-sm leading-relaxed max-w-xl mx-auto">
+      Via "Twilio / Business API / broker" — l'allenatore non li conosce. Dentro: una bolla chat reale che mostra il prodotto nel linguaggio nativo WhatsApp.
+    </p>
+  </header>
+
+  <section class="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-5xl mx-auto">
+
+    <!-- ============ BEFORE ============ -->
+    <figure class="flex flex-col items-center">
+      <figcaption class="mb-3 inline-flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-red-400"></span>
+        <span class="text-xs font-bold uppercase tracking-widest text-gray-400">Adesso (live)</span>
+      </figcaption>
+
+      <div class="w-full max-w-[375px] bg-white rounded-[28px] overflow-hidden shadow-2xl ring-1 ring-white/10">
+        <div class="h-9 px-5 flex items-center justify-between text-[11px] font-semibold text-gray-700">
+          <span>9:41</span>
+          <span class="flex items-center gap-1"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M2 17h20v2H2zm1.15-4.05L4 11l.85 1.95L7 13.5l-2.15.55L4 16l-.85-2.45L1 13.5z"/></svg></span>
+        </div>
+
+        <div class="px-5 pt-4 pb-8 text-[#1A1F2C]">
+          <span class="inline-flex items-center gap-1.5 bg-[#A8E6CF] text-[#075E54] px-2.5 py-1 rounded-full text-[10px] font-bold mb-4">
+            ⏱ Per chi vive di WhatsApp
+          </span>
+          <h2 class="text-[26px] font-black leading-[1.08] tracking-tight">
+            Programma <span class="text-[#4FBE7C]">WhatsApp</span> dal tuo <span class="text-[#4FBE7C]">numero personale</span>
+            <span class="block mt-2 text-lg text-[#5A6573] font-extrabold">— senza broker, senza app.</span>
+          </h2>
+
+          <ul class="mt-4 space-y-1.5 text-xs">
+            <li class="flex items-start gap-2"><span class="text-[#4FBE7C] font-black">✓</span> Niente WhatsApp Business API</li>
+            <li class="flex items-start gap-2"><span class="text-[#4FBE7C] font-black">✓</span> Niente broker, niente Twilio</li>
+            <li class="flex items-start gap-2"><span class="text-[#4FBE7C] font-black">✓</span> Niente broker che leggono i tuoi messaggi</li>
+          </ul>
+
+          <button class="mt-5 inline-flex items-center gap-2 bg-[#25D366] text-white px-5 h-11 rounded-full text-sm font-bold">
+            Inizia gratis →
+          </button>
+
+          <!-- Phones cluster, tiny -->
+          <div class="relative w-[200px] h-[150px] mx-auto mt-6">
+            <div class="absolute top-0 left-2 w-[78px] h-[140px] bg-[#1a1d1f] rounded-xl p-1 -rotate-[10deg] shadow-xl">
+              <div class="w-full h-full bg-white rounded-lg p-1.5 text-[5px] text-gray-400 leading-tight">
+                <div class="font-bold text-[5px] text-black mb-1">WhatsLater</div>
+                <div>Luca C. · 09:00</div>
+                <div>Squadra · 18:30</div>
+                <div>Marco R. · 07:00</div>
+              </div>
+            </div>
+            <div class="absolute top-3 right-2 w-[78px] h-[140px] bg-[#1a1d1f] rounded-xl p-1 rotate-[8deg] shadow-xl">
+              <div class="w-full h-full bg-[#E8F8F0] rounded-lg p-1.5 text-center">
+                <div class="text-[5px] font-bold">Programma invio</div>
+                <div class="text-lg font-black mt-2">09:00</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p class="mt-4 text-xs text-gray-500 max-w-[340px] text-center">
+        ↑ Gergo "Twilio / Business API / broker" + 2 telefoni a testo 5-7px illeggibili. Sembra una landing per developer.
+      </p>
+    </figure>
+
+    <!-- ============ AFTER ============ -->
+    <figure class="flex flex-col items-center">
+      <figcaption class="mb-3 inline-flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-[#25D366]"></span>
+        <span class="text-xs font-bold uppercase tracking-widest text-[#25D366]">Proposta</span>
+      </figcaption>
+
+      <div class="w-full max-w-[375px] bg-white rounded-[28px] overflow-hidden shadow-2xl ring-1 ring-[#25D366]/20">
+        <div class="h-9 px-5 flex items-center justify-between text-[11px] font-semibold text-gray-700">
+          <span>9:41</span>
+          <span class="flex items-center gap-1"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M2 17h20v2H2zm1.15-4.05L4 11l.85 1.95L7 13.5l-2.15.55L4 16l-.85-2.45L1 13.5z"/></svg></span>
+        </div>
+
+        <div class="px-5 pt-4 text-[#1A1F2C]">
+          <span class="inline-flex items-center gap-1.5 bg-[#A8E6CF] text-[#075E54] px-2.5 py-1 rounded-full text-[10px] font-bold mb-4">
+            ⚽ Per allenatori, catechisti e capi gruppo
+          </span>
+          <h2 class="text-[27px] font-black leading-[1.08] tracking-tight">
+            I messaggi che <span class="text-[#4FBE7C]">dimentichi</span> di mandare, partono da soli.
+          </h2>
+          <p class="mt-3 text-sm text-[#5A6573] leading-relaxed">
+            Scrivi adesso, partono quando vuoi tu — <strong class="text-[#1A1F2C]">dal tuo numero</strong>, come se li scrivessi tu.
+          </p>
+
+          <ul class="mt-4 space-y-2 text-sm font-medium">
+            <li class="flex items-center gap-2.5"><span class="w-5 h-5 rounded-full bg-[#25D366]/15 text-[#25D366] flex items-center justify-center text-xs font-black shrink-0">✓</span> Parte dal tuo numero +39</li>
+            <li class="flex items-center gap-2.5"><span class="w-5 h-5 rounded-full bg-[#25D366]/15 text-[#25D366] flex items-center justify-center text-xs font-black shrink-0">✓</span> Nessuno legge i tuoi messaggi</li>
+            <li class="flex items-center gap-2.5"><span class="w-5 h-5 rounded-full bg-[#25D366]/15 text-[#25D366] flex items-center justify-center text-xs font-black shrink-0">✓</span> Pronto in 2 minuti</li>
+          </ul>
+        </div>
+
+        <!-- WHATSAPP CHAT BUBBLE PREVIEW -->
+        <div class="mt-5 wa-doodle px-4 pt-3 pb-5">
+          <!-- chat header -->
+          <div class="flex items-center gap-2.5 pb-3 border-b border-white/10">
+            <div class="w-8 h-8 rounded-full bg-[#4FBE7C] text-white flex items-center justify-center text-xs font-black shrink-0">U12</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-white text-sm font-semibold leading-tight">Squadra U12</div>
+              <div class="text-[#8696A0] text-[11px]">23 partecipanti</div>
+            </div>
+            <svg class="w-4 h-4 text-[#8696A0]" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+          </div>
+
+          <!-- outbound bubble -->
+          <div class="flex justify-end mt-4 float">
+            <div class="max-w-[78%] bg-[#DCF8C6] text-[#111B21] rounded-2xl rounded-tr-sm px-3 py-2 shadow-md relative">
+              <p class="text-[13px] leading-snug">Convocazione partita <strong>sabato 15:00</strong> — campo Bovisa. Ritrovo 14:30 ⚽</p>
+              <div class="flex items-center justify-end gap-1 mt-1">
+                <span class="text-[10px] text-[#667781]">09:00</span>
+                <!-- double blue check -->
+                <svg class="w-4 h-4" viewBox="0 0 18 18" fill="none">
+                  <path d="M2 9.5l3 3 6-7" stroke="#53BDEB" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M6.5 9.5l3 3 6-7" stroke="#53BDEB" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- scheduled chip -->
+          <div class="flex justify-center mt-4">
+            <div class="inline-flex items-center gap-1.5 bg-[#202C33] text-[#A8E6CF] text-[11px] font-medium px-3 py-1.5 rounded-full ring-1 ring-white/5">
+              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              Programmato per sabato 09:00
+            </div>
+          </div>
+        </div>
+
+        <!-- CTA under -->
+        <div class="px-5 py-5 bg-white">
+          <button class="w-full inline-flex items-center justify-center gap-2 bg-[#25D366] text-white px-5 h-12 rounded-full text-sm font-bold shadow-lg shadow-[#25D366]/30">
+            Inizia gratis
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </button>
+          <p class="text-center text-[11px] text-[#5A6573] mt-2">In 2 minuti · Niente carta</p>
+        </div>
+      </div>
+
+      <p class="mt-4 text-xs text-gray-500 max-w-[340px] text-center">
+        ↑ Linguaggio umano + una bolla chat reale: l'utente vede il prodotto nel suo idioma nativo, ✓✓ blu compreso.
+      </p>
+    </figure>
+  </section>
+
+  <!-- DECISIONS -->
+  <section class="max-w-3xl mx-auto mt-14 space-y-8">
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-2">Cosa cambia per l'utente</h3>
+      <p class="text-gray-200 leading-relaxed">
+        L'allenatore capisce in 2 secondi cosa fa il prodotto: vede la sua convocazione partita già scritta, spunta ✓✓ blu, "programmato per sabato 09:00". Zero gergo. La bolla chat È la demo.
+      </p>
+    </div>
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-amber-400/30">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-amber-400 mb-3">Micro-decisioni che ho preso</h3>
+      <ul class="space-y-3 text-gray-200 leading-relaxed text-sm">
+        <li class="flex gap-3"><span class="text-amber-400 font-mono shrink-0">1.</span>
+          <span><strong>Headline riscritto</strong> da "Programma WhatsApp dal tuo numero — senza broker" a <strong>"I messaggi che dimentichi di mandare, partono da soli."</strong> Il "no broker" è un vantaggio per TE (founder), il "dimentico di mandare" è il dolore di LUI. Il claim "dal tuo numero" resta nel sottotitolo. <em>Se per te il posizionamento "no broker/privacy" è il differenziatore #1 commerciale, possiamo tenerlo come 4° bullet ("✓ Nessun intermediario") invece che nel titolo.</em></span>
+        </li>
+        <li class="flex gap-3"><span class="text-amber-400 font-mono shrink-0">2.</span>
+          <span><strong>Badge "Per allenatori, catechisti e capi gruppo"</strong> invece di "Per chi vive di WhatsApp". Più concreto, l'ICP si auto-riconosce. <em>Se temi di escludere il site-manager (ICP B) torno al generico.</em></span>
+        </li>
+        <li class="flex gap-3"><span class="text-amber-400 font-mono shrink-0">3.</span>
+          <span><strong>✓✓ blu</strong> (read receipt) sulla bolla, non grigio. Implica "il messaggio è arrivato ed è stato letto" — più rassicurante del semplice "inviato". Tecnicamente un messaggio appena programmato non sarebbe ancora letto, ma è un hero promozionale, mostra lo stato di successo.</span>
+        </li>
+        <li class="flex gap-3"><span class="text-amber-400 font-mono shrink-0">4.</span>
+          <span><strong>Bolla con micro-animazione float</strong> (su/giù 3.5s). Attira l'occhio senza essere invadente. Su <code class="bg-black/30 px-1 rounded text-xs">prefers-reduced-motion</code> va disattivata in implementazione.</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-3">Alternative scartate</h3>
+      <ul class="space-y-3 text-gray-300 leading-relaxed text-sm">
+        <li class="flex gap-3"><span class="text-gray-500 font-mono shrink-0">a.</span><span><strong>Tenere i 2 telefoni ma ingrandirli.</strong> Anche a dimensione doppia il testo resta sotto i 10px su 375px. Una bolla sola comunica di più.</span></li>
+        <li class="flex gap-3"><span class="text-gray-500 font-mono shrink-0">b.</span><span><strong>3 bolle in conversazione</strong> (botta-risposta). Più ricco ma allunga l'hero e l'ICP D scrolla via. 1 bolla + chip "programmato" basta.</span></li>
+        <li class="flex gap-3"><span class="text-gray-500 font-mono shrink-0">c.</span><span><strong>Video loop del prodotto.</strong> Più convincente ma pesante su 4G, e l'ICP D spesso ha connessione lenta. Bolla statica è istantanea.</span></li>
+      </ul>
+    </div>
+
+    <div class="text-center pt-2">
+      <p class="text-lg text-white font-semibold mb-2">OK per l'hero?</p>
+      <p class="text-sm text-gray-400">Rispondi: <span class="text-[#25D366] font-mono">OK</span> · <span class="text-amber-400 font-mono">modifica X</span> · <span class="text-red-400 font-mono">redesign</span> — poi ti mostro il fix del codice pairing.</p>
+    </div>
+  </section>
+
+</body>
+</html>

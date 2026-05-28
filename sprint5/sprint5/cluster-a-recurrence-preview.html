@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cluster A — Recurrence preview · Before / After</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .sheet-bg {
+    background-color: rgba(0,0,0,0.5);
+  }
+  .anim-fade-in {
+    animation: fadeIn 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+</style>
+</head>
+<body class="bg-[#0a0e12] text-white min-h-screen px-4 sm:px-8 py-10">
+
+  <!-- INTRO -->
+  <header class="max-w-3xl mx-auto mb-10 text-center">
+    <div class="inline-flex items-center gap-2 bg-[#25D366]/15 text-[#25D366] text-xs font-bold uppercase tracking-widest px-3 py-1.5 rounded-full mb-3">
+      Cluster A · Recurrence preview
+    </div>
+    <h1 class="text-2xl sm:text-3xl font-bold tracking-tight mb-2">"Prossimi 3 invii" sotto il radio-group</h1>
+    <p class="text-gray-400 text-sm leading-relaxed max-w-xl mx-auto">
+      L'utente conferma una ripetizione "Ogni martedì" senza vedere quando partiranno davvero i messaggi.
+      Un mini-blocco con i prossimi 3 invii previsti elimina la classe di errori più costosa nello scheduling ricorrente.
+    </p>
+  </header>
+
+  <!-- COMPARISON GRID -->
+  <section class="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-5xl mx-auto">
+
+    <!-- ============ BEFORE ============ -->
+    <figure class="flex flex-col items-center">
+      <figcaption class="mb-3 inline-flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-red-400"></span>
+        <span class="text-xs font-bold uppercase tracking-widest text-gray-400">Adesso</span>
+        <span class="text-xs text-gray-500">— components/schedule/RecurrenceBottomSheet.tsx@HEAD</span>
+      </figcaption>
+
+      <!-- Phone-ish viewport 375px -->
+      <div class="w-full max-w-[375px] bg-[#0b141a] rounded-[28px] overflow-hidden shadow-2xl ring-1 ring-white/5">
+        <!-- Status bar -->
+        <div class="h-9 px-5 flex items-center justify-between text-[11px] font-semibold text-white/80">
+          <span>9:41</span>
+          <span class="flex items-center gap-1">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a10 10 0 0 0-7.07 17.07 1 1 0 0 0 1.42-1.42A8 8 0 1 1 12 20a1 1 0 0 0 0 2 10 10 0 0 0 0-20z"/></svg>
+          </span>
+        </div>
+
+        <!-- ScheduleModal context preview behind -->
+        <div class="px-4 pt-3 pb-2 opacity-40">
+          <div class="text-xs text-gray-400">Programma messaggio</div>
+          <div class="mt-1 text-sm text-white truncate">"Convocazione partita martedì 18:00 — campo Bovisa"</div>
+          <div class="mt-2 text-xs text-gray-500">A: Squadra U12 (23 contatti)</div>
+        </div>
+        <div class="h-4 sheet-bg"></div>
+
+        <!-- BOTTOM SHEET — current implementation -->
+        <div class="bg-[#1F2C33] rounded-t-3xl pb-6 pt-4 px-2">
+          <div class="w-12 h-1 bg-gray-600 rounded-full mx-auto mb-4"></div>
+
+          <div role="radiogroup">
+            <!-- non -->
+            <button class="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-left">
+              <span class="w-5 h-5 rounded-full border-2 border-gray-500 flex items-center justify-center"></span>
+              <span class="text-white text-base">Non ripetere</span>
+            </button>
+            <!-- daily -->
+            <button class="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-left">
+              <span class="w-5 h-5 rounded-full border-2 border-gray-500 flex items-center justify-center"></span>
+              <span class="text-white text-base">Ogni giorno</span>
+            </button>
+            <!-- weekly selected -->
+            <button class="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-left bg-white/[0.03]">
+              <span class="w-5 h-5 rounded-full border-2 border-[#25D366] bg-[#25D366] flex items-center justify-center">
+                <span class="w-2 h-2 rounded-full bg-white"></span>
+              </span>
+              <span class="text-white text-base">Ogni martedì</span>
+            </button>
+            <!-- monthly -->
+            <button class="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-left">
+              <span class="w-5 h-5 rounded-full border-2 border-gray-500 flex items-center justify-center"></span>
+              <span class="text-white text-base">Il 2 di ogni mese</span>
+            </button>
+          </div>
+          <!-- niente preview, niente conferma -->
+        </div>
+      </div>
+
+      <!-- gap note -->
+      <p class="mt-4 text-xs text-gray-500 max-w-[340px] text-center">
+        ↑ Click "Ogni martedì" chiude il sheet immediatamente. L'utente conferma al buio quando partiranno i messaggi.
+      </p>
+    </figure>
+
+    <!-- ============ AFTER ============ -->
+    <figure class="flex flex-col items-center">
+      <figcaption class="mb-3 inline-flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-[#25D366]"></span>
+        <span class="text-xs font-bold uppercase tracking-widest text-[#25D366]">Proposta</span>
+        <span class="text-xs text-gray-500">— preview block + conferma esplicita</span>
+      </figcaption>
+
+      <div class="w-full max-w-[375px] bg-[#0b141a] rounded-[28px] overflow-hidden shadow-2xl ring-1 ring-[#25D366]/20">
+        <div class="h-9 px-5 flex items-center justify-between text-[11px] font-semibold text-white/80">
+          <span>9:41</span>
+          <span class="flex items-center gap-1">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a10 10 0 0 0-7.07 17.07 1 1 0 0 0 1.42-1.42A8 8 0 1 1 12 20a1 1 0 0 0 0 2 10 10 0 0 0 0-20z"/></svg>
+          </span>
+        </div>
+
+        <div class="px-4 pt-3 pb-2 opacity-40">
+          <div class="text-xs text-gray-400">Programma messaggio</div>
+          <div class="mt-1 text-sm text-white truncate">"Convocazione partita martedì 18:00 — campo Bovisa"</div>
+          <div class="mt-2 text-xs text-gray-500">A: Squadra U12 (23 contatti)</div>
+        </div>
+        <div class="h-4 sheet-bg"></div>
+
+        <div class="bg-[#1F2C33] rounded-t-3xl pb-4 pt-4 px-2">
+          <div class="w-12 h-1 bg-gray-600 rounded-full mx-auto mb-4"></div>
+
+          <div role="radiogroup">
+            <button class="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-left">
+              <span class="w-5 h-5 rounded-full border-2 border-gray-500"></span>
+              <span class="text-white text-base">Non ripetere</span>
+            </button>
+            <button class="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-left">
+              <span class="w-5 h-5 rounded-full border-2 border-gray-500"></span>
+              <span class="text-white text-base">Ogni giorno</span>
+            </button>
+            <button class="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-left bg-white/[0.03]">
+              <span class="w-5 h-5 rounded-full border-2 border-[#25D366] bg-[#25D366] flex items-center justify-center">
+                <span class="w-2 h-2 rounded-full bg-white"></span>
+              </span>
+              <span class="text-white text-base">Ogni martedì</span>
+            </button>
+            <button class="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-left">
+              <span class="w-5 h-5 rounded-full border-2 border-gray-500"></span>
+              <span class="text-white text-base">Il 2 di ogni mese</span>
+            </button>
+          </div>
+
+          <!-- NEW: preview block -->
+          <div class="anim-fade-in mt-2 mx-2 rounded-2xl bg-[#0B141A] ring-1 ring-[#2A3942] overflow-hidden">
+            <div class="px-4 py-2 flex items-center gap-2 border-b border-[#2A3942]">
+              <svg class="w-3.5 h-3.5 text-[#25D366]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              <span class="text-[11px] font-bold uppercase tracking-widest text-gray-400">Prossimi invii</span>
+            </div>
+            <ul class="divide-y divide-[#2A3942]/60">
+              <li class="px-4 py-2.5 flex items-baseline justify-between">
+                <span class="text-white text-sm">Mar 2 giugno</span>
+                <span class="text-gray-400 text-xs tabular-nums">18:00</span>
+              </li>
+              <li class="px-4 py-2.5 flex items-baseline justify-between">
+                <span class="text-white text-sm">Mar 9 giugno</span>
+                <span class="text-gray-400 text-xs tabular-nums">18:00</span>
+              </li>
+              <li class="px-4 py-2.5 flex items-baseline justify-between">
+                <span class="text-white text-sm">Mar 16 giugno</span>
+                <span class="text-gray-400 text-xs tabular-nums">18:00</span>
+              </li>
+            </ul>
+            <div class="px-4 py-2 text-[11px] text-gray-500 border-t border-[#2A3942]/60">
+              Poi continua ogni martedì finché non lo fermi.
+            </div>
+          </div>
+
+          <!-- Confirm button -->
+          <div class="px-2 pt-3">
+            <button class="w-full bg-[#25D366] hover:bg-[#1DA851] text-white font-semibold py-3 rounded-xl">
+              Conferma "Ogni martedì"
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <p class="mt-4 text-xs text-gray-500 max-w-[340px] text-center">
+        ↑ Click su un'opzione mostra i prossimi 3 invii. L'utente conferma con un'azione esplicita dopo aver verificato.
+      </p>
+    </figure>
+  </section>
+
+  <!-- WHAT CHANGES + DECISIONS -->
+  <section class="max-w-3xl mx-auto mt-14 space-y-8">
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-2">Cosa cambia per l'utente</h3>
+      <p class="text-gray-200 leading-relaxed">
+        Prima di confermare una ripetizione, l'allenatore vede esattamente <strong>quando partiranno i prossimi 3 messaggi</strong>.
+        Se ha sbagliato giorno (settimanale "Ogni mercoledì" mentre voleva martedì) lo scopre subito, prima che 47 messaggi sbagliati partano.
+      </p>
+    </div>
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-amber-400/30">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-amber-400 mb-3">Micro-decisione che ho preso</h3>
+      <ul class="space-y-3 text-gray-200 leading-relaxed text-sm">
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">1.</span>
+          <span><strong>Ho aggiunto un bottone "Conferma"</strong> dopo il radio-group, modificando il comportamento attuale ("tap = chiudi sheet"). Senza conferma esplicita, mostrare la preview ma poi auto-chiudere non darebbe tempo all'utente di leggerla. <em>Se preferisci mantenere auto-close, posso mostrare la preview per 1.5s prima di chiudere — ma è meno safe.</em></span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">2.</span>
+          <span><strong>Per "Non ripetere" la preview non compare</strong> (è un one-shot, non ha senso). Il bottone "Conferma" cambia label in "Schedula una volta".</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-amber-400 font-mono shrink-0">3.</span>
+          <span><strong>Footer hint</strong> "Poi continua ogni martedì finché non lo fermi." spiega che la ripetizione è infinita. Per ICP D (parroco) elimina la domanda "ma quando finisce?".</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-3">Alternative scartate</h3>
+      <ul class="space-y-3 text-gray-300 leading-relaxed text-sm">
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">a.</span>
+          <span><strong>Mostrare 5 invii invece di 3:</strong> rischio di scroll dentro il bottom sheet su iPhone SE (375×667). 3 è il numero che entra senza scroll. Se vuoi 5 dimmi, ma servirà mini-scroll.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">b.</span>
+          <span><strong>Calendario inline con date evidenziate:</strong> più visuale ma 2× il codice e fragile su orientamento mobile. Lista verticale è più WA-native.</span>
+        </li>
+        <li class="flex gap-3">
+          <span class="text-gray-500 font-mono shrink-0">c.</span>
+          <span><strong>Preview solo on long-press</strong>: pattern fragile su tablet, ICP D non sa che esiste. Da scartare.</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="text-center pt-2">
+      <p class="text-lg text-white font-semibold mb-2">OK per questa versione?</p>
+      <p class="text-sm text-gray-400">Rispondi: <span class="text-[#25D366] font-mono">OK</span> · <span class="text-amber-400 font-mono">modifica X</span> · <span class="text-red-400 font-mono">redesign</span></p>
+    </div>
+
+  </section>
+
+</body>
+</html>
