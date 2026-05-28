@@ -210,6 +210,29 @@ async function sendReportWhatsApp(text: string): Promise<boolean> {
   }
 }
 
+// Retention for audit_events. 90 days is long enough for incident postmortems
+// + SLA dashboards but short enough that the table stays cheap on Supabase
+// Free tier. Co-located with daily-report so a single cron handles both
+// reporting + housekeeping. Failure here never aborts the report — pruning
+// is best-effort and re-runs tomorrow.
+export const AUDIT_RETENTION_DAYS = 90;
+
+export async function pruneOldAuditEvents(): Promise<number> {
+  const supabase = getSupabase();
+  const cutoff = new Date(Date.now() - AUDIT_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const { count, error } = await supabase
+    .from('audit_events')
+    .delete({ count: 'exact' })
+    .lt('created_at', cutoff);
+  if (error) {
+    console.warn('CRON: audit_events prune failed err=' + error.message);
+    return 0;
+  }
+  const pruned = count ?? 0;
+  console.log('CRON: Pruned ' + pruned + ' audit_events older than ' + AUDIT_RETENTION_DAYS + ' days');
+  return pruned;
+}
+
 export async function GET(req: NextRequest) {
   const secret = new URL(req.url).searchParams.get('secret');
   if (!secret || secret !== process.env.CRON_SECRET) {
@@ -227,7 +250,10 @@ export async function GET(req: NextRequest) {
     const text = formatWhatsAppReport(report);
     await sendReportWhatsApp(text);
 
-    return NextResponse.json({ status: 'ok', report });
+    // Housekeeping: prune audit_events older than retention window.
+    const pruned = await pruneOldAuditEvents();
+
+    return NextResponse.json({ status: 'ok', report, audit_pruned: pruned });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'Report failed' }, { status: 500 });
   }

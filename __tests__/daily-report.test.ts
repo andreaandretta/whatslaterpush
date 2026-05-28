@@ -31,7 +31,7 @@ afterAll(() => {
   process.env = ORIGINAL_ENV;
 });
 
-import { collectDailyReport, formatWhatsAppReport } from '../app/api/cron/daily-report/route';
+import { collectDailyReport, formatWhatsAppReport, pruneOldAuditEvents, AUDIT_RETENTION_DAYS } from '../app/api/cron/daily-report/route';
 
 describe('collectDailyReport', () => {
   test('collects all metrics into a report object', async () => {
@@ -90,5 +90,28 @@ describe('formatWhatsAppReport', () => {
     expect(text).toContain('47');
     expect(text).toContain('14.98');
     expect(text).toContain('89.91');
+  });
+});
+
+describe('pruneOldAuditEvents', () => {
+  test('returns the prune count from Supabase and targets created_at < 90d cutoff', async () => {
+    mockSupa.setResponse('audit_events:delete', null, null, { count: 47 });
+    const pruned = await pruneOldAuditEvents();
+    expect(pruned).toBe(47);
+    expect(AUDIT_RETENTION_DAYS).toBe(90);
+
+    const delCall = mockSupa.calls.find(c => c.table === 'audit_events' && c.operation === 'delete');
+    expect(delCall).toBeDefined();
+    const ltCall = delCall!.chain.find(c => c.method === 'lt' && c.args[0] === 'created_at');
+    expect(ltCall).toBeDefined();
+    const cutoffMs = new Date(ltCall!.args[1] as string).getTime();
+    const expectedMs = Date.now() - 90 * 24 * 60 * 60 * 1000;
+    expect(Math.abs(cutoffMs - expectedMs)).toBeLessThan(5_000);
+  });
+
+  test('returns 0 when nothing matches the cutoff (no rows >90d)', async () => {
+    mockSupa.setResponse('audit_events:delete', null, null, { count: 0 });
+    const pruned = await pruneOldAuditEvents();
+    expect(pruned).toBe(0);
   });
 });
