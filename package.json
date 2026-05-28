@@ -13,6 +13,7 @@
         "db:types": "npx supabase gen types typescript --project-id $SUPABASE_PROJECT_ID --schema public > types/supabase.ts"
     },
     "dependencies": {
+        "@sentry/nextjs": "^10.54.0",
         "@supabase/supabase-js": "^2.45.0",
         "clsx": "^2.1.1",
         "cron-parser": "^4.9.0",

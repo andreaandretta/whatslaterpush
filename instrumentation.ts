@@ -1,6 +1,7 @@
 // instrumentation.ts
-// Self-calling cron runner — fires every 60s on the Node.js server process
-// Next.js 13.4+ automatically executes register() on server startup (not in Edge runtime)
+// Two responsibilities executed by Next.js on server startup:
+//   1. Sentry SDK init (server + edge runtimes)
+//   2. Self-calling cron runner @60s (Node-runtime only)
 //
 // CRON TRIGGER STACK (3 layers, by design — see CLAUDE.md "Monitoring"):
 //   1. cron-job.org pinger @60s  → primary (external, free tier)
@@ -18,9 +19,21 @@
 //   - cron-job.org panel: is the ping still firing?
 //   - Vercel logs: is `[instrumentation]` line present at boot?
 //   - audit_events table: gaps in event_type='message_sent' rows?
+//
+// Sentry note: init is gated by SENTRY_DSN inside the runtime configs, so
+// missing-DSN dev environments just skip silently.
+
+import * as Sentry from '@sentry/nextjs';
 
 export async function register() {
-  if (process.env.NEXT_RUNTIME === 'edge') return; // only run in Node.js runtime
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    await import('./sentry.server.config');
+  } else if (process.env.NEXT_RUNTIME === 'edge') {
+    await import('./sentry.edge.config');
+    return; // edge has no setInterval — self-cron skipped
+  }
+
+  if (process.env.NEXT_RUNTIME !== 'nodejs') return; // only run cron in Node runtime
 
   const CRON_URL = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000') + '/api/cron/send-messages';
   const CRON_SECRET = process.env.CRON_SECRET || '';
@@ -47,3 +60,7 @@ export async function register() {
   runCron();
   setInterval(runCron, INTERVAL_MS);
 }
+
+// Exported per Sentry v10 contract — captures errors thrown in App Router
+// route handlers, Server Components, etc. No-op when SDK isn't initialized.
+export const onRequestError = Sentry.captureRequestError;

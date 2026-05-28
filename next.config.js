@@ -1,3 +1,5 @@
+const { withSentryConfig } = require('@sentry/nextjs');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     output: 'standalone',
@@ -20,4 +22,15 @@ const nextConfig = {
     },
 }
 
-module.exports = nextConfig
+// Sentry build-time wrapper. Source map upload is gated by SENTRY_AUTH_TOKEN
+// — when unset (local dev + first-deploy-before-Andrea-onboards-Sentry),
+// withSentryConfig is a passthrough.
+module.exports = withSentryConfig(nextConfig, {
+    org: process.env.SENTRY_ORG,
+    project: process.env.SENTRY_PROJECT,
+    authToken: process.env.SENTRY_AUTH_TOKEN,
+    silent: !process.env.CI,
+    // Avoid ad-blocker drops by tunneling client SDK ingest through our own
+    // domain. Disable by removing this line if you'd rather hit Sentry direct.
+    tunnelRoute: '/monitoring',
+})
