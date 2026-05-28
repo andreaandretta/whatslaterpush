@@ -13,7 +13,8 @@ import FAQSection from '../components/FAQSection';
 import Footer from '../components/Footer';
 import MessagesSection, { type ScheduledMessage as MessagesSectionMessage } from '../components/MessagesSection';
 import { DeliveryStatusIcon } from '../components/DeliveryStatusIcon';
-import { OnboardingTour } from '../../components/onboarding/OnboardingTour';
+import { MessagesEmptyState } from '../components/MessagesEmptyState';
+import { shouldShowOnboardingHints, markOnboardingDone } from '../../components/onboarding/OnboardingTour';
 import { getPlanLimits, getPlanName } from '../lib/plans';
 
 const supabaseClient = typeof window !== 'undefined' ? createClient(
@@ -60,9 +61,19 @@ export default function DashboardPage() {
   const [toast, setToast] = useState<{ text: string; undo?: () => void; id: number } | null>(null);
   // Carry an initial message text into ScheduleModal when duplicating.
   const [prefillText, setPrefillText] = useState<string>('');
+  // Onboarding hints — gated on localStorage. Resolved post-mount to avoid
+  // SSR hydration mismatch on localStorage access.
+  const [showOnboardingHints, setShowOnboardingHints] = useState(false);
+  // Stops the FAB pulse ring as soon as the user has acknowledged the cue,
+  // even before the first message round-trips through /api/messages.
+  const [fabTapped, setFabTapped] = useState(false);
 
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevLifetimeRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setShowOnboardingHints(shouldShowOnboardingHints());
+  }, []);
 
   // --- Cookie-based auth check on mount ---
   useEffect(() => {
@@ -104,6 +115,11 @@ export default function DashboardPage() {
             const next = d.total_scheduled_lifetime;
             if (prevLifetimeRef.current === 0 && next === 1) {
               setShowShareToast(true);
+              // First successful schedule — graduate onboarding hints.
+              // Not gated on the "Skip" button (which no longer exists);
+              // gated on real product progress.
+              markOnboardingDone();
+              setShowOnboardingHints(false);
             }
             prevLifetimeRef.current = next;
           }
@@ -312,7 +328,7 @@ export default function DashboardPage() {
               <p className="text-gray-500">Caricamento...</p>
             </div>
           ) : messages.length === 0 ? (
-            <EmptyState />
+            showOnboardingHints ? <MessagesEmptyState /> : <EmptyState />
           ) : (
             <MessagesSection
               messages={messages}
@@ -356,15 +372,17 @@ export default function DashboardPage() {
         )}
       </main>
 
-      {/* FAB — mobile round, desktop pill. Wrapped to host the attention ripple. */}
+      {/* FAB — mobile round, desktop pill. Pulse ring is only present during
+          onboarding hints and disappears on first tap. */}
       <div className="sm:hidden fixed bottom-6 right-6 z-30">
-        <span
-          aria-hidden
-          className="absolute inset-0 rounded-full bg-primary wa-ping pointer-events-none"
-        ></span>
+        {showOnboardingHints && !fabTapped && (
+          <span
+            aria-hidden
+            className="absolute inset-0 rounded-full bg-primary onboarding-pulse-ring pointer-events-none"
+          ></span>
+        )}
         <button
-          data-onboarding-target="fab"
-          onClick={() => setContactPickerOpen(true)}
+          onClick={() => { setFabTapped(true); setContactPickerOpen(true); }}
           className="relative w-14 h-14 bg-primary text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
           aria-label="Manda messaggio"
         >
@@ -373,24 +391,20 @@ export default function DashboardPage() {
       </div>
 
       <div className="hidden sm:block fixed bottom-6 right-6 z-30">
-        <span
-          aria-hidden
-          className="absolute inset-0 rounded-full bg-primary wa-ping pointer-events-none"
-        ></span>
+        {showOnboardingHints && !fabTapped && (
+          <span
+            aria-hidden
+            className="absolute inset-0 rounded-full bg-primary onboarding-pulse-ring pointer-events-none"
+          ></span>
+        )}
         <button
-          data-onboarding-target="fab"
-          onClick={() => setContactPickerOpen(true)}
+          onClick={() => { setFabTapped(true); setContactPickerOpen(true); }}
           className="relative bg-primary text-white rounded-full shadow-2xl px-6 py-4 flex items-center gap-2 font-semibold hover:scale-105 active:scale-95 transition-transform"
         >
           <Send className="w-5 h-5 -ml-0.5" fill="currentColor" />
           Manda messaggio
         </button>
       </div>
-
-      <OnboardingTour
-        contactPickerOpen={contactPickerOpen}
-        scheduleModalOpen={scheduleOpen}
-      />
 
       {showFAQ && <FAQSection theme="dark" />}
       <Footer theme="dark" />
