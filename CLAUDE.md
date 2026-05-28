@@ -1,6 +1,6 @@
 # WhatsLater (SchedWhats) — Project Context
 
-## STATO ATTUALE (aggiornato 20 Maggio 2026)
+## STATO ATTUALE (aggiornato 28 Maggio 2026)
 
 ### Prodotto
 - ICP **D primario** (allenatori, parroci, scout, istruttori, scuola guida) + **B secondario** (site manager, facility manager). Segmento A (parrucchieri/dentisti/estetiste) escluso dal lancio, DA-RIVEDERE post 50 utenti reali. Segmento C limitato a pipeline calda (follow-up clienti già in trattativa); cold lead generation esclusa per vincolo WhatsApp.
@@ -10,7 +10,7 @@
 
 ### Stack tecnico
 - **Frontend**: Next.js 14.2.15 (App Router) + React 18.3.1 + TypeScript 5.5 + Tailwind CSS
-- **Backend**: Next.js API routes + cron multilayer. `/api/cron/send-messages` ha 3 trigger (vedi sezione Monitoring sotto). `/api/cron/daily-report` Vercel cron 06:00 UTC.
+- **Backend**: Next.js API routes + cron multilayer. `/api/cron/send-messages` ha 3 trigger (vedi sezione Monitoring sotto). `/api/cron/daily-report` Vercel cron 06:00 UTC (include prune `audit_events` >90gg dallo Sprint 4). `/api/cron/cleanup-media` Vercel cron domenica 03:00 UTC (Sprint 4).
 - **DB**: Supabase (Postgres) — source of truth è `supabase/migrations/`, `schema.sql` è snapshot v7 legacy
 - **WhatsApp**: Evolution API v2 self-hosted su DigitalOcean droplet (Baileys multi-istanza)
 - **LLM**: Groq (Llama) come parser primario nel webhook self-chat; OpenAI come secondario/fallback
@@ -34,6 +34,9 @@
 - ✅ C1 — auth phone-first cookie HMAC (`AUTH_COOKIE_SECRET`), sessione 90gg sliding via `pending_auth_sessions`
 - ✅ Batch UX cleanup pre-lancio 2026-05-19/20: `/signup` e `/tutorial` eliminati, Hero+FAQ+layout metadata ricodificati ICP D+B, scrub self-chat user-facing, hotfix HelpTooltip dashboard, FIX 1 QuickCaptureModal rimosso
 - ✅ Webhook gating self-chat-only, gruppi/broadcast bloccati, atomic lock cron, timeout 8s Evolution, `WEBHOOK_SECRET` obbligatorio
+- ✅ Sprint 4 polish operativo (2026-05-28, 5 commit): media cleanup cron 30gg domenica 03:00 UTC + audit_events 90gg retention via daily-report + `DEPRECATED_DEBUG_TOKEN` rimosso da debug-logs (6gg early vs deadline 2026-06-03, orphan grep clean) + Sentry @sentry/nextjs ^10.54 su 3 runtime con PII scrubber (JID/E.164/email) + hotfix `/api/test/sentry` con captureException esplicito + flush(2000) + diagnostica
+- ⚠️ **Sentry pending DSN onboarding**: codice wired, manca solo `SENTRY_DSN` + `NEXT_PUBLIC_SENTRY_DSN` su Vercel project settings. Verifica con `curl '/api/test/sentry?secret=$CRON_SECRET'` → response include `sentry_initialized`, `event_id`, `flushed`.
+- ⚠️ **Cluster D Make.com SKIP**: dipende da API key system, deferred Sprint 5.
 - ⚠️ **Stripe live mode SCARTATA** (2026-05-17): primi 5 paganti via bonifico/PayPal manuale per evitare blocco KYC. Si riapre dopo 3-5 paganti reali.
 - ⚠️ `MESSAGING_HISTORY_SET` non emesso da Evolution → name rubrica utente non accessibile (DA-RIVEDERE)
 - ⚠️ **Channels/Newsletter NON supportati** (Sprint 3 Cluster D investigation 2026-05-27): Baileys underlying library supporta `@newsletter` JID + sendMessage, ma Evolution API v2 attuale NON wrappa il REST endpoint. Defer in attesa di Evolution v3 o fork Evolution custom. ICP-D workaround: usare gruppi `@g.us` (già supportato). Riferimenti: doc.evolution-api.com/v2 + Baileys issues #549/#628.
@@ -53,8 +56,15 @@ Tre layer concorrenti, atomic lock previene doppio fire sullo stesso messaggio:
 
 L'atomic lock in `app/api/cron/send-messages/route.ts` (status pending → processing → sent con `UPDATE ... WHERE status='pending'`) garantisce che un singolo messaggio venga claimed da un solo trigger anche se i 3 sparano simultaneamente. Verifica salute: gaps in `audit_events` WHERE `event_type='message_sent'` segnalano trigger giù.
 
+### Crons collaterali (Sprint 4)
+- **`/api/cron/cleanup-media`** domenica 03:00 UTC — batch 100 row/run (cap Vercel Hobby 10s), seleziona terminal-state (`sent|cancelled|failed`) con `media_url IS NOT NULL` e `created_at < NOW() - 30d`, rimuove file da Storage bucket `message-media`, poi nullifica colonne `media_*`. Storage error abort-prima-di-UPDATE (retry safe). Audit log `event_type='media_cleanup'`.
+- **`/api/cron/daily-report`** 06:00 UTC — esistente, ora step finale: `pruneOldAuditEvents()` cancella `audit_events` con `created_at < NOW() - 90d`. Best-effort (fallisce silenzioso senza abortire report). Payload risposta include `audit_pruned: N`.
+
+### Error monitoring (Sentry, Sprint 4)
+@sentry/nextjs ^10.54 wired su server + edge + client runtime via `instrumentation.ts` + `instrumentation-client.ts` + `sentry.{server,edge}.config.ts`. Init gated on `SENTRY_DSN` env var → no-op silenzioso quando unset (local dev + pre-onboarding state). PII scrubber in `app/lib/sentry-pii.ts` (regex per WhatsApp JID, E.164 phone, email) applicato a `beforeSend` e `beforeBreadcrumb` su tutti i runtime. `withSentryConfig` in `next.config.js` con `tunnelRoute: '/monitoring'` per evitare ad-blocker. Source map upload opzionale gated on `SENTRY_AUTH_TOKEN`. Test endpoint `/api/test/sentry?secret=$CRON_SECRET` ritorna JSON diagnostico con campi `dsn_set`, `sentry_initialized`, `event_id`, `flushed` (usa `captureException` + `flush(2000)` esplicito perché serverless lambda freeze prima del transport flush con throw non gestito).
+
 ### Test suite
-- 480+ test unit/integration verdi (`npm test`) — baseline post-Sprint 2 (audit + delivery + SLA + labels + CSV + landing copy)
+- 526 test unit/integration verdi (`npm test`) — baseline post-Sprint 4 (cleanup-media + debug-logs-auth + audit retention prune + Sentry PII scrubber). Storico: 480 post-Sprint 2 → 509 post-Sprint 3 → 526 post-Sprint 4.
 - 7 suite e2e Playwright (`__tests__/e2e/*.spec.ts`) — al momento jest le scoopa per errore di config (issue pre-esistente, non bloccante per release)
 
 ### Auth note
