@@ -280,4 +280,70 @@ describe('POST /api/messages', () => {
       expect(body.error).toBe('invalid_recurrence_rule');
     });
   });
+
+  describe('MAX_PENDING quota', () => {
+    // The mock responseMap persists across tests inside the same describe.
+    // Earlier tests populate pending_contacts:select with cap-saturating
+    // rows to exercise the maxContacts branch — those rows would trigger a
+    // 403 before our new MAX_PENDING check ever runs. Force-empty both
+    // here so the only gating signal in this block is the pending count.
+    beforeEach(() => {
+      mockSupa.setResponse('pending_contacts:select', []);
+    });
+
+    test('200 when pending count is below dailyLimit × 7', async () => {
+      mockUserInstance('personal'); // dailyLimit=20 → MAX_PENDING=140
+      mockInsertedRow();
+      mockSupa.setResponse('scheduled_messages:select', [], null, { count: 139 });
+
+      const res = await callPost({
+        recipient_number: '393401234567',
+        recipient_name: 'Marco',
+        message: 'Ciao',
+        scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.status).toBe('pending');
+    });
+
+    test('429 queue_full when pending count equals dailyLimit × 7', async () => {
+      mockUserInstance('free'); // dailyLimit=3 → MAX_PENDING=21
+      mockSupa.setResponse('scheduled_messages:select', [], null, { count: 21 });
+
+      const res = await callPost({
+        recipient_number: '393401234567',
+        recipient_name: 'Marco',
+        message: 'Ciao',
+        scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
+      });
+      expect(res.status).toBe(429);
+      const body = await res.json();
+      expect(body.error).toBe('queue_full');
+      expect(body.pending).toBe(21);
+      expect(body.limit).toBe(21);
+    });
+
+    test('count query filters by status=pending only', async () => {
+      mockUserInstance('personal');
+      mockInsertedRow();
+      mockSupa.setResponse('scheduled_messages:select', [], null, { count: 5 });
+
+      await callPost({
+        recipient_number: '393401234567',
+        recipient_name: 'Marco',
+        message: 'Ciao',
+        scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
+      });
+
+      const selects = mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'select');
+      const pendingHeadSelect = selects.find(c =>
+        c.chain.some(step => step.method === 'eq' && step.args[0] === 'status' && step.args[1] === 'pending')
+      );
+      expect(pendingHeadSelect).toBeDefined();
+      const instanceFilter = pendingHeadSelect!.chain.find(step => step.method === 'eq' && step.args[0] === 'instance_phone');
+      expect(instanceFilter).toBeDefined();
+      expect(instanceFilter!.args[1]).toBe(USER_PHONE);
+    });
+  });
 });

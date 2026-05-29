@@ -216,6 +216,26 @@ export async function POST(req: NextRequest) {
     }, { status: 403 });
   }
 
+  // MAX_PENDING quota — prevents an authenticated client (or compromised
+  // session) from filling the queue faster than the cron can drain it. Cap is
+  // dailyLimit × 7 so users keep a full week of buffer even under heavy use;
+  // abusive flows trip 429 long before they materially grow the table.
+  const { count: pendingCount } = await supabase
+    .from('scheduled_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('instance_phone', phone)
+    .eq('status', 'pending');
+
+  const MAX_PENDING = limits.dailyLimit * 7;
+  if ((pendingCount || 0) >= MAX_PENDING) {
+    return NextResponse.json({
+      error: 'queue_full',
+      message: 'Hai troppi messaggi in coda. Aspetta che ne venga inviato qualcuno.',
+      pending: pendingCount || 0,
+      limit: MAX_PENDING,
+    }, { status: 429 });
+  }
+
   const cleanMessage = messageStr.trim();
   const cleanName = typeof recipient_name === 'string' && recipient_name.trim().length > 0
     ? recipient_name.trim().slice(0, 100)
