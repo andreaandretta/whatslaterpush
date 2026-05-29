@@ -778,11 +778,13 @@ export async function POST(req) {
     // or `x-webhook-signature` carries the base64url HMAC-SHA256. We accept
     // either header name to stay tolerant of Evolution config variations.
     // Behavior:
-    //   header missing  → log warn, continue (back-compat with current setup
-    //                     which only uses the secret-presence check above)
+    //   header missing + EVOLUTION_SIGNATURE_REQUIRED=true → 401
+    //   header missing + flag unset/false → log warn, continue (back-compat
+    //                     with current setup which only uses secret-presence)
     //   header present and invalid → 401 (clear sign of tampering or
     //                                 misconfigured secret on Evolution side)
     //   header present and valid   → continue
+    const signatureRequired = process.env.EVOLUTION_SIGNATURE_REQUIRED === 'true';
     const sigHeader = req.headers.get('x-hub-signature-256') || req.headers.get('x-webhook-signature');
     let signatureValid: boolean | null = null;
     if (sigHeader) {
@@ -793,6 +795,9 @@ export async function POST(req) {
         console.error('WEBHOOK: invalid HMAC signature — rejecting (likely tampered body or stale secret)');
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
       }
+    } else if (signatureRequired) {
+      console.error('WEBHOOK: signature header missing — rejecting (EVOLUTION_SIGNATURE_REQUIRED=true)');
+      return NextResponse.json({ error: 'Signature required' }, { status: 401 });
     } else {
       console.warn('WEBHOOK: signature header missing — accepting on secret-presence only. Configure Evolution to send x-hub-signature-256 for stronger auth.');
     }

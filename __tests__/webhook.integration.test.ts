@@ -586,3 +586,30 @@ describe('CONNECTION_UPDATE marks pending_auth_sessions', () => {
     expect(updateCall).toBeFalsy();
   });
 });
+
+// ── EVOLUTION_SIGNATURE_REQUIRED feature flag ────────────────────────────────
+
+describe('Webhook: EVOLUTION_SIGNATURE_REQUIRED flag', () => {
+  test('rejects 401 when flag=true and the signature header is missing', async () => {
+    process.env.EVOLUTION_SIGNATURE_REQUIRED = 'true';
+    const body = makeConnectionPayload('SchedWhats-393501234567', 'open');
+    const res = await callWebhook(body); // valid secret, no signature
+    expect(res.status).toBe(401);
+    const json = await res.json();
+    expect(json.error).toBe('Signature required');
+  });
+
+  test('continues processing when flag is unset and the signature header is missing', async () => {
+    delete process.env.EVOLUTION_SIGNATURE_REQUIRED;
+    mockSupa.setResponse('user_instances:update', { id: 'ui-1', phone_number: '393501234567' });
+    mockSupa.setResponse('user_instances:select', { phone_number: '393501234567' });
+    fetchMock.setJsonResponse('/message/sendText/', { ok: true });
+
+    const body = makeConnectionPayload('SchedWhats-393501234567', 'open');
+    const res = await callWebhook(body);
+    expect(res.status).toBe(200);
+    // Sanity check: this must NOT be the signature-rejection path.
+    const json = await res.json();
+    expect(json.error).not.toBe('Signature required');
+  });
+});
