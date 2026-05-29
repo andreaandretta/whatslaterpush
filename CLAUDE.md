@@ -33,8 +33,9 @@
 - ✅ Privacy Policy + ToS live
 - ✅ C1 — auth phone-first cookie HMAC (`AUTH_COOKIE_SECRET`), sessione 90gg sliding via `pending_auth_sessions`
 - ✅ Batch UX cleanup pre-lancio 2026-05-19/20: `/signup` e `/tutorial` eliminati, Hero+FAQ+layout metadata ricodificati ICP D+B, scrub self-chat user-facing, hotfix HelpTooltip dashboard, FIX 1 QuickCaptureModal rimosso
-- ✅ Webhook gating self-chat-only, gruppi/broadcast bloccati, atomic lock cron, timeout 8s Evolution, `WEBHOOK_SECRET` obbligatorio
+- ✅ Webhook gating self-chat-only, gruppi/broadcast bloccati, atomic lock cron, timeout 8s Evolution, `WEBHOOK_SECRET` obbligatorio, HMAC signature `x-hub-signature-256` opzionale (gate-able con `EVOLUTION_SIGNATURE_REQUIRED=true`, Sprint 6)
 - ✅ Sprint 4 polish operativo (2026-05-28, 5 commit): media cleanup cron 30gg domenica 03:00 UTC + audit_events 90gg retention via daily-report + `DEPRECATED_DEBUG_TOKEN` rimosso da debug-logs (6gg early vs deadline 2026-06-03, orphan grep clean) + Sentry @sentry/nextjs ^10.54 su 3 runtime con PII scrubber (JID/E.164/email) + hotfix `/api/test/sentry` con captureException esplicito + flush(2000) + diagnostica
+- ✅ Sprint 6 GDPR + security (2026-05-29, 5 commit, basato su AI Council audit Gemini + Claude cross-check): (1) `maskPhoneForLLM` in `admin/chat` system prompt (no più phone E.164 verso Groq/OpenAI); (2) `scrubPiiForLog` su dbLog payloads + cron `cleanup-webhook-logs` domenica 04:00 UTC (30gg retention); (3) `MAX_PENDING = dailyLimit × 7` quota in POST `/api/messages` (429 queue_full); (4) feature flag `EVOLUTION_SIGNATURE_REQUIRED` per HMAC obbligatorio (default off, attivare quando Evolution Manager firma outgoing); (5) endpoint POST `/api/account/delete` GDPR right-to-be-forgotten (cascade 10 tabelle + Evolution disconnect best-effort + audit `account_deleted` con phone hash).
 - ⚠️ **Sentry pending DSN onboarding**: codice wired, manca solo `SENTRY_DSN` + `NEXT_PUBLIC_SENTRY_DSN` su Vercel project settings. Verifica con `curl '/api/test/sentry?secret=$CRON_SECRET'` → response include `sentry_initialized`, `event_id`, `flushed`.
 - ⚠️ **Cluster D Make.com SKIP**: dipende da API key system, deferred Sprint 5.
 - ⚠️ **Stripe live mode SCARTATA** (2026-05-17): primi 5 paganti via bonifico/PayPal manuale per evitare blocco KYC. Si riapre dopo 3-5 paganti reali.
@@ -56,15 +57,16 @@ Tre layer concorrenti, atomic lock previene doppio fire sullo stesso messaggio:
 
 L'atomic lock in `app/api/cron/send-messages/route.ts` (status pending → processing → sent con `UPDATE ... WHERE status='pending'`) garantisce che un singolo messaggio venga claimed da un solo trigger anche se i 3 sparano simultaneamente. Verifica salute: gaps in `audit_events` WHERE `event_type='message_sent'` segnalano trigger giù.
 
-### Crons collaterali (Sprint 4)
+### Crons collaterali (Sprint 4 + Sprint 6)
 - **`/api/cron/cleanup-media`** domenica 03:00 UTC — batch 100 row/run (cap Vercel Hobby 10s), seleziona terminal-state (`sent|cancelled|failed`) con `media_url IS NOT NULL` e `created_at < NOW() - 30d`, rimuove file da Storage bucket `message-media`, poi nullifica colonne `media_*`. Storage error abort-prima-di-UPDATE (retry safe). Audit log `event_type='media_cleanup'`.
+- **`/api/cron/cleanup-webhook-logs`** domenica 04:00 UTC (Sprint 6) — `DELETE FROM webhook_logs WHERE ts < NOW() - 30d` con `count: 'exact'`. Audit log `event_type='webhook_logs_prune'` con `removed_count + retention_days`. Noop response quando count=0 (no audit spam). Complementa lo scrubber `dbLog` che blocca nuove PII alla scrittura.
 - **`/api/cron/daily-report`** 06:00 UTC — esistente, ora step finale: `pruneOldAuditEvents()` cancella `audit_events` con `created_at < NOW() - 90d`. Best-effort (fallisce silenzioso senza abortire report). Payload risposta include `audit_pruned: N`.
 
 ### Error monitoring (Sentry, Sprint 4)
 @sentry/nextjs ^10.54 wired su server + edge + client runtime via `instrumentation.ts` + `instrumentation-client.ts` + `sentry.{server,edge}.config.ts`. Init gated on `SENTRY_DSN` env var → no-op silenzioso quando unset (local dev + pre-onboarding state). PII scrubber in `app/lib/sentry-pii.ts` (regex per WhatsApp JID, E.164 phone, email) applicato a `beforeSend` e `beforeBreadcrumb` su tutti i runtime. `withSentryConfig` in `next.config.js` con `tunnelRoute: '/monitoring'` per evitare ad-blocker. Source map upload opzionale gated on `SENTRY_AUTH_TOKEN`. Test endpoint `/api/test/sentry?secret=$CRON_SECRET` ritorna JSON diagnostico con campi `dsn_set`, `sentry_initialized`, `event_id`, `flushed` (usa `captureException` + `flush(2000)` esplicito perché serverless lambda freeze prima del transport flush con throw non gestito).
 
 ### Test suite
-- 526 test unit/integration verdi (`npm test`) — baseline post-Sprint 4 (cleanup-media + debug-logs-auth + audit retention prune + Sentry PII scrubber). Storico: 480 post-Sprint 2 → 509 post-Sprint 3 → 526 post-Sprint 4.
+- 546 test unit/integration verdi (`npm test`) — baseline post-Sprint 6 (GDPR maskPhoneForLLM 3 + log-scrubber 5 + cleanup-webhook-logs 4 + MAX_PENDING 3 + EVOLUTION_SIGNATURE_REQUIRED 2 + account-delete 6). Storico: 480 post-Sprint 2 → 509 post-Sprint 3 → 523 post-Sprint 4 (CLAUDE.md riportava 526 ma il vero baseline pre-Sprint-6 era 523) → 546 post-Sprint 6.
 - 7 suite e2e Playwright (`__tests__/e2e/*.spec.ts`) — al momento jest le scoopa per errore di config (issue pre-esistente, non bloccante per release)
 
 ### Auth note
