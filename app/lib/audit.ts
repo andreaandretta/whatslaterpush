@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { createHash } from 'node:crypto';
 
 // Closed catalog of event_types. New events should be added here so the SLA
 // dashboard / queries know what to look for. Free-form strings still work but
@@ -32,6 +33,20 @@ export async function hashContactRef(value: string): Promise<string> {
   let hex = '';
   for (let i = 0; i < 4; i++) hex += arr[i].toString(16).padStart(2, '0');
   return 'h:' + hex;
+}
+
+// Phone redaction for LLM prompts. The admin/chat endpoint ships per-user rows
+// to Groq/OpenAI for natural-language operator queries; sending raw E.164
+// numbers would leak PII to third-party LLM providers. The masked form keeps a
+// 6-char SHA-256 prefix (for operator dedup across rows) plus the last 4
+// digits (so the operator can still match a row against a phone they already
+// know from another source). Sync `node:crypto` because the call site at
+// admin/chat/route.ts:45-51 is a `.map()` over result rows.
+export function maskPhoneForLLM(phone: string): string {
+  if (!phone || phone.length < 4) return '[REDACTED]';
+  const last4 = phone.slice(-4);
+  const hash = createHash('sha256').update(phone).digest('hex').slice(0, 6);
+  return `[#${hash}…${last4}]`;
 }
 
 // Fire-and-forget audit write. Never throws — failures are logged as warnings

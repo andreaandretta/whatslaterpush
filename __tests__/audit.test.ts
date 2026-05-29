@@ -54,6 +54,30 @@ describe('hashContactRef', () => {
   });
 });
 
+describe('maskPhoneForLLM', () => {
+  test('produces [#hash6…last4] format for normal E.164 input', async () => {
+    const { maskPhoneForLLM } = await import('../app/lib/audit');
+    const out = maskPhoneForLLM('393331234567');
+    expect(out).toMatch(/^\[#[0-9a-f]{6}…4567\]$/);
+  });
+
+  test('returns [REDACTED] for empty or sub-4-char input', async () => {
+    const { maskPhoneForLLM } = await import('../app/lib/audit');
+    expect(maskPhoneForLLM('')).toBe('[REDACTED]');
+    expect(maskPhoneForLLM('39')).toBe('[REDACTED]');
+    expect(maskPhoneForLLM('123')).toBe('[REDACTED]');
+  });
+
+  test('is deterministic for the same input and diverges for different inputs', async () => {
+    const { maskPhoneForLLM } = await import('../app/lib/audit');
+    const a = maskPhoneForLLM('393331234567');
+    const b = maskPhoneForLLM('393331234567');
+    const c = maskPhoneForLLM('393401234567');
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+  });
+});
+
 describe('clientIpFromHeaders', () => {
   test('parses x-forwarded-for first IP', async () => {
     const { clientIpFromHeaders } = await import('../app/lib/audit');

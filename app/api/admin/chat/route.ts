@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { runAllChecks, CheckResult } from '../../../lib/monitoring';
+import { maskPhoneForLLM } from '../../../lib/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,11 +44,11 @@ async function buildContext(): Promise<string> {
   ).join('\n');
 
   const expiringText = (expiringRes.data || []).map((u: any) =>
-    `  ${u.phone_number} (scade ${new Date(u.trial_ends_at).toLocaleDateString('it-IT')})`
+    `  ${maskPhoneForLLM(u.phone_number)} (scade ${new Date(u.trial_ends_at).toLocaleDateString('it-IT')})`
   ).join('\n') || '  Nessuno';
 
   const churnedText = (churnedRes.data || []).map((u: any) =>
-    `  ${u.phone_number} (scaduto ${new Date(u.trial_ends_at).toLocaleDateString('it-IT')})`
+    `  ${maskPhoneForLLM(u.phone_number)} (scaduto ${new Date(u.trial_ends_at).toLocaleDateString('it-IT')})`
   ).join('\n') || '  Nessuno';
 
   const alertsText = (alertsRes.data || []).map((a: any) =>
