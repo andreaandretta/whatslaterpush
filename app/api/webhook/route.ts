@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { extractInlineRecipient, extractInlineMessage, extractInlinePhoneAndName, parseAIDatetime, getRomeOffsetMs, nowRome, romeToUtc } from '../../lib/webhook-utils';
 import { getPlanLimits } from '../../lib/plans';
 import { containsAmbiguousTimeKeyword, hasExplicitHHMM } from '../../lib/quick-capture-utils';
+import { scrubPiiForLog } from '../../lib/log-scrubber';
 export const dynamic = 'force-dynamic';
 
 const supabase = createClient(
@@ -12,9 +13,20 @@ const supabase = createClient(
 );
 
 // ── DB Logger (temporary — writes to webhook_logs table for debugging) ──
+// Object payloads are passed through scrubPiiForLog so message bodies, phone
+// numbers and recipient names never reach `webhook_logs.data` in cleartext.
+// String payloads pass through (callers building free-form strings own their
+// own PII discipline) — the 2000-char cap is a last-resort safety net.
 async function dbLog(tag: string, data: any) {
   try {
-    const text = typeof data === 'string' ? data : JSON.stringify(data);
+    let text: string;
+    if (typeof data === 'string') {
+      text = data;
+    } else if (data && typeof data === 'object') {
+      text = JSON.stringify(scrubPiiForLog(data as Record<string, unknown>));
+    } else {
+      text = String(data);
+    }
     await supabase.from('webhook_logs').insert({ tag, data: text.substring(0, 2000) });
   } catch {}
 }
