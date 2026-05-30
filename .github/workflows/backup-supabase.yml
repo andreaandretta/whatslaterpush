@@ -1,0 +1,78 @@
+name: Backup Supabase
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'  # Domenica 04:00 UTC
+  workflow_dispatch:     # Trigger manuale (per test)
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install postgresql-client v15
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-15
+
+      - name: Compute backup filename
+        id: meta
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          echo "filename=backup-${DATE}.dump" >> "$GITHUB_OUTPUT"
+          echo "date=${DATE}" >> "$GITHUB_OUTPUT"
+
+      - name: Run pg_dump
+        id: dump
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          pg_dump "$SUPABASE_DB_URL" \
+            --format=custom \
+            --compress=9 \
+            --no-owner \
+            --no-privileges \
+            --exclude-schema=auth \
+            --exclude-schema=storage \
+            --file="${{ steps.meta.outputs.filename }}"
+          SIZE=$(du -h "${{ steps.meta.outputs.filename }}" | cut -f1)
+          echo "size=${SIZE}" >> "$GITHUB_OUTPUT"
+          echo "Backup size: $SIZE"
+
+      - name: Checkout backups repo
+        uses: actions/checkout@v4
+        with:
+          repository: andreaandretta/whatslaterpush-backups
+          token: ${{ secrets.BACKUPS_REPO_TOKEN }}
+          path: backups-repo
+
+      - name: Move dump into backups repo
+        run: |
+          mkdir -p backups-repo/dumps
+          mv "${{ steps.meta.outputs.filename }}" "backups-repo/dumps/"
+
+      - name: Prune backups older than 30
+        run: |
+          cd backups-repo/dumps
+          OLD_BACKUPS=$(ls -1t backup-*.dump 2>/dev/null | tail -n +31 || true)
+          if [ -n "$OLD_BACKUPS" ]; then
+            echo "Pruning:"
+            echo "$OLD_BACKUPS"
+            echo "$OLD_BACKUPS" | xargs git rm -f
+          else
+            echo "No backups to prune (count <= 30)"
+          fi
+
+      - name: Commit & push backup
+        run: |
+          cd backups-repo
+          git config user.email "backup-bot@whatslaterpush.com"
+          git config user.name "WhatsLater Backup Bot"
+          git add dumps/
+          if git diff --staged --quiet; then
+            echo "No changes to commit (same-day rerun?)"
+            exit 0
+          fi
+          git commit -m "chore(backup): ${{ steps.meta.outputs.date }} (${{ steps.dump.outputs.size }})"
+          git push origin main
