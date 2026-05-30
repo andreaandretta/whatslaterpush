@@ -236,7 +236,7 @@ export default function TermsPage() {
             <h3 className="text-lg font-semibold text-text-primary mb-2">9.2 Da parte dell&apos;utente</h3>
             <p>
               L&apos;utente pu&ograve; cancellare il proprio account in qualsiasi momento disconnettendo WhatsApp dal Servizio e richiedendo la cancellazione dei dati a{' '}
-              <a href="mailto:privacy@whatslater.com" className="text-primary hover:underline">privacy@whatslater.com</a>.
+              <a href="mailto:supporto@whatslater.it" className="text-primary hover:underline">supporto@whatslater.it</a>.
               Tutti i dati saranno cancellati entro 72 ore dalla richiesta, ad eccezione dei dati soggetti a obbligo di conservazione legale.
             </p>
           </section>
@@ -279,7 +279,7 @@ export default function TermsPage() {
             <h2 className="text-2xl font-bold text-text-primary mb-4">13. Contatti</h2>
             <p>
               Per qualsiasi domanda relativa ai presenti Termini, contattaci a:{' '}
-              <a href="mailto:info@whatslater.com" className="text-primary hover:underline">info@whatslater.com</a>
+              <a href="mailto:supporto@whatslater.it" className="text-primary hover:underline">supporto@whatslater.it</a>
             </p>
           </section>
 
