@@ -36,7 +36,7 @@ export default function PrivacyPage() {
             <h2 className="text-2xl font-bold text-text-primary mb-4">1. Titolare del Trattamento</h2>
             <p>
               Il titolare del trattamento dei dati personali è WhatsLater (di seguito &ldquo;noi&rdquo;, &ldquo;nostro&rdquo; o &ldquo;il Servizio&rdquo;),
-              raggiungibile all&apos;indirizzo email: <a href="mailto:privacy@whatslater.com" className="text-primary hover:underline">privacy@whatslater.com</a>.
+              raggiungibile all&apos;indirizzo email: <a href="mailto:supporto@whatslater.it" className="text-primary hover:underline">supporto@whatslater.it</a>.
             </p>
           </section>
 
@@ -233,14 +233,14 @@ export default function PrivacyPage() {
             </ul>
             <p className="mb-4">
               Per esercitare qualsiasi diritto, contattaci a{' '}
-              <a href="mailto:privacy@whatslater.com" className="text-primary hover:underline">privacy@whatslater.com</a>.
+              <a href="mailto:supporto@whatslater.it" className="text-primary hover:underline">supporto@whatslater.it</a>.
               Risponderemo entro 30 giorni.
             </p>
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm">
               <p className="font-semibold text-blue-800 mb-1">Cancellazione completa dei dati</p>
               <p className="text-blue-700">
                 Puoi richiedere la cancellazione completa di tutti i tuoi dati (account, messaggi programmati, contatti salvati, log) inviandoci un&apos;email a{' '}
-                <a href="mailto:privacy@whatslater.com" className="text-primary hover:underline">privacy@whatslater.com</a>{' '}
+                <a href="mailto:supporto@whatslater.it" className="text-primary hover:underline">supporto@whatslater.it</a>{' '}
                 dal numero associato al tuo account. La cancellazione sar&agrave; completata entro 72 ore.
               </p>
             </div>
@@ -302,7 +302,7 @@ export default function PrivacyPage() {
             <h2 className="text-2xl font-bold text-text-primary mb-4">14. Contatti</h2>
             <p>
               Per qualsiasi domanda relativa alla privacy, contattaci a:{' '}
-              <a href="mailto:privacy@whatslater.com" className="text-primary hover:underline">privacy@whatslater.com</a>
+              <a href="mailto:supporto@whatslater.it" className="text-primary hover:underline">supporto@whatslater.it</a>
             </p>
           </section>
 

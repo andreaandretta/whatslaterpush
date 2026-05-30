@@ -4,6 +4,7 @@ import HeroSection from './components/HeroSection';
 import StatsBar from './components/StatsBar';
 import HowItWorksSection from './components/HowItWorksSection';
 import TestimonialsSection from './components/TestimonialsSection';
+import SocialProofRow from './components/SocialProofRow';
 import PricingSection from './components/PricingSection';
 import FAQSection from './components/FAQSection';
 import FinalCTA from './components/FinalCTA';
@@ -23,6 +24,8 @@ export default function Home() {
       <StatsBar />
       <HowItWorksSection />
       <TestimonialsSection />
+      {/* TODO: passare numeri reali (users / messages / rating) — finché vuoto il componente non si monta */}
+      <SocialProofRow />
       <PricingSection />
       <FAQSection />
       <FinalCTA />
