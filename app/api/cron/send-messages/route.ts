@@ -122,12 +122,41 @@ export async function GET(req: NextRequest) {
     }
 
     // P0 FIX: Single JOIN query - each row carries its own instance_name
-    // No per-user loop, no global state, no instance confusion possible
-    // Reset messages stuck in 'processing' for more than 2 minutes (crashed cron)
-    await supabase.from('scheduled_messages')
+    // No per-user loop, no global state, no instance confusion possible.
+    //
+    // Stale 'processing' rows recovery. Two branches based on whether
+    // send_attempted_at was stamped before the lambda died:
+    //   - send_attempted_at IS NOT NULL → fetch was in flight when lambda
+    //     died, Evolution probably delivered. Mark sent (with diagnostic
+    //     error_message) to avoid a duplicate on retry. ICP D coaches
+    //     care more about not double-sending than about edge-case loss.
+    //   - send_attempted_at IS NULL → never reached the fetch call (jitter
+    //     or typing simulation killed the lambda). Safe to retry → pending.
+    // Legacy rows from before the migration have NULL → safe-retry branch
+    // → equivalent to pre-fix behavior, no regression for in-flight rows.
+    const staleCutoff = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    const { data: indeterminateRows } = await supabase.from('scheduled_messages')
+      .update({
+        status: 'sent',
+        sent_at: new Date().toISOString(),
+        error_message: 'send_indeterminate: lambda died mid-send, marked sent to avoid duplicate (verify WhatsApp ✓✓ if critical)',
+      })
+      .eq('status', 'processing')
+      .lt('updated_at', staleCutoff)
+      .not('send_attempted_at', 'is', null)
+      .select('id');
+    if (indeterminateRows?.length) {
+      console.log('CRON: Recovered ' + indeterminateRows.length + ' indeterminate sends (Evolution probably delivered, marked sent to avoid duplicate)');
+    }
+    const { data: safeRetryRows } = await supabase.from('scheduled_messages')
       .update({ status: 'pending' })
       .eq('status', 'processing')
-      .lt('updated_at', new Date(Date.now() - 2 * 60 * 1000).toISOString());
+      .lt('updated_at', staleCutoff)
+      .is('send_attempted_at', null)
+      .select('id');
+    if (safeRetryRows?.length) {
+      console.log('CRON: Safe-retry ' + safeRetryRows.length + ' rows (never reached send call, send_attempted_at IS NULL)');
+    }
 
     const { data: pendingMessages, error: queryErr } = await supabase
       .from('scheduled_messages')
@@ -376,6 +405,19 @@ export async function GET(req: NextRequest) {
 
         const sendKind = signedMediaUrl ? 'media' : 'text';
         console.log('CRON: Sending msg ' + msg.id + ' kind=' + sendKind + ' via instance=' + instanceName + ' to=' + msg.recipient_number);
+
+        // Stamp send_attempted_at BEFORE the HTTP call. The stale-processing
+        // cleanup at the top of this handler uses this column to decide
+        // whether a 'processing' row stuck >2min should be retried (NULL =
+        // never reached fetch, safe) or marked sent (NOT NULL = fetch was
+        // in flight, Evolution probably delivered, retry would duplicate).
+        // Best-effort: if this UPDATE itself fails, we proceed with the
+        // fetch anyway — the worst case becomes the original race (potential
+        // duplicate) rather than skipping a legitimate send.
+        await supabase.from('scheduled_messages')
+          .update({ send_attempted_at: new Date().toISOString() })
+          .eq('id', msg.id);
+
         const sendCtrl = new AbortController();
         const sendTimeout = setTimeout(() => sendCtrl.abort(), 8000);
         let res;
