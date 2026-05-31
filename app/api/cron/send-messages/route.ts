@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { normalizeItalianPhone } from '../../../lib/phone';
@@ -14,6 +15,14 @@ async function checkFailures(supabase: ReturnType<typeof createClient>, userPhon
   const { count } = await supabase.from('scheduled_messages').select('id', { count: 'exact', head: true }).eq('instance_phone', userPhone).eq('status', 'failed').gte('created_at', new Date(Date.now() - 86400000).toISOString());
   if ((count || 0) >= 5) {
     await markBlocked(supabase, 'user:' + userPhone, count + ' failed in 24h');
+    // Sentry alert: user has crossed the failure-rate circuit breaker.
+    // Tag with hashed phone so the same user dedups across events; raw
+    // phone would be redacted by the sentryBeforeSend PII scrubber anyway.
+    Sentry.captureMessage('user_blocked_failure_rate', {
+      level: 'error',
+      tags: { user_hash: await hashContactRef(userPhone) },
+      extra: { failed_24h_count: count },
+    });
     return true;
   }
   return false;
@@ -152,6 +161,18 @@ export async function GET(req: NextRequest) {
       // Timeout guard: stop processing if we're close to the 10s limit
       if (Date.now() - startTime > TIMEOUT_MS) {
         console.log('CRON: TIMEOUT GUARD — stopping after ' + (Date.now() - startTime) + 'ms, ' + (messages.length - i) + ' messages deferred');
+        // Sentry alert: cron run exhausted its time budget and deferred
+        // remaining messages. Repeated firings indicate queue pressure or
+        // sustained Evolution latency — both are signals to investigate.
+        Sentry.captureMessage('cron_timeout_deferred', {
+          level: 'warning',
+          extra: {
+            deferred_count: messages.length - i,
+            processed_count: i,
+            duration_ms: Date.now() - startTime,
+            batch_total: messages.length,
+          },
+        });
         timedOut = true;
         break;
       }
@@ -200,6 +221,19 @@ export async function GET(req: NextRequest) {
             // the user opens the dashboard.
             if (!thresholdNotifiedInstances.has(instanceName)) {
               thresholdNotifiedInstances.add(instanceName);
+              // Sentry alert: instance has been disconnected for the full
+              // smart-retry window (12 × 5min). Deduped via the same Set
+              // that gates the user notification so we don't spam Sentry
+              // when a batch of 5 cross-threshold messages share an instance.
+              Sentry.captureMessage('instance_disconnect_threshold', {
+                level: 'error',
+                tags: { user_hash: await hashContactRef(ownerPhone) },
+                extra: {
+                  retry_count: newCount,
+                  threshold: RETRY_THRESHOLD,
+                  connection_status: msg.user_instances.connection_status || 'unknown',
+                },
+              });
               try {
                 await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
                   method: 'POST',
