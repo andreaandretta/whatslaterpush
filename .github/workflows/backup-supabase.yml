@@ -44,7 +44,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: andreaandretta/whatslaterpush-backups
-          token: ${{ secrets.BACKUPS_REPO_TOKEN }}
+          ssh-key: ${{ secrets.BACKUPS_REPO_SSH_KEY }}
           path: backups-repo
 
       - name: Move dump into backups repo
