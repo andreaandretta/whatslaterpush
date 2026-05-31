@@ -11,8 +11,14 @@ export const dynamic = 'force-dynamic';
 
 function getSupabase() {
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) throw new Error('Missing Supabase credentials');
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url) throw new Error('Missing SUPABASE_URL');
+  // Anon-role fallback removed: this route writes to user_instances and
+  // scheduled_messages with service-role permissions (bypasses RLS). A
+  // silent fallback to NEXT_PUBLIC_SUPABASE_ANON_KEY in misconfigured envs
+  // would either fail mid-request with cryptic RLS errors or, worse, leak
+  // anon-readable rows. Fail loud at handler entry instead.
+  if (!key) throw new Error('SUPABASE_SERVICE_ROLE_KEY required (anon-role fallback removed)');
   return createClient(url, key);
 }
 

@@ -7,8 +7,13 @@ export const dynamic = 'force-dynamic';
 
 function getSupabase() {
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) throw new Error('Missing Supabase credentials');
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url) throw new Error('Missing SUPABASE_URL');
+  // Anon-role fallback removed: GDPR cascade-delete iterates protected
+  // tables across 10 entities. Anon-role lacks DELETE permission on most
+  // of them, so silent fallback would partially delete and leave the user
+  // in an inconsistent half-deleted state. Fail loud instead.
+  if (!key) throw new Error('SUPABASE_SERVICE_ROLE_KEY required (anon-role fallback removed)');
   return createClient(url, key);
 }
 

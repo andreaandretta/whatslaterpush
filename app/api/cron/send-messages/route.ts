@@ -485,11 +485,18 @@ export async function GET(req: NextRequest) {
           }
         }
 
-        // Increment daily counter
-        const newSentToday = sentToday + 1;
-        await supabase.from('user_instances')
-          .update({ messages_sent_today: newSentToday })
-          .eq('phone_number', ownerPhone);
+        // Increment daily counter atomically via RPC. UPDATE ... RETURNING
+        // is a single MVCC operation, so concurrent calls in a
+        // Promise.allSettled batch for the same user observe post-increment
+        // values monotonically instead of all reading the same stale
+        // sentToday from the JOIN snapshot and writing back value+1
+        // (losing N-1 increments per batch).
+        const { data: incrementedTo, error: incrErr } = await supabase
+          .rpc('increment_messages_sent_today', { p_phone: ownerPhone });
+        if (incrErr) {
+          console.error('CRON: atomic increment RPC failed for ' + ownerPhone + ':', incrErr.message);
+        }
+        const newSentToday: number = typeof incrementedTo === 'number' ? incrementedTo : sentToday + 1;
 
         // Upsell at 80% of daily limit (once per day)
         const upsellThreshold = Math.floor(planLimits.dailyLimit * 0.8);
