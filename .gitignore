@@ -45,3 +45,15 @@ next-env.d.ts
 
 # Local design-mockup screenshots (regenerable via Playwright)
 screenshots/*.png
+
+# next-pwa build artifacts (service worker + workbox runtime, generated in build)
+/public/sw.js
+/public/sw.js.map
+/public/workbox-*.js
+/public/workbox-*.js.map
+/public/swe-worker-*.js
+/public/swe-worker-*.js.map
+/public/worker-*.js
+/public/worker-*.js.map
+/public/fallback-*.js
+/public/fallback-*.js.map

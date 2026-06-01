@@ -16,6 +16,7 @@ import { DeliveryStatusIcon } from '../components/DeliveryStatusIcon';
 import { MessagesEmptyState } from '../components/MessagesEmptyState';
 import { shouldShowOnboardingHints, markOnboardingDone } from '../../components/onboarding/OnboardingTour';
 import { getPlanLimits, getPlanName } from '../lib/plans';
+import InstallPrompt from '../components/InstallPrompt';
 
 const supabaseClient = typeof window !== 'undefined' ? createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -120,6 +121,11 @@ export default function DashboardPage() {
               // gated on real product progress.
               markOnboardingDone();
               setShowOnboardingHints(false);
+              // Unlock the install banner. InstallPrompt mounts above; it
+              // reads the flag at mount and listens for this event so it
+              // surfaces immediately on the same first-msg transition.
+              try { localStorage.setItem('wl_first_msg_done', '1'); } catch { /* private mode */ }
+              try { window.dispatchEvent(new Event('wl-first-msg-done')); } catch { /* SSR */ }
             }
             prevLifetimeRef.current = next;
           }
@@ -408,6 +414,8 @@ export default function DashboardPage() {
 
       {showFAQ && <FAQSection theme="dark" />}
       <Footer theme="dark" />
+
+      <InstallPrompt />
 
       {/* Action toast — surfaces feedback from MessagesSection (duplicate/pause/delete). */}
       {toast && (
