@@ -1,4 +1,10 @@
 const { withSentryConfig } = require('@sentry/nextjs');
+const withPWA = require('@ducanh2912/next-pwa').default({
+    dest: 'public',
+    disable: process.env.NODE_ENV === 'development',
+    cacheOnFrontEndNav: true,
+    fallbacks: { document: '/offline' },
+});
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -22,10 +28,11 @@ const nextConfig = {
     },
 }
 
-// Sentry build-time wrapper. Source map upload is gated by SENTRY_AUTH_TOKEN
-// — when unset (local dev + first-deploy-before-Andrea-onboards-Sentry),
-// withSentryConfig is a passthrough.
-module.exports = withSentryConfig(nextConfig, {
+// Compose order: PWA wraps base config (so SW + manifest + offline fallback are
+// generated), then Sentry wraps the result for source-map upload + tunnel route.
+// Both are passthroughs when their respective env (NODE_ENV / SENTRY_AUTH_TOKEN)
+// is unset, so local dev stays clean.
+module.exports = withSentryConfig(withPWA(nextConfig), {
     org: process.env.SENTRY_ORG,
     project: process.env.SENTRY_PROJECT,
     authToken: process.env.SENTRY_AUTH_TOKEN,

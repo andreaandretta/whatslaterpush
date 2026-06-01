@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PWA spec for Bud — WhatsLater</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>body{font-family:'Inter',system-ui,sans-serif;}code,pre{font-family:'JetBrains Mono',monospace;}</style>
+</head>
+<body class="bg-[#0a0e12] text-white min-h-screen">
+
+  <header class="border-b border-white/5 sticky top-0 bg-[#0a0e12]/95 backdrop-blur z-50">
+    <div class="max-w-4xl mx-auto px-6 py-5">
+      <div class="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-0.5">Handoff · PWA</div>
+      <h1 class="text-lg font-bold">WhatsLater PWA — implementation spec</h1>
+    </div>
+  </header>
+
+  <section class="max-w-4xl mx-auto px-6 py-10 space-y-8">
+
+    <!-- FINAL ICON -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h2 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-4">Icona ufficiale (già esportata)</h2>
+      <div class="flex items-center gap-6 flex-wrap">
+        <img src="../public/icons/icon-512.png" class="w-24 h-24 rounded-[22px] shadow-2xl" alt="icon" />
+        <div class="text-sm text-gray-300 leading-relaxed">
+          <p class="mb-2"><strong class="text-white">B · anello chiuso, dark</strong> — send bianco in anello verde su <code class="bg-black/30 px-1 rounded text-xs">#0B141A</code>.</p>
+          <p class="text-gray-400">File già in <code class="bg-black/30 px-1 rounded text-xs">public/icons/</code>: icon-192, icon-512, icon-180 (apple-touch), maskable-512, favicon-32.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- MANIFEST -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h2 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-3">1 · public/manifest.json</h2>
+<pre class="bg-[#0B141A] rounded-lg p-4 text-xs text-gray-200 overflow-x-auto"><code>{
+  "name": "WhatsLater",
+  "short_name": "WhatsLater",
+  "description": "Programma i messaggi WhatsApp dal tuo numero",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#111B21",
+  "theme_color": "#075E54",
+  "lang": "it",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}</code></pre>
+    </div>
+
+    <!-- HEAD TAGS -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h2 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-3">2 · app/layout.tsx — metadata</h2>
+<pre class="bg-[#0B141A] rounded-lg p-4 text-xs text-gray-200 overflow-x-auto"><code>// app/layout.tsx
+export const metadata = {
+  // ...existing
+  manifest: '/manifest.json',
+  themeColor: '#075E54',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'WhatsLater',
+  },
+  icons: {
+    icon: '/icons/favicon-32.png',
+    apple: '/icons/icon-180.png',
+  },
+};
+
+// In Next 14+ usa anche:
+export const viewport = {
+  themeColor: '#075E54',
+};</code></pre>
+    </div>
+
+    <!-- SERVICE WORKER -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h2 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-3">3 · Service worker (next-pwa)</h2>
+      <p class="text-sm text-gray-300 mb-3">Via libreria zero-config (consigliato, no nuove dipendenze runtime — solo dev):</p>
+<pre class="bg-[#0B141A] rounded-lg p-4 text-xs text-gray-200 overflow-x-auto mb-3"><code>npm i -D @ducanh2912/next-pwa
+
+// next.config.js
+const withPWA = require('@ducanh2912/next-pwa').default({
+  dest: 'public',
+  disable: process.env.NODE_ENV === 'development',
+  cacheOnFrontEndNav: true,
+  fallbacks: { document: '/offline' },
+});
+module.exports = withPWA({ /* existing config */ });</code></pre>
+      <p class="text-sm text-gray-400">Crea <code class="bg-black/30 px-1 rounded text-xs">app/offline/page.tsx</code> — schermata dark "Sei offline · i messaggi programmati partono comunque dal server".</p>
+    </div>
+
+    <!-- SPLASH -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h2 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-3">4 · Splash screen</h2>
+      <ul class="text-sm text-gray-300 space-y-1.5 list-disc pl-5">
+        <li>Android: generato auto da <code class="bg-black/30 px-1 rounded text-xs">background_color</code> (#111B21) + icona. Niente da fare.</li>
+        <li>iOS: serve <code class="bg-black/30 px-1 rounded text-xs">apple-touch-startup-image</code> per ogni size, oppure splash semplice. Per il lancio basta theme-color + icona; gli splash iOS si aggiungono dopo.</li>
+        <li>Se vuoi lo splash brandizzato (verde scuro + icona pop) → component React mostrato per 0.8s al primo mount mentre l'app idrata.</li>
+      </ul>
+    </div>
+
+    <!-- INSTALL BANNER -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-white/5">
+      <h2 class="text-sm font-bold uppercase tracking-widest text-[#25D366] mb-3">5 · Install banner (component nuovo)</h2>
+      <p class="text-sm text-gray-300 mb-3"><code class="bg-black/30 px-1 rounded text-xs">app/components/InstallPrompt.tsx</code> — montato in dashboard:</p>
+      <ul class="text-sm text-gray-300 space-y-1.5 list-disc pl-5">
+        <li>Intercetta evento <code class="bg-black/30 px-1 rounded text-xs">beforeinstallprompt</code>, <code class="bg-black/30 px-1 rounded text-xs">preventDefault()</code>, salva l'evento.</li>
+        <li>Mostra il banner slide-up <strong class="text-white">solo dopo il 1° messaggio programmato</strong> (flag localStorage <code class="bg-black/30 px-1 rounded text-xs">wl_first_msg_done</code>) e se non già dismesso (<code class="bg-black/30 px-1 rounded text-xs">wl_install_dismissed</code>).</li>
+        <li>Tap "Aggiungi" → <code class="bg-black/30 px-1 rounded text-xs">deferredPrompt.prompt()</code>. "Più tardi" → set dismissed.</li>
+        <li>iOS (no beforeinstallprompt): se <code class="bg-black/30 px-1 rounded text-xs">navigator.standalone === false</code> e Safari, mostra istruzione "Condividi → Aggiungi a Home".</li>
+        <li>Stile: card <code class="bg-black/30 px-1 rounded text-xs">bg-[#1F2C33]</code>, icona app a sx, "Aggiungi alla schermata Home / Apri WhatsLater con un tap", bottone verde + "Più tardi" grigio. (Vedi mockup pwa-concept.html.)</li>
+      </ul>
+    </div>
+
+    <!-- CHECKLIST -->
+    <div class="bg-[#1F2C33] rounded-2xl p-6 ring-1 ring-amber-400/30">
+      <h2 class="text-sm font-bold uppercase tracking-widest text-amber-400 mb-3">Checklist test PWA</h2>
+      <ul class="text-sm text-gray-200 space-y-1.5 list-disc pl-5">
+        <li>Lighthouse PWA audit → installabile (manifest + SW + icone ok)</li>
+        <li>Android Chrome: "Aggiungi a schermata Home" appare, icona maskable ritagliata a cerchio corretta (no bordi mozzati)</li>
+        <li>iOS Safari: Condividi → "Aggiungi a Home" → icona 180px nitida, status bar coerente col theme</li>
+        <li>Offline: apri app senza rete → shell dashboard carica, pagina /offline come fallback</li>
+        <li>start_url /dashboard apre direttamente loggati (non la landing)</li>
+        <li>theme-color #075E54 colora la status bar in standalone</li>
+      </ul>
+    </div>
+
+    <div class="text-center pt-2 pb-4">
+      <p class="text-base text-white font-semibold">Tutto pronto per Bud.</p>
+      <p class="text-sm text-gray-400 mt-1">Icone in public/icons/ · spec qui · mockup in pwa-concept.html</p>
+    </div>
+
+  </section>
+
+</body>
+</html>
