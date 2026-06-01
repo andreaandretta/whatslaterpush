@@ -64,7 +64,7 @@ export function MessageActionsSheet({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center"
+      className="fixed inset-0 z-sheet flex items-end sm:items-center justify-center"
       onClick={onClose}
     >
       {/* Backdrop */}
