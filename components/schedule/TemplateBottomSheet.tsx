@@ -285,7 +285,7 @@ export function SaveTemplateDialog({ open, defaultTitle, defaultEmoji, onCancel,
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+      className="fixed inset-0 z-dialog flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Salva template"
