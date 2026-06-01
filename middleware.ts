@@ -8,6 +8,13 @@ const PUBLIC_PATHS = [
   '/privacy',
   '/terms',
   '/monitoring',
+  // PWA artifacts. The matcher below already excludes them so they never
+  // hit this function in practice, but listing them here is a safety net
+  // — if the matcher regex is ever loosened by accident, the manifest
+  // and SW still pass through. Their absence breaks install + offline.
+  '/manifest.json',
+  '/sw.js',
+  '/offline',
 ];
 
 const PUBLIC_PREFIXES = [
@@ -70,7 +77,11 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
+  // PWA-generated assets (manifest.json, sw.js + sourcemap, workbox-*,
+  // swe-worker-*, fallback-*) are excluded so they're served as plain
+  // static files. Without this exclusion the middleware 401s the
+  // manifest fetch and Chrome/Safari drop the install affordance.
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.png$|.*\\.svg$|.*\\.jpg$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest\\.json|sw\\.js|workbox-|swe-worker-|fallback-|.*\\.png$|.*\\.svg$|.*\\.jpg$).*)',
   ],
 };
