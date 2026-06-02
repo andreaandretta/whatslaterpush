@@ -15,7 +15,7 @@ export default function StepPronto() {
     <div className="relative min-h-screen bg-gradient-to-b from-[#075E54] to-[#054C44] text-white flex flex-col items-center justify-center overflow-hidden px-6 text-center">
       {/* Brand mark anchored top — same as the other two steps */}
       <div className="absolute top-6 left-1/2 -translate-x-1/2 z-20">
-        <Logo size={20} variant="onDark" />
+        <Logo size={20} variant="onDark" ringColor="#075E54" />
       </div>
 
       {/* Expanding rings */}

@@ -42,7 +42,7 @@ export default function StepNumero({ onSubmit }: Props) {
             </svg>
             Indietro
           </Link>
-          <Logo size={20} variant="onLight" />
+          <Logo size={20} variant="onLight" ringColor="#FFFFFF" />
           <HelpPopover />
         </div>
 

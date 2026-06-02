@@ -18,7 +18,7 @@ export default function Navbar() {
     }`}>
       <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
         <Link href="/" aria-label="WhatsLater home">
-          <Logo withWordmark variant="onDark" size={22} />
+          <Logo withWordmark variant="onDark" size={22} ringColor="#075E54" />
         </Link>
 
         <div className="hidden md:flex items-center gap-8">
