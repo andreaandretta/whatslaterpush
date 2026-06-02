@@ -47,7 +47,7 @@ export async function middleware(request: NextRequest) {
   // after hitting the browser Back button from the dashboard). While the
   // sw_session cookie is valid we bounce them to /dashboard; the cookie is only
   // cleared by logout ("Disconnetti"), so /connect reappears only after that.
-  if (pathname === '/connect' || pathname === '/login') {
+  if (pathname === '/' || pathname === '/connect' || pathname === '/login') {
     const authed = await verifyCookie(request.cookies.get(AUTH_COOKIE_NAME)?.value);
     if (authed) {
       const url = request.nextUrl.clone();
