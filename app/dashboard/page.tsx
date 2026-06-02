@@ -66,9 +66,6 @@ export default function DashboardPage() {
   // Onboarding hints — gated on localStorage. Resolved post-mount to avoid
   // SSR hydration mismatch on localStorage access.
   const [showOnboardingHints, setShowOnboardingHints] = useState(false);
-  // Stops the FAB pulse ring as soon as the user has acknowledged the cue,
-  // even before the first message round-trips through /api/messages.
-  const [fabTapped, setFabTapped] = useState(false);
 
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevLifetimeRef = useRef<number | null>(null);
@@ -300,6 +297,15 @@ export default function DashboardPage() {
     (subscription.plan === 'trial' && trialDaysLeft <= 3);
   const showFAQ = showPricing;
 
+  // Pulse ring on the FAB whenever the "Prossimi" tab would be empty —
+  // i.e. no message in pending/sending/paused/awaiting_* state. Mirrors the
+  // partition used by MessagesSection so the two stay in sync. Gated on
+  // `!messagesLoading` so the ring doesn't flicker on first paint before
+  // /api/messages has resolved.
+  const queueEmpty =
+    !messagesLoading &&
+    !messages.some((m) => m.status !== 'sent' && m.status !== 'failed' && m.status !== 'cancelled');
+
   if (!sessionValidated) {
     return (
       <div className="min-h-screen bg-[#111B21] flex items-center justify-center">
@@ -379,17 +385,19 @@ export default function DashboardPage() {
         )}
       </main>
 
-      {/* FAB — mobile round, desktop pill. Pulse ring is only present during
-          onboarding hints and disappears on first tap. */}
+      {/* FAB — mobile round, desktop pill. Pulse ring is active whenever the
+          "Prossimi" queue is empty (no pending/awaiting message), so any user
+          without scheduled messages gets guided to the action — not just
+          first-run onboarding. Auto-quiets the moment a message is queued. */}
       <div className="sm:hidden fixed bottom-6 right-6 z-fab">
-        {showOnboardingHints && !fabTapped && (
+        {queueEmpty && (
           <span
             aria-hidden
             className="absolute inset-0 rounded-full bg-primary onboarding-pulse-ring pointer-events-none"
           ></span>
         )}
         <button
-          onClick={() => { setFabTapped(true); setContactPickerOpen(true); }}
+          onClick={() => setContactPickerOpen(true)}
           className="relative w-14 h-14 bg-primary text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
           aria-label="Manda messaggio"
         >
@@ -398,14 +406,14 @@ export default function DashboardPage() {
       </div>
 
       <div className="hidden sm:block fixed bottom-6 right-6 z-fab">
-        {showOnboardingHints && !fabTapped && (
+        {queueEmpty && (
           <span
             aria-hidden
             className="absolute inset-0 rounded-full bg-primary onboarding-pulse-ring pointer-events-none"
           ></span>
         )}
         <button
-          onClick={() => { setFabTapped(true); setContactPickerOpen(true); }}
+          onClick={() => setContactPickerOpen(true)}
           className="relative bg-primary text-white rounded-full shadow-2xl px-6 py-4 flex items-center gap-2 font-semibold hover:scale-105 active:scale-95 transition-transform"
         >
           <Send className="w-5 h-5 -ml-0.5" fill="currentColor" />
