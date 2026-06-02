@@ -46,7 +46,9 @@ function ConnectFlow() {
   const handlePaired = () => {
     setStep('3');
     setTimeout(() => {
-      router.push('/dashboard');
+      // replace (not push) so /connect leaves the history stack — pressing
+      // Back from the dashboard won't return to the pairing screen.
+      router.replace('/dashboard');
     }, 1500);
   };
 
