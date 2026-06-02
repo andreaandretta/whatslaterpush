@@ -23,6 +23,7 @@ const PUBLIC_PREFIXES = [
   '/api/cron',
   '/api/health',
   '/api/admin',
+  '/api/ops',
   '/api/monitoring',
   '/api/debug-logs',
   '/api/payment/webhook',
