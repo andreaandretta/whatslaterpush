@@ -16,6 +16,7 @@ import { MessagesEmptyState } from '../components/MessagesEmptyState';
 import { shouldShowOnboardingHints, markOnboardingDone } from '../../components/onboarding/OnboardingTour';
 import { getPlanLimits, getPlanName } from '../lib/plans';
 import InstallPrompt from '../components/InstallPrompt';
+import InstallAppButton from '../components/InstallAppButton';
 import Logo from '@/components/Logo';
 
 const supabaseClient = typeof window !== 'undefined' ? createClient(
@@ -619,6 +620,7 @@ function DashboardNavbar({ userPhone, plan, onLogout }: {
       <div className="max-w-4xl mx-auto flex items-center justify-between">
         <Logo withWordmark variant="onDark" size={22} />
         <div className="flex items-center gap-3">
+          <InstallAppButton />
           {isPaying && (
             <button
               onClick={handlePortal}
