@@ -47,6 +47,12 @@ export default function RootLayout({
   return (
     <html lang="it" className={`${inter.variable} ${spaceGrotesk.variable}`}>
       <body className="font-sans antialiased bg-white text-[#111B21] selection:bg-[#25D366]/20 selection:text-[#075E54]">
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "window.__wlBip=null;window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window.__wlBip=e;});window.addEventListener('appinstalled',function(){window.__wlBip=null;});",
+          }}
+        />
         <ServiceWorkerRegistrar />
         {children}
       </body>

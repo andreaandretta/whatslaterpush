@@ -64,6 +64,10 @@ export default function InstallAppButton() {
     if (isStandaloneNow()) { setInstalled(true); return; }
     setIos(isIosSafari());
     setDesktopMode(isDesktopSiteOnTouch());
+    // Pick up a beforeinstallprompt captured before React hydrated (inline
+    // script in layout) — covers fast cached loads where it fires early.
+    const pre = (window as unknown as { __wlBip?: BeforeInstallPromptEvent }).__wlBip;
+    if (pre) setDeferred(pre);
     const onBip = (e: Event) => { e.preventDefault(); setDeferred(e as BeforeInstallPromptEvent); };
     const onInstalled = () => { setInstalled(true); setShowSheet(false); celebrate(); };
     window.addEventListener('beforeinstallprompt', onBip);
@@ -82,6 +86,7 @@ export default function InstallAppButton() {
         if (choice.outcome === 'accepted') celebrate();
       } catch { /* user dismissed */ }
       setDeferred(null);
+      try { (window as unknown as { __wlBip?: unknown }).__wlBip = null; } catch { /* ignore */ }
       return;
     }
     setShowSheet(true);
