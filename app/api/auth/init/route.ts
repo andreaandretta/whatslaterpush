@@ -161,26 +161,30 @@ export async function POST(req: NextRequest) {
   let qrCode: string | null = createRes?.qrcode?.base64 || createRes?.base64 || null;
   let pairingCode: string | null = createRes?.qrcode?.pairingCode || createRes?.pairingCode || null;
 
-  if (!qrCode) {
+  // Evolution returns the 8-char pairing code only when the phone number is
+  // passed to /instance/connect as a GET query param. NEVER fall back to the
+  // `code` field — that is the raw QR payload (e.g. "2@..."), not a pairing
+  // code; typing it into WhatsApp fails. This was the "wrong pairing code" bug.
+  const looksLikePairingCode = (v: unknown): v is string =>
+    typeof v === 'string' && /^[A-Z0-9]{6,12}$/i.test(v.replace(/-/g, ''));
+
+  if (!qrCode || !pairingCode) {
     await new Promise(r => setTimeout(r, 1000));
     try {
-      const r = await fetch(`${evoUrl}/instance/connect/${instanceName}`, { headers: { apikey: evoKey! } });
+      const r = await fetch(
+        `${evoUrl}/instance/connect/${instanceName}?number=${encodeURIComponent(cleanPhone)}`,
+        { headers: { apikey: evoKey! } },
+      );
       const d = await r.json();
-      qrCode = d?.base64 || d?.qrcode?.base64 || null;
-      pairingCode = pairingCode || d?.pairingCode || d?.qrcode?.pairingCode || null;
+      qrCode = qrCode || d?.base64 || d?.qrcode?.base64 || null;
+      const pc = d?.pairingCode || d?.qrcode?.pairingCode || null;
+      if (!pairingCode && looksLikePairingCode(pc)) pairingCode = pc;
     } catch {}
   }
-  if (!pairingCode) {
-    try {
-      const r = await fetch(`${evoUrl}/instance/connect/${instanceName}`, {
-        method: 'POST',
-        headers: { apikey: evoKey!, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ number: cleanPhone }),
-      });
-      const d = await r.json();
-      pairingCode = d?.pairingCode || d?.code || null;
-    } catch {}
-  }
+
+  // Final guard: drop anything that isn't a real pairing code (e.g. a QR payload
+  // that slipped through from the create response) so the UI falls back to the QR.
+  if (pairingCode && !looksLikePairingCode(pairingCode)) pairingCode = null;
 
   if (!qrCode && !pairingCode) {
     await supabase.from('pending_auth_sessions').delete().eq('id', sessionId);
