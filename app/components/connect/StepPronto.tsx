@@ -1,5 +1,7 @@
 'use client';
 
+import Logo from '@/components/Logo';
+
 // Step 3 — bridge screen between light Connect and dark Dashboard.
 // • Animated check-pop on entry (cubic-bezier bouncy)
 // • Two concentric rings expanding outward (ripple style — matches FAB)
@@ -11,6 +13,11 @@
 export default function StepPronto() {
   return (
     <div className="relative min-h-screen bg-gradient-to-b from-[#075E54] to-[#054C44] text-white flex flex-col items-center justify-center overflow-hidden px-6 text-center">
+      {/* Brand mark anchored top — same as the other two steps */}
+      <div className="absolute top-6 left-1/2 -translate-x-1/2 z-20">
+        <Logo size={20} variant="onDark" />
+      </div>
+
       {/* Expanding rings */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <div className="w-60 h-60 rounded-full border border-white/10 animate-[pronto-ring_2.6s_ease-out_infinite]" />

@@ -10,14 +10,13 @@ import ScheduleModal from '@/components/ScheduleModal';
 import { ContactAvatar } from '@/components/ContactAvatar';
 import PricingSection from '../components/PricingSection';
 import FAQSection from '../components/FAQSection';
-import Footer from '../components/Footer';
 import MessagesSection, { type ScheduledMessage as MessagesSectionMessage } from '../components/MessagesSection';
 import { DeliveryStatusIcon } from '../components/DeliveryStatusIcon';
 import { MessagesEmptyState } from '../components/MessagesEmptyState';
 import { shouldShowOnboardingHints, markOnboardingDone } from '../../components/onboarding/OnboardingTour';
 import { getPlanLimits, getPlanName } from '../lib/plans';
 import InstallPrompt from '../components/InstallPrompt';
-import Logo from '../components/Logo';
+import Logo from '@/components/Logo';
 
 const supabaseClient = typeof window !== 'undefined' ? createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -424,7 +423,14 @@ export default function DashboardPage() {
       </div>
 
       {showFAQ && <FAQSection theme="dark" />}
-      <Footer theme="dark" />
+
+      {/* Micro-riga legale — sostituisce il footer marketing su dashboard.
+          Niente blocco verde / CTA, solo riassicurazione cifratura. */}
+      <div className="border-t border-[#2A3942] bg-[#0B141A] py-4 px-6 text-center">
+        <p className="text-[11px] text-gray-600 leading-relaxed">
+          © 2026 WhatsLater · I tuoi messaggi sono cifrati. Non li leggiamo mai.
+        </p>
+      </div>
 
       <InstallPrompt />
 
@@ -568,10 +574,12 @@ function StatusStrip({ userPhone, subscription, messages }: {
 }
 
 // --- Empty State (replaces WelcomeCard + "0 messages" placeholder) ---
+// flex-1 + justify-center così riempie lo spazio sotto la StatusStrip
+// invece di aggrapparsi in alto lasciando metà schermo bianco.
 function EmptyState() {
   return (
-    <div className="text-center py-12">
-      <div className="w-16 h-16 bg-primary/20 rounded-full flex items-center justify-center mx-auto mb-4">
+    <div className="flex-1 flex flex-col items-center justify-center text-center py-12 min-h-[55vh]">
+      <div className="w-16 h-16 bg-primary/20 rounded-full flex items-center justify-center mb-4">
         <Calendar className="w-8 h-8 text-primary" />
       </div>
       <h2 className="text-xl font-bold mb-2 text-white">
@@ -609,10 +617,7 @@ function DashboardNavbar({ userPhone, plan, onLogout }: {
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-[#111B21]/95 backdrop-blur-md border-b border-[#2A3942] px-4 md:px-6 py-3">
       <div className="max-w-4xl mx-auto flex items-center justify-between">
-        <div className="flex items-center gap-2 font-bold text-lg tracking-tight text-white">
-          <Logo size={24} />
-          <span>WhatsLater</span>
-        </div>
+        <Logo withWordmark variant="onDark" size={22} />
         <div className="flex items-center gap-3">
           {isPaying && (
             <button
