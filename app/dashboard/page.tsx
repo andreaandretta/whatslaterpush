@@ -213,9 +213,11 @@ export default function DashboardPage() {
     setScheduleOpen(true);
   }, []);
 
-  // Edit — same flow as duplicate for now; backend doesn't have an update
-  // endpoint yet, so for an MVP we duplicate-then-delete-original.
-  // TODO(backend): add PATCH /api/messages for true edit-in-place.
+  // Edit — same flow as duplicate for now. Backend PATCH /api/messages now
+  // supports true edit-in-place (status / scheduled_at / message / recurrence),
+  // but ScheduleModal still posts as a new schedule. Migrating it to gate on
+  // an `editMsgId` prop and route to PATCH is the next step — tracked
+  // separately so the backend can ship without dragging the modal refactor.
   const handleEdit = useCallback((msg: MessagesSectionMessage) => {
     handleDuplicate(msg);
     showToast('Modifica come duplicato — l’originale resta finché non lo elimini.');
