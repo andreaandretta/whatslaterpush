@@ -122,6 +122,128 @@ export async function DELETE(req: NextRequest) {
   return NextResponse.json({ success: true });
 }
 
+// PATCH /api/messages — partial update of a pending/paused scheduled message.
+// Two real flows feed it:
+//  1. Pause/resume from the dashboard (status: 'paused' | 'pending').
+//  2. Edit-in-place: reschedule and/or rewrite the body of a message that
+//     hasn't been sent yet. This replaces the old "duplicate-then-delete"
+//     workaround the dashboard used while no PATCH existed.
+// Terminal-state messages (sent / cancelled / failed) are immutable —
+// the right way to "edit" one of those is to schedule a brand new send.
+export async function PATCH(req: NextRequest) {
+  const phone = await getAuthedPhone(req);
+  if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const body = await req.json().catch(() => ({}));
+  const { id, status, scheduled_at, message, recurrence_rule } = body || {};
+  if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+
+  const supabase = getSupabase();
+  const { data: existing } = await supabase
+    .from('scheduled_messages')
+    .select('id, instance_phone, status, media_type, media_url')
+    .eq('id', id)
+    .eq('instance_phone', phone)
+    .single();
+
+  if (!existing) {
+    return NextResponse.json({ error: 'Message not found or not owned' }, { status: 403 });
+  }
+
+  // Terminal states are write-once. Cron may still flip pending → processing
+  // → sent under us, so we treat anything outside the editable set as final.
+  const EDITABLE_STATES = new Set(['pending', 'paused', 'awaiting_confirm', 'awaiting_contact', 'awaiting_datetime', 'awaiting_message']);
+  if (!EDITABLE_STATES.has(existing.status)) {
+    return NextResponse.json({ error: 'message_not_editable', current_status: existing.status }, { status: 409 });
+  }
+
+  const update: Record<string, unknown> = {};
+
+  if (status !== undefined) {
+    if (status !== 'paused' && status !== 'pending') {
+      return NextResponse.json({ error: 'invalid_status' }, { status: 400 });
+    }
+    update.status = status;
+  }
+
+  if (scheduled_at !== undefined) {
+    if (typeof scheduled_at !== 'string') {
+      return NextResponse.json({ error: 'invalid_datetime' }, { status: 400 });
+    }
+    const d = new Date(scheduled_at);
+    if (isNaN(d.getTime()) || d.getTime() < Date.now() + 60_000) {
+      return NextResponse.json({ error: 'invalid_datetime' }, { status: 400 });
+    }
+    update.scheduled_at = applyJitter(d.toISOString());
+  }
+
+  if (message !== undefined) {
+    if (typeof message !== 'string') {
+      return NextResponse.json({ error: 'invalid_message' }, { status: 400 });
+    }
+    const hasMedia = typeof existing.media_type === 'string' && typeof existing.media_url === 'string' && existing.media_url.length > 0;
+    const clean = message.trim();
+    if (!hasMedia) {
+      if (clean.length === 0 || clean.length > 3500) {
+        return NextResponse.json({ error: 'invalid_message' }, { status: 400 });
+      }
+    } else {
+      if (message.length > 3500) {
+        return NextResponse.json({ error: 'invalid_message' }, { status: 400 });
+      }
+    }
+    update.parsed_message = clean;
+    update.caption = clean;
+    if (hasMedia) update.media_caption = clean.length > 0 ? clean : null;
+  }
+
+  if (recurrence_rule !== undefined) {
+    if (recurrence_rule === null || recurrence_rule === '') {
+      update.recurrence_rule = null;
+    } else {
+      if (typeof recurrence_rule !== 'string' || !isValidRule(recurrence_rule)) {
+        return NextResponse.json({ error: 'invalid_recurrence_rule' }, { status: 400 });
+      }
+      update.recurrence_rule = recurrence_rule;
+    }
+  }
+
+  if (Object.keys(update).length === 0) {
+    return NextResponse.json({ error: 'no_fields_to_update' }, { status: 400 });
+  }
+
+  // Conditional write: refuse if the cron picked up the row between our
+  // read and update (status would have moved out of EDITABLE_STATES).
+  const { data: updated, error } = await supabase
+    .from('scheduled_messages')
+    .update(update)
+    .eq('id', id)
+    .eq('instance_phone', phone)
+    .in('status', Array.from(EDITABLE_STATES))
+    .select('id, status, scheduled_at, parsed_message, recurrence_rule')
+    .single();
+
+  if (error) {
+    // No row matched → cron beat us to it. Surface as conflict, not 500.
+    if (error.code === 'PGRST116') {
+      return NextResponse.json({ error: 'message_not_editable' }, { status: 409 });
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  await logAuditEvent({
+    userPhone: phone,
+    eventType: 'schedule_updated',
+    payload: {
+      message_id: id,
+      fields: Object.keys(update),
+    },
+    ipAddress: clientIpFromHeaders(req.headers),
+  });
+
+  return NextResponse.json({ message: updated });
+}
+
 export async function POST(req: NextRequest) {
   const phone = await getAuthedPhone(req);
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
