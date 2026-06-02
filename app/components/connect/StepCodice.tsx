@@ -76,7 +76,7 @@ export default function StepCodice({ code, expiresAt, onBack, onRegenerate }: Pr
             </svg>
             Indietro
           </button>
-          <Logo size={20} variant="onLight" />
+          <Logo size={20} variant="onLight" ringColor="#FFFFFF" />
           <HelpPopover />
         </div>
 

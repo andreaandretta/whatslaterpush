@@ -150,8 +150,23 @@ export default function InstallPrompt() {
           <button
             type="button"
             onClick={handleInstall}
-            className="text-sm font-semibold bg-[#25D366] hover:bg-[#1ebe5b] text-white rounded-full px-4 py-2 transition-colors"
+            className="inline-flex items-center gap-1.5 text-sm font-semibold bg-[#25D366] hover:bg-[#1ebe5b] text-white rounded-full px-4 py-2 transition-colors"
           >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="6" y="2" width="12" height="20" rx="3" />
+              <path d="M12 7v6" />
+              <path d="m9.5 10.5 2.5 2.5 2.5-2.5" />
+            </svg>
             Aggiungi
           </button>
         ) : (
