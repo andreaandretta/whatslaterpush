@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Download, Share, X } from 'lucide-react';
+import { Download, Share, X, CheckCircle2 } from 'lucide-react';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -23,25 +23,36 @@ function isIosSafari(): boolean {
   return /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
 }
 
-// Always-reachable "Installa app" control for the dashboard header. Complements
-// the auto banner (InstallPrompt) and is the reliable fallback everywhere:
-//  - Chrome/Android: fires the captured beforeinstallprompt (native install)
-//  - iOS Safari (no beforeinstallprompt exists): shows Share -> Add to Home steps
-//  - Other browsers / event not yet fired: shows a generic browser-menu hint
-//  - Already installed (standalone): renders nothing
+// Persistent "Installa app" control for the dashboard header.
+//  - Native prompt available (Chrome/Android/desktop): click fires ONLY the
+//    native prompt, then a green "App installata!" toast on accept.
+//  - iOS Safari (no beforeinstallprompt): click opens readable add-to-home steps.
+//  - No native prompt and not iOS: button hidden (nothing useful to do).
+//  - Already installed (standalone): hidden.
 export default function InstallAppButton() {
   const [mounted, setMounted] = useState(false);
   const [installed, setInstalled] = useState(false);
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [ios, setIos] = useState(false);
-  const [showHint, setShowHint] = useState(false);
+  const [showIosHint, setShowIosHint] = useState(false);
+  const [showToast, setShowToast] = useState(false);
+
+  const celebrate = useCallback(() => {
+    setShowToast(true);
+    window.setTimeout(() => setShowToast(false), 3500);
+  }, []);
 
   useEffect(() => {
     setMounted(true);
     if (isStandaloneNow()) { setInstalled(true); return; }
     setIos(isIosSafari());
     const onBip = (e: Event) => { e.preventDefault(); setDeferred(e as BeforeInstallPromptEvent); };
-    const onInstalled = () => { setInstalled(true); setShowHint(false); };
+    const onInstalled = () => {
+      setInstalled(true);
+      setShowIosHint(false);
+      setShowToast(true);
+      window.setTimeout(() => setShowToast(false), 3500);
+    };
     window.addEventListener('beforeinstallprompt', onBip);
     window.addEventListener('appinstalled', onInstalled);
     return () => {
@@ -51,56 +62,69 @@ export default function InstallAppButton() {
   }, []);
 
   const handleClick = useCallback(async () => {
+    // Native prompt ready → fire ONLY the native prompt. Never a tooltip.
     if (deferred) {
-      try { await deferred.prompt(); await deferred.userChoice; } catch { /* user dismissed */ }
+      try {
+        await deferred.prompt();
+        const choice = await deferred.userChoice;
+        if (choice.outcome === 'accepted') celebrate();
+      } catch { /* user dismissed */ }
       setDeferred(null);
       return;
     }
-    setShowHint(true);
-  }, [deferred]);
+    // Instructions tooltip ONLY on iOS Safari (no native prompt exists there).
+    if (ios) setShowIosHint(true);
+  }, [deferred, ios, celebrate]);
 
-  if (!mounted || installed) return null;
+  if (!mounted) return null;
+
+  // Show the button only where a click does something: native prompt ready, or iOS.
+  const showButton = !installed && (deferred !== null || ios);
 
   return (
     <>
-      <button
-        type="button"
-        onClick={handleClick}
-        aria-label="Installa l'app WhatsLater"
-        className="flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-medium text-primary border border-primary/40 hover:bg-primary/10 transition-colors whitespace-nowrap"
-      >
-        <Download className="w-4 h-4" />
-        <span className="hidden sm:inline">Installa app</span>
-      </button>
+      {showButton && (
+        <button
+          type="button"
+          onClick={handleClick}
+          aria-label="Installa l'app WhatsLater"
+          className="flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-medium text-primary border border-primary/40 hover:bg-primary/10 transition-colors whitespace-nowrap"
+        >
+          <Download className="w-4 h-4" />
+          <span className="hidden sm:inline">Installa app</span>
+        </button>
+      )}
 
-      {showHint && (
+      {showIosHint && (
         <div
           role="dialog"
-          aria-label="Come installare l'app"
-          className="fixed inset-0 z-toast flex items-end sm:items-center justify-center bg-black/50 p-4"
-          onClick={() => setShowHint(false)}
+          aria-label="Come installare l'app su iPhone"
+          className="fixed inset-0 z-toast flex items-end sm:items-center justify-center bg-black/60 p-4"
+          onClick={() => setShowIosHint(false)}
         >
           <div
-            className="bg-[#1F2C33] border border-[#2A3942] rounded-2xl p-5 w-full sm:w-[360px] shadow-2xl"
             onClick={(e) => e.stopPropagation()}
+            className="bg-[#1F2C33] border border-[#2A3942] rounded-2xl p-5 w-full min-w-[240px] sm:w-[360px] max-w-[92vw] shadow-2xl"
           >
             <div className="flex items-start justify-between mb-3">
-              <h3 className="text-white font-semibold text-base">Installa WhatsLater</h3>
-              <button onClick={() => setShowHint(false)} aria-label="Chiudi" className="text-gray-400 hover:text-white">
+              <h3 className="text-white font-semibold text-[15px]">Aggiungi alla schermata Home</h3>
+              <button onClick={() => setShowIosHint(false)} aria-label="Chiudi" className="text-gray-300 hover:text-white shrink-0">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            {ios ? (
-              <ol className="text-sm text-gray-300 space-y-2 list-decimal list-inside">
-                <li>Tocca <Share className="inline w-4 h-4" /> <strong>Condividi</strong> nella barra di Safari.</li>
-                <li>Scegli <strong>&ldquo;Aggiungi a Home&rdquo;</strong>.</li>
-                <li>Conferma con <strong>Aggiungi</strong>.</li>
-              </ol>
-            ) : (
-              <p className="text-sm text-gray-300 leading-relaxed">
-                Apri il menu del browser e scegli <strong>&ldquo;Installa app&rdquo;</strong> oppure <strong>&ldquo;Aggiungi a schermata Home&rdquo;</strong>. Su Chrome desktop trovi l&rsquo;icona di installazione nella barra degli indirizzi.
-              </p>
-            )}
+            <ol className="text-[13px] leading-relaxed text-gray-200 space-y-2 list-decimal list-inside">
+              <li>Tocca <Share className="inline w-4 h-4 align-text-bottom" /> <strong>Condividi</strong> nella barra di Safari.</li>
+              <li>Scegli <strong>&ldquo;Aggiungi a Home&rdquo;</strong>.</li>
+              <li>Conferma con <strong>Aggiungi</strong>.</li>
+            </ol>
+          </div>
+        </div>
+      )}
+
+      {showToast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-toast">
+          <div className="flex items-center gap-2 bg-green-600 text-white text-sm font-medium px-4 py-2.5 rounded-full shadow-2xl whitespace-nowrap">
+            <CheckCircle2 className="w-4 h-4" /> App installata!
           </div>
         </div>
       )}
