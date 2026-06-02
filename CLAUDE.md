@@ -1,6 +1,6 @@
 # WhatsLater (SchedWhats) — Project Context
 
-## STATO ATTUALE (aggiornato 28 Maggio 2026)
+## STATO ATTUALE (aggiornato 2 Giugno 2026)
 
 ### Prodotto
 - ICP **D primario** (allenatori, parroci, scout, istruttori, scuola guida) + **B secondario** (site manager, facility manager). Segmento A (parrucchieri/dentisti/estetiste) escluso dal lancio, DA-RIVEDERE post 50 utenti reali. Segmento C limitato a pipeline calda (follow-up clienti già in trattativa); cold lead generation esclusa per vincolo WhatsApp.
@@ -9,7 +9,7 @@
 - **Principio silenzioso**: il prodotto notifica i clienti dell'utente, mai l'utente stesso. Niente badge rossi, niente push, niente email di conferma routine. Eccezioni esplicite: billing/lifecycle (trial expiry, upsell all'80% del cap, blocco per fail rate eccessivo).
 
 ### Stack tecnico
-- **Frontend**: Next.js 14.2.15 (App Router) + React 18.3.1 + TypeScript 5.5 + Tailwind CSS
+- **Frontend**: Next.js 14.2.35 (App Router) + React 18.3.1 + TypeScript 5.5 + Tailwind CSS + PWA via `@ducanh2912/next-pwa` ^10.2 (dev-dep, registrato manualmente via `app/components/ServiceWorkerRegistrar.tsx`)
 - **Backend**: Next.js API routes + cron multilayer. `/api/cron/send-messages` ha 3 trigger (vedi sezione Monitoring sotto). `/api/cron/daily-report` Vercel cron 06:00 UTC (include prune `audit_events` >90gg dallo Sprint 4). `/api/cron/cleanup-media` Vercel cron domenica 03:00 UTC (Sprint 4).
 - **DB**: Supabase (Postgres) — source of truth è `supabase/migrations/`, `schema.sql` è snapshot v7 legacy
 - **WhatsApp**: Evolution API v2 self-hosted su DigitalOcean droplet (Baileys multi-istanza)
@@ -36,6 +36,9 @@
 - ✅ Webhook gating self-chat-only, gruppi/broadcast bloccati, atomic lock cron, timeout 8s Evolution, `WEBHOOK_SECRET` obbligatorio, HMAC signature `x-hub-signature-256` opzionale (gate-able con `EVOLUTION_SIGNATURE_REQUIRED=true`, Sprint 6)
 - ✅ Sprint 4 polish operativo (2026-05-28, 5 commit): media cleanup cron 30gg domenica 03:00 UTC + audit_events 90gg retention via daily-report + `DEPRECATED_DEBUG_TOKEN` rimosso da debug-logs (6gg early vs deadline 2026-06-03, orphan grep clean) + Sentry @sentry/nextjs ^10.54 su 3 runtime con PII scrubber (JID/E.164/email) + hotfix `/api/test/sentry` con captureException esplicito + flush(2000) + diagnostica
 - ✅ Sprint 6 GDPR + security (2026-05-29, 5 commit, basato su AI Council audit Gemini + Claude cross-check): (1) `maskPhoneForLLM` in `admin/chat` system prompt (no più phone E.164 verso Groq/OpenAI); (2) `scrubPiiForLog` su dbLog payloads + cron `cleanup-webhook-logs` domenica 04:00 UTC (30gg retention); (3) `MAX_PENDING = dailyLimit × 7` quota in POST `/api/messages` (429 queue_full); (4) feature flag `EVOLUTION_SIGNATURE_REQUIRED` per HMAC obbligatorio (default off, attivare quando Evolution Manager firma outgoing); (5) endpoint POST `/api/account/delete` GDPR right-to-be-forgotten (cascade 10 tabelle + Evolution disconnect best-effort + audit `account_deleted` con phone hash).
+- ✅ Sprint 7 robustness (2026-05-31, 4 PR): real healthcheck + Sentry alerts su cron silence (#14), atomic counter cron service-role-only (#15), idempotent send recovery via `send_attempted_at` colonna (#16, migration `20260531_send_attempted_at.sql`), Next.js 14.2.15 → 14.2.35 security patches (#17).
+- ✅ Sprint 5 PWA + leftovers (2026-06-01/02, 5 PR consolidati): (1) manifest + 5 icone (icon-192/512/180, maskable-512, favicon-32) + offline page + InstallPrompt gated on `wl_first_msg_done` (#18); (2) leftover Cluster E z-tokens su MessageActionsSheet/AnalogClockDialog/DarkCalendarDialog/SaveTemplateDialog + migration retroattiva `color_in_palette` CHECK constraint per `contact_labels` (#20, no-op in prod già applicata); (3) hotfix middleware: whitelist `/manifest.json` + `/sw.js` + workbox/swe-worker/fallback per Vercel deploy (#21); (4) hotfix client-side SW register via `ServiceWorkerRegistrar` (#22, `@ducanh2912/next-pwa` auto-inject è no-op su App Router + standalone). PWA installabile verificato in prod: layout chunk emette `serviceWorker.register("/sw.js")` + /manifest.json + /sw.js → 200. Sprint 5 Cluster F resta con `ContactPickerHint`/`TemplateHint` scartati intenzionalmente (EmptyState + FAB pulse coprono il segnale). Sprint 5 Cluster C UI di creazione label rimandata a issue #19 (Sprint 8/9 feature, presupposto spec sbagliato — la UI non è mai esistita).
+- ✅ Sprint 7.5 ops (2026-06-02, in main): `/api/ops/*` endpoint per Evolution instance logout/delete (secret-guarded, exempt da `sw_session` middleware), `ops_commands` queue + cron worker, fix Evolution pairing code retrieval (GET `?number=`, mai più QR payload come pairing code).
 - ⚠️ **Sentry pending DSN onboarding**: codice wired, manca solo `SENTRY_DSN` + `NEXT_PUBLIC_SENTRY_DSN` su Vercel project settings. Verifica con `curl '/api/test/sentry?secret=$CRON_SECRET'` → response include `sentry_initialized`, `event_id`, `flushed`.
 - ⚠️ **Cluster D Make.com SKIP**: dipende da API key system, deferred Sprint 5.
 - ⚠️ **Stripe live mode SCARTATA** (2026-05-17): primi 5 paganti via bonifico/PayPal manuale per evitare blocco KYC. Si riapre dopo 3-5 paganti reali.
@@ -66,7 +69,7 @@ L'atomic lock in `app/api/cron/send-messages/route.ts` (status pending → proce
 @sentry/nextjs ^10.54 wired su server + edge + client runtime via `instrumentation.ts` + `instrumentation-client.ts` + `sentry.{server,edge}.config.ts`. Init gated on `SENTRY_DSN` env var → no-op silenzioso quando unset (local dev + pre-onboarding state). PII scrubber in `app/lib/sentry-pii.ts` (regex per WhatsApp JID, E.164 phone, email) applicato a `beforeSend` e `beforeBreadcrumb` su tutti i runtime. `withSentryConfig` in `next.config.js` con `tunnelRoute: '/monitoring'` per evitare ad-blocker. Source map upload opzionale gated on `SENTRY_AUTH_TOKEN`. Test endpoint `/api/test/sentry?secret=$CRON_SECRET` ritorna JSON diagnostico con campi `dsn_set`, `sentry_initialized`, `event_id`, `flushed` (usa `captureException` + `flush(2000)` esplicito perché serverless lambda freeze prima del transport flush con throw non gestito).
 
 ### Test suite
-- 546 test unit/integration verdi (`npm test`) — baseline post-Sprint 6 (GDPR maskPhoneForLLM 3 + log-scrubber 5 + cleanup-webhook-logs 4 + MAX_PENDING 3 + EVOLUTION_SIGNATURE_REQUIRED 2 + account-delete 6). Storico: 480 post-Sprint 2 → 509 post-Sprint 3 → 523 post-Sprint 4 (CLAUDE.md riportava 526 ma il vero baseline pre-Sprint-6 era 523) → 546 post-Sprint 6.
+- 555+ test unit/integration verdi (`npm test`) — baseline post-Sprint 5 PWA, +9 dalla PR #18 (manifest shape 4 + InstallPrompt gating 5). Storico: 480 post-Sprint 2 → 509 post-Sprint 3 → 523 post-Sprint 4 (CLAUDE.md riportava 526 ma il vero baseline pre-Sprint-6 era 523) → 546 post-Sprint 6 → 555+ post-Sprint 5 PWA. Numero esatto da contare con un `npm test` fresco dopo i merge di Sprint 7.5 ops.
 - 7 suite e2e Playwright (`__tests__/e2e/*.spec.ts`) — al momento jest le scoopa per errore di config (issue pre-esistente, non bloccante per release)
 
 ### Auth note
