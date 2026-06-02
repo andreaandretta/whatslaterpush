@@ -61,3 +61,20 @@ describe('getPlanName', () => {
     expect(getPlanName('business')).toBe('Business');
   });
 });
+
+describe('customLabels flag', () => {
+  test('free plan: customLabels is false', () => {
+    expect(getPlanLimits('free').customLabels).toBe(false);
+  });
+
+  test('trial + paid plans: customLabels is true', () => {
+    expect(getPlanLimits('trial').customLabels).toBe(true);
+    expect(getPlanLimits('personal').customLabels).toBe(true);
+    expect(getPlanLimits('professional').customLabels).toBe(true);
+    expect(getPlanLimits('business').customLabels).toBe(true);
+  });
+
+  test('unknown plan falls back to free (no customLabels)', () => {
+    expect(getPlanLimits('unknown').customLabels).toBe(false);
+  });
+});

@@ -3,14 +3,18 @@ export interface PlanLimits {
   maxContacts: number;
   maxRetry: number;
   historyDays: number;
+  // Custom contact labels (LabelPicker filter + LabelCreateModal). Free
+  // tier gets the read-only chip-bar so legacy data stays visible, but
+  // create/delete is gated to anyone on a paid (or trial) plan.
+  customLabels: boolean;
 }
 
 const PLANS: Record<string, PlanLimits> = {
-  trial:        { dailyLimit: 20, maxContacts: 50,     maxRetry: 3, historyDays: 30 },
-  free:         { dailyLimit: 3,  maxContacts: 5,      maxRetry: 1, historyDays: 7  },
-  personal:     { dailyLimit: 20, maxContacts: 50,     maxRetry: 3, historyDays: 30 },
-  professional: { dailyLimit: 35, maxContacts: 200,    maxRetry: 3, historyDays: 60 },
-  business:     { dailyLimit: 50, maxContacts: 999999, maxRetry: 3, historyDays: 90 },
+  trial:        { dailyLimit: 20, maxContacts: 50,     maxRetry: 3, historyDays: 30, customLabels: true  },
+  free:         { dailyLimit: 3,  maxContacts: 5,      maxRetry: 1, historyDays: 7,  customLabels: false },
+  personal:     { dailyLimit: 20, maxContacts: 50,     maxRetry: 3, historyDays: 30, customLabels: true  },
+  professional: { dailyLimit: 35, maxContacts: 200,    maxRetry: 3, historyDays: 60, customLabels: true  },
+  business:     { dailyLimit: 50, maxContacts: 999999, maxRetry: 3, historyDays: 90, customLabels: true  },
 };
 
 const FREE = PLANS.free;
