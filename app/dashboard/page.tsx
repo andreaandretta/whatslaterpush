@@ -17,6 +17,7 @@ import { MessagesEmptyState } from '../components/MessagesEmptyState';
 import { shouldShowOnboardingHints, markOnboardingDone } from '../../components/onboarding/OnboardingTour';
 import { getPlanLimits, getPlanName } from '../lib/plans';
 import InstallPrompt from '../components/InstallPrompt';
+import Logo from '../components/Logo';
 
 const supabaseClient = typeof window !== 'undefined' ? createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -599,7 +600,7 @@ function DashboardNavbar({ userPhone, plan, onLogout }: {
     <nav className="fixed top-0 left-0 right-0 z-50 bg-[#111B21]/95 backdrop-blur-md border-b border-[#2A3942] px-4 md:px-6 py-3">
       <div className="max-w-4xl mx-auto flex items-center justify-between">
         <div className="flex items-center gap-2 font-bold text-lg tracking-tight text-white">
-          <Calendar className="w-5 h-5 text-primary" />
+          <Logo size={24} />
           <span>WhatsLater</span>
         </div>
         <div className="flex items-center gap-3">

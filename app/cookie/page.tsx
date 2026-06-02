@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Calendar, ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
+import Logo from '../components/Logo';
 
 export const metadata: Metadata = {
   title: 'Cookie Policy — WhatsLater',
@@ -16,7 +17,7 @@ export default function CookiePage() {
             href="/"
             className="flex items-center gap-2 font-bold text-xl text-text-primary hover:text-primary transition-colors"
           >
-            <Calendar className="w-6 h-6 text-primary" />
+            <Logo size={24} />
             <span>WhatsLater</span>
           </Link>
           <Link

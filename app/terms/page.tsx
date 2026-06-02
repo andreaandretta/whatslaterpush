@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Calendar, ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
+import Logo from '../components/Logo';
 
 export const metadata: Metadata = {
   title: 'Termini di Servizio — WhatsLater',
@@ -14,7 +15,7 @@ export default function TermsPage() {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2 font-bold text-xl text-text-primary hover:text-primary transition-colors">
-            <Calendar className="w-6 h-6 text-primary" />
+            <Logo size={24} />
             <span>WhatsLater</span>
           </Link>
           <Link href="/" className="flex items-center gap-1 text-sm text-gray-500 hover:text-text-primary transition-colors">
