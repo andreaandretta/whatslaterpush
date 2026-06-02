@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { denyUnlessOpsAuthorized } from '../../../../lib/ops-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,18 +30,8 @@ function safeInstance(raw: any) {
 // Read-only control-tower proxy: lists Evolution instances + connection state.
 // Auth: ?secret=<OPS_SECRET|CRON_SECRET> or `Authorization: Bearer <...>`.
 export async function GET(req: NextRequest) {
-  // Dedicated control-tower secret; falls back to CRON_SECRET until OPS_SECRET
-  // is provisioned in Vercel env, so /api/ops/* can migrate without downtime.
-  const expectedSecret = process.env.OPS_SECRET || process.env.CRON_SECRET;
-  if (!expectedSecret) {
-    return NextResponse.json({ error: 'OPS_SECRET/CRON_SECRET not configured' }, { status: 500 });
-  }
-  const url = new URL(req.url);
-  const queryToken = url.searchParams.get('secret');
-  const headerToken = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-  if ((queryToken || headerToken) !== expectedSecret) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const denied = denyUnlessOpsAuthorized(req);
+  if (denied) return denied;
 
   const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL;
   const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
