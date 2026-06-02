@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { X, Search, UserPlus, ChevronDown, ChevronUp, AlertCircle, Loader2, Upload } from 'lucide-react';
+import { X, Search, UserPlus, ChevronDown, ChevronUp, AlertCircle, Loader2, Upload, Settings2 } from 'lucide-react';
 import { validatePhone } from '../app/lib/phone';
 import { Button } from './Button';
 import { ContactAvatar } from './ContactAvatar';
 import { LabelPicker } from './LabelPicker';
 import { CsvImportDialog } from './CsvImportDialog';
+import LabelManagerSheet from './LabelManagerSheet';
 
 interface Contact {
   number: string;
@@ -49,6 +50,10 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   const [csvOpen, setCsvOpen] = useState(false);
   // Bump to force refetch (e.g. after CSV import adds new contacts).
   const [refetchKey, setRefetchKey] = useState(0);
+  // Label manager sheet + its own bump so the LabelPicker chip-bar refetches
+  // when the user creates or deletes a label from the manager.
+  const [labelManagerOpen, setLabelManagerOpen] = useState(false);
+  const [labelRefetchKey, setLabelRefetchKey] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -183,7 +188,30 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
           onImported={() => setRefetchKey(k => k + 1)}
         />
 
-        <LabelPicker selectedId={labelFilterId} onChange={setLabelFilterId} />
+        <div className="flex items-center gap-1 border-b border-[#2A3942]">
+          <div className="flex-1 min-w-0">
+            <LabelPicker
+              selectedId={labelFilterId}
+              onChange={setLabelFilterId}
+              refreshKey={labelRefetchKey}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setLabelManagerOpen(true)}
+            aria-label="Gestisci etichette"
+            title="Gestisci etichette"
+            className="shrink-0 p-2 mr-2 rounded-full text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+          >
+            <Settings2 className="w-4 h-4" />
+          </button>
+        </div>
+
+        <LabelManagerSheet
+          open={labelManagerOpen}
+          onClose={() => setLabelManagerOpen(false)}
+          onChange={() => setLabelRefetchKey((k) => k + 1)}
+        />
 
         <div className="px-4 py-2" style={{ backgroundColor: '#111B21' }}>
           <div className="relative">

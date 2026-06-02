@@ -67,6 +67,13 @@ describe('GET /api/labels', () => {
 });
 
 describe('POST /api/labels', () => {
+  // Most POST flows now look up the caller's plan before insert. Default to
+  // a paying tier (personal) so the gate doesn't 403 the existing tests;
+  // the new "free" test below overrides this explicitly.
+  function mockPlan(plan: string) {
+    mockSupa.setResponse('user_instances:select', { subscription_plan: plan });
+  }
+
   test('400 invalid_name when empty', async () => {
     const req = await authedReq({ name: '   ' });
     const { POST } = await import('../app/api/labels/route');
@@ -76,6 +83,7 @@ describe('POST /api/labels', () => {
   });
 
   test('200 creates label with cleaned name + color', async () => {
+    mockPlan('personal');
     mockSupa.setResponse('contact_labels:insert', {
       id: 'L-new', name: 'Fornitori', color: '#0F9D58', display_order: 0, created_at: '',
     });
@@ -109,12 +117,38 @@ describe('POST /api/labels', () => {
   });
 
   test('409 on duplicate name (Postgres 23505)', async () => {
+    mockPlan('personal');
     mockSupa.setResponse('contact_labels:insert', null, { code: '23505', message: 'duplicate' });
     const req = await authedReq({ name: 'U12', color: '#0F9D58' });
     const { POST } = await import('../app/api/labels/route');
     const res = await POST(req);
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe('duplicate_name');
+  });
+
+  test('403 plan_label_locked when user is on Free', async () => {
+    mockPlan('free');
+    const req = await authedReq({ name: 'U12', color: '#0F9D58' });
+    const { POST } = await import('../app/api/labels/route');
+    const res = await POST(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe('plan_label_locked');
+    expect(body.plan).toBe('free');
+    // Gate runs before insert, so no contact_labels write should appear.
+    const insertCall = mockSupa.calls.find(c => c.table === 'contact_labels' && c.operation === 'insert');
+    expect(insertCall).toBeUndefined();
+  });
+
+  test('200 when user is on Trial (trial has customLabels)', async () => {
+    mockPlan('trial');
+    mockSupa.setResponse('contact_labels:insert', {
+      id: 'L-trial', name: 'Genitori', color: '#1976D2', display_order: 0, created_at: '',
+    });
+    const req = await authedReq({ name: 'Genitori', color: '#1976D2' });
+    const { POST } = await import('../app/api/labels/route');
+    const res = await POST(req);
+    expect(res.status).toBe(200);
   });
 });
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { isValidLabelColor } from '../../lib/labels';
+import { getPlanLimits } from '../../lib/plans';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,6 +68,20 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = getSupabase();
+
+  // Tier gate: Free plan can still see existing label rows via GET, but
+  // cannot create new ones. Returns 403 plan_label_locked so the UI can
+  // route to the upgrade flow.
+  const { data: user } = await supabase
+    .from('user_instances')
+    .select('subscription_plan')
+    .eq('phone_number', phone)
+    .single();
+  const plan = user?.subscription_plan || 'free';
+  if (!getPlanLimits(plan).customLabels) {
+    return NextResponse.json({ error: 'plan_label_locked', plan }, { status: 403 });
+  }
+
   const { data, error } = await supabase
     .from('contact_labels')
     .insert({
