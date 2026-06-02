@@ -11,9 +11,7 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 }
 
-const FIRST_MSG_FLAG = 'wl_first_msg_done';
 const DISMISSED_FLAG = 'wl_install_dismissed';
-const FIRST_MSG_EVENT = 'wl-first-msg-done';
 
 // iOS Safari has no beforeinstallprompt. Detect it so we can render the
 // "Condividi → Aggiungi a Home" instruction instead of the native button.
@@ -40,7 +38,6 @@ function isAlreadyStandalone(): boolean {
 export default function InstallPrompt() {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [iosFallback, setIosFallback] = useState(false);
-  const [firstMsgDone, setFirstMsgDone] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
   // Read localStorage flags + listen for the first-message event.
@@ -49,7 +46,6 @@ export default function InstallPrompt() {
     if (isAlreadyStandalone()) return; // Already installed → never show.
 
     try {
-      setFirstMsgDone(localStorage.getItem(FIRST_MSG_FLAG) === '1');
       setDismissed(localStorage.getItem(DISMISSED_FLAG) === '1');
     } catch {
       // localStorage can throw in private mode — fail silent, no prompt.
@@ -57,10 +53,6 @@ export default function InstallPrompt() {
     }
 
     setIosFallback(isIosSafariStandaloneCapable());
-
-    const onFirstMsg = () => setFirstMsgDone(true);
-    window.addEventListener(FIRST_MSG_EVENT, onFirstMsg);
-    return () => window.removeEventListener(FIRST_MSG_EVENT, onFirstMsg);
   }, []);
 
   // Intercept the native prompt as soon as Chrome/Android offers it.
@@ -109,7 +101,7 @@ export default function InstallPrompt() {
 
   // Visibility gate: only after first scheduled message, never if dismissed,
   // and we need either a deferred prompt (Chrome/Android) or the iOS fallback.
-  const visible = firstMsgDone && !dismissed && (deferred !== null || iosFallback);
+  const visible = !dismissed && (deferred !== null || iosFallback);
   if (!visible) return null;
 
   return (
