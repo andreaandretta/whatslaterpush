@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Download, Share, X, CheckCircle2 } from 'lucide-react';
+import { Download, Share, X, CheckCircle2, MoreVertical } from 'lucide-react';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -23,18 +23,34 @@ function isIosSafari(): boolean {
   return /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
 }
 
-// Persistent "Installa app" control in the dashboard header — ALWAYS visible
-// unless the app is already installed, so it never silently disappears.
+// Heuristic for a phone/tablet with "Request desktop site" ON. Chrome then
+// sends a desktop UA (no "Mobile" token) and SUPPRESSES beforeinstallprompt /
+// PWA install entirely, so the native prompt can never fire — no code can
+// override it. We detect a coarse (touch) primary pointer + multi-touch + a
+// desktop-looking UA, and tell the user to turn Desktop site off (the real fix).
+function isDesktopSiteOnTouch(): boolean {
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const touch = (navigator.maxTouchPoints || 0) > 1;
+  const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  const looksDesktop = !/Mobile|Android|iPhone|iPad|iPod/i.test(ua);
+  return touch && coarse && looksDesktop;
+}
+
+// Persistent "Installa app" control in the dashboard header — always visible
+// unless already installed.
 //  - Native prompt ready (Chrome/Android/desktop): click fires ONLY the native
-//    prompt, then a green "App installata!" toast on accept. No sheet.
-//  - No native prompt: a readable instructions sheet — iOS shows Share -> Add to
-//    Home, other browsers show the generic browser-menu hint.
+//    prompt, then a green "App installata!" toast on accept.
+//  - No native prompt: a readable sheet — iOS shows Share -> Add to Home,
+//    desktop-site-on-phone tells the user to turn Desktop site off, otherwise a
+//    generic browser-menu hint.
 //  - Already installed (standalone): renders nothing.
 export default function InstallAppButton() {
   const [mounted, setMounted] = useState(false);
   const [installed, setInstalled] = useState(false);
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [ios, setIos] = useState(false);
+  const [desktopMode, setDesktopMode] = useState(false);
   const [showSheet, setShowSheet] = useState(false);
   const [showToast, setShowToast] = useState(false);
 
@@ -47,6 +63,7 @@ export default function InstallAppButton() {
     setMounted(true);
     if (isStandaloneNow()) { setInstalled(true); return; }
     setIos(isIosSafari());
+    setDesktopMode(isDesktopSiteOnTouch());
     const onBip = (e: Event) => { e.preventDefault(); setDeferred(e as BeforeInstallPromptEvent); };
     const onInstalled = () => { setInstalled(true); setShowSheet(false); celebrate(); };
     window.addEventListener('beforeinstallprompt', onBip);
@@ -58,7 +75,6 @@ export default function InstallAppButton() {
   }, [celebrate]);
 
   const handleClick = useCallback(async () => {
-    // Native prompt ready -> fire ONLY the native prompt (never a sheet).
     if (deferred) {
       try {
         await deferred.prompt();
@@ -68,7 +84,6 @@ export default function InstallAppButton() {
       setDeferred(null);
       return;
     }
-    // No native prompt -> readable instructions sheet (content branches by platform).
     setShowSheet(true);
   }, [deferred, celebrate]);
 
@@ -111,6 +126,15 @@ export default function InstallAppButton() {
                 <li>Scegli <strong>&ldquo;Aggiungi a Home&rdquo;</strong>.</li>
                 <li>Conferma con <strong>Aggiungi</strong>.</li>
               </ol>
+            ) : desktopMode ? (
+              <div className="text-[13px] leading-relaxed text-gray-200 space-y-2">
+                <p>Hai la modalit&agrave; <strong>&ldquo;Sito desktop&rdquo;</strong> attiva: in questa modalit&agrave; Chrome non consente di installare l&rsquo;app.</p>
+                <ol className="space-y-2 list-decimal list-inside">
+                  <li>Tocca <MoreVertical className="inline w-4 h-4 align-text-bottom" /> in Chrome.</li>
+                  <li><strong>Deseleziona &ldquo;Sito desktop&rdquo;</strong>.</li>
+                  <li>Ricarica e tocca di nuovo <strong>Installa app</strong>.</li>
+                </ol>
+              </div>
             ) : (
               <p className="text-[13px] leading-relaxed text-gray-200">
                 Apri il menu del browser (i tre puntini in alto) e scegli <strong>&ldquo;Installa app&rdquo;</strong> oppure <strong>&ldquo;Aggiungi a schermata Home&rdquo;</strong>. Su Chrome desktop trovi l&rsquo;icona di installazione nella barra degli indirizzi.
