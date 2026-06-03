@@ -2,55 +2,18 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Share, X, CheckCircle2, MoreVertical } from 'lucide-react';
+import { useInstallPrompt } from '../hooks/useInstallPrompt';
 
-interface BeforeInstallPromptEvent extends Event {
-  prompt(): Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
-}
-
-function isStandaloneNow(): boolean {
-  if (typeof window === 'undefined') return false;
-  if (window.matchMedia?.('(display-mode: standalone)').matches) return true;
-  const nav = navigator as Navigator & { standalone?: boolean };
-  return nav.standalone === true;
-}
-
-function isIosSafari(): boolean {
-  if (typeof navigator === 'undefined' || typeof window === 'undefined') return false;
-  const ua = navigator.userAgent || '';
-  const ios = /iPad|iPhone|iPod/.test(ua) && !(window as unknown as { MSStream?: unknown }).MSStream;
-  if (!ios) return false;
-  return /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
-}
-
-// Heuristic for a phone/tablet with "Request desktop site" ON. Chrome then
-// sends a desktop UA (no "Mobile" token) and SUPPRESSES beforeinstallprompt /
-// PWA install entirely, so the native prompt can never fire — no code can
-// override it. We detect a coarse (touch) primary pointer + multi-touch + a
-// desktop-looking UA, and tell the user to turn Desktop site off (the real fix).
-function isDesktopSiteOnTouch(): boolean {
-  if (typeof navigator === 'undefined' || typeof window === 'undefined') return false;
-  const ua = navigator.userAgent || '';
-  const touch = (navigator.maxTouchPoints || 0) > 1;
-  const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
-  const looksDesktop = !/Mobile|Android|iPhone|iPad|iPod/i.test(ua);
-  return touch && coarse && looksDesktop;
-}
-
-// Persistent "Installa app" control in the dashboard header — always visible
-// unless already installed.
-//  - Native prompt ready (Chrome/Android/desktop): click fires ONLY the native
-//    prompt, then a green "App installata!" toast on accept.
-//  - No native prompt: a readable sheet — iOS shows Share -> Add to Home,
-//    desktop-site-on-phone tells the user to turn Desktop site off, otherwise a
-//    generic browser-menu hint.
-//  - Already installed (standalone): renders nothing.
+// Compact install pill in the dashboard header. Single tap path:
+//  - Native prompt available (Chrome/Android/desktop) → fire it, then a
+//    "App installata!" toast on accept.
+//  - No native prompt → open a sheet with the right copy for iOS,
+//    desktop-site-on-phone, or generic browser menu.
+//  - Already installed (standalone) → renders nothing.
+//
+// Label collapses to "Installa" under sm: to fit the 48px header at 360px.
 export default function InstallAppButton() {
-  const [mounted, setMounted] = useState(false);
-  const [installed, setInstalled] = useState(false);
-  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
-  const [ios, setIos] = useState(false);
-  const [desktopMode, setDesktopMode] = useState(false);
+  const { mounted, installed, deferred, ios, desktopMode, install } = useInstallPrompt();
   const [showSheet, setShowSheet] = useState(false);
   const [showToast, setShowToast] = useState(false);
 
@@ -59,70 +22,53 @@ export default function InstallAppButton() {
     window.setTimeout(() => setShowToast(false), 3500);
   }, []);
 
+  // appinstalled may fire from outside this button too (e.g. the user
+  // installs from the browser menu); close any open sheet and toast then.
   useEffect(() => {
-    setMounted(true);
-    if (isStandaloneNow()) { setInstalled(true); return; }
-    setIos(isIosSafari());
-    setDesktopMode(isDesktopSiteOnTouch());
-    // Pick up a beforeinstallprompt captured before React hydrated (inline
-    // script in layout) — covers fast cached loads where it fires early.
-    const pre = (window as unknown as { __wlBip?: BeforeInstallPromptEvent }).__wlBip;
-    if (pre) setDeferred(pre);
-    const onBip = (e: Event) => { e.preventDefault(); setDeferred(e as BeforeInstallPromptEvent); };
-    const onInstalled = () => { setInstalled(true); setShowSheet(false); celebrate(); };
-    window.addEventListener('beforeinstallprompt', onBip);
+    const onInstalled = () => { setShowSheet(false); celebrate(); };
     window.addEventListener('appinstalled', onInstalled);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', onBip);
-      window.removeEventListener('appinstalled', onInstalled);
-    };
+    return () => window.removeEventListener('appinstalled', onInstalled);
   }, [celebrate]);
 
   const handleClick = useCallback(async () => {
     if (deferred) {
-      try {
-        await deferred.prompt();
-        const choice = await deferred.userChoice;
-        if (choice.outcome === 'accepted') celebrate();
-      } catch { /* user dismissed */ }
-      setDeferred(null);
-      try { (window as unknown as { __wlBip?: unknown }).__wlBip = null; } catch { /* ignore */ }
+      const outcome = await install();
+      if (outcome === 'accepted') celebrate();
       return;
     }
     setShowSheet(true);
-  }, [deferred, celebrate]);
+  }, [deferred, install, celebrate]);
 
-  if (!mounted) return null;
+  if (!mounted || installed) return null;
 
   return (
     <>
-      {!installed && (
-        <button
-          type="button"
-          onClick={handleClick}
-          aria-label="Installa l'app WhatsLater"
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-semibold bg-[#25D366] hover:bg-[#1ebe5b] text-[#0b141a] transition-colors whitespace-nowrap"
+      <button
+        type="button"
+        onClick={handleClick}
+        aria-label="Installa l'app WhatsLater"
+        className="flex items-center justify-center gap-1 h-10 px-2.5 bg-[#25D366] hover:bg-[#1DA851] text-[#0b141a] text-xs font-semibold rounded-lg focus-visible:ring-2 focus-visible:ring-[#25D366] transition-colors whitespace-nowrap"
+      >
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <rect x="6" y="2" width="12" height="20" rx="3" />
-            <path d="M12 7v6" />
-            <path d="m9.5 10.5 2.5 2.5 2.5-2.5" />
-          </svg>
-          <span>Installa app</span>
-        </button>
-      )}
+          <rect x="6" y="2" width="12" height="20" rx="3" />
+          <path d="M12 7v6" />
+          <path d="m9.5 10.5 2.5 2.5 2.5-2.5" />
+        </svg>
+        <span className="sm:hidden">Installa</span>
+        <span className="hidden sm:inline">Installa app</span>
+      </button>
 
-      {!installed && showSheet && (
+      {showSheet && (
         <div
           role="dialog"
           aria-label="Come installare l'app"

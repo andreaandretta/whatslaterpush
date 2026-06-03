@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  Calendar, CheckCircle2, Loader2, LogOut, Send, X,
+  Calendar, CheckCircle2, CreditCard, Loader2, LogOut, Send, X,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import ContactPickerModal from '@/components/ContactPickerModal';
@@ -704,22 +704,38 @@ function DashboardNavbar({ userPhone, plan, onLogout }: {
   };
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-[#111B21]/95 backdrop-blur-md border-b border-[#2A3942] px-4 md:px-6 py-3">
-      <div className="max-w-4xl mx-auto flex items-center justify-between">
-        <Logo withWordmark variant="onDark" size={22} />
-        <div className="flex items-center gap-3">
+    <nav className="fixed top-0 left-0 right-0 z-50 bg-[#111B21]/95 backdrop-blur-md border-b border-[#2A3942] h-12">
+      <div className="max-w-4xl mx-auto h-full flex items-center justify-between gap-2 px-3 sm:px-4">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Logo size={22} />
+          <span
+            className={`text-sm font-bold tracking-tight text-white truncate ${
+              isPaying ? 'hidden sm:inline' : 'inline'
+            }`}
+          >
+            WhatsLater
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
           <InstallAppButton />
           {isPaying && (
             <button
               onClick={handlePortal}
-              className="text-xs font-medium text-primary hover:underline whitespace-nowrap"
+              aria-label="Gestisci abbonamento"
+              className="flex items-center justify-center w-11 h-11 sm:w-auto sm:h-10 sm:px-3 sm:gap-1 text-gray-400 hover:text-gray-200 rounded-lg transition-colors shrink-0"
             >
-              Gestisci abbonamento
+              <CreditCard className="w-4 h-4" />
+              <span className="hidden sm:inline text-sm">Abbonamento</span>
             </button>
           )}
           {userPhone ? (
-            <button onClick={onLogout} className="flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-medium border border-[#2A3942] text-gray-300 hover:bg-[#2A3942] transition-colors">
-              <LogOut className="w-4 h-4" /> Disconnetti
+            <button
+              onClick={onLogout}
+              aria-label="Disconnetti"
+              className="flex items-center justify-center w-11 h-11 sm:w-auto sm:h-10 sm:px-3 sm:gap-1 text-gray-400 hover:text-gray-200 rounded-lg transition-colors shrink-0"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline text-sm">Disconnetti</span>
             </button>
           ) : (
             <a href="/" className="text-sm text-gray-400 hover:text-primary transition-colors">Home</a>
