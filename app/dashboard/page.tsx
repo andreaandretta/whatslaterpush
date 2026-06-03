@@ -4,7 +4,6 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Calendar, CheckCircle2, CreditCard, Loader2, LogOut, Send, X,
 } from 'lucide-react';
-import { createClient } from '@supabase/supabase-js';
 import ContactPickerModal from '@/components/ContactPickerModal';
 import ScheduleModal from '@/components/ScheduleModal';
 import { ContactAvatar } from '@/components/ContactAvatar';
@@ -19,10 +18,6 @@ import InstallPrompt from '../components/InstallPrompt';
 import InstallAppButton from '../components/InstallAppButton';
 import Logo from '@/components/Logo';
 
-const supabaseClient = typeof window !== 'undefined' ? createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-) : null;
 
 interface SubscriptionState {
   plan: string;
@@ -145,27 +140,6 @@ export default function DashboardPage() {
     return () => { if (msgTimer.current) clearInterval(msgTimer.current); };
   }, [sessionValidated, fetchMessages]);
 
-  // Supabase Realtime — listen for connection status changes
-  useEffect(() => {
-    if (!supabaseClient || !instanceName) return;
-    const channel = supabaseClient
-      .channel('conn-status-' + instanceName)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'user_instances',
-          filter: `instance_name=eq.${instanceName}`
-        },
-        () => {
-          fetchMessages();
-        }
-      )
-      .subscribe();
-
-    return () => { supabaseClient.removeChannel(channel); };
-  }, [instanceName, fetchMessages]);
 
   const handleLogout = async () => {
     if (msgTimer.current) clearInterval(msgTimer.current);
