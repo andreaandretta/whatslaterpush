@@ -356,6 +356,25 @@ async function findUserStrict(instanceName: string, phone: string): Promise<any>
 // findUserByPhoneOnly REMOVED — caused cross-user instance reassignment bug.
 // See commit message for details. Only findUserStrict is used now.
 
+// Baileys DisconnectReason codes (forwarded by Evolution v2 as statusReason),
+// mapped to a short human label so the disconnect cause is legible in the DB
+// without SSH to the droplet.
+function describeDisconnect(code: number | null): string | null {
+  if (code == null) return null;
+  switch (code) {
+    case 401: return 'loggedOut (dispositivo scollegato da WhatsApp)';
+    case 403: return 'forbidden (possibile ban/blocco account)';
+    case 408: return 'timedOut';
+    case 411: return 'multideviceMismatch';
+    case 428: return 'connectionClosed (rete/socket)';
+    case 440: return 'connectionReplaced (sessione aperta altrove)';
+    case 500: return 'badSession';
+    case 503: return 'unavailableService';
+    case 515: return 'restartRequired (normale dopo il pairing)';
+    default: return 'code ' + code;
+  }
+}
+
 async function handleConnectionUpdate(payload: any): Promise<NextResponse> {
   const instanceName = payload?.instance || '';
   const data = payload?.data;
@@ -367,13 +386,47 @@ async function handleConnectionUpdate(payload: any): Promise<NextResponse> {
   else if (state === 'close' || state === 'disconnected' || state === 'logged_out') connectionStatus = 'close';
   else if (state === 'connecting' || state === 'qr') connectionStatus = 'connecting';
   else connectionStatus = state || 'unknown';
+
+  // Capture the Baileys disconnect reason Evolution v2 forwards on close
+  // (statusReason = DisconnectReason code) so the control tower sees WHY an
+  // instance dropped, not just THAT it did - no SSH to the droplet needed.
+  const nowIso = new Date().toISOString();
+  const update: Record<string, unknown> = { connection_status: connectionStatus, last_connection_update: nowIso };
+  let discCode: number | null = null;
+  let discReason: string | null = null;
+  if (connectionStatus === 'close') {
+    const rawCode =
+      data?.statusReason ??
+      data?.lastDisconnect?.error?.output?.statusCode ??
+      data?.lastDisconnect?.statusCode ??
+      data?.reason ??
+      null;
+    discCode = Number.isFinite(Number(rawCode)) ? Number(rawCode) : null;
+    discReason = describeDisconnect(discCode);
+    update.last_disconnect_code = discCode;
+    update.last_disconnect_reason = discReason;
+    update.last_disconnect_at = nowIso;
+  }
+
   const { data: updated, error } = await supabase
     .from('user_instances')
-    .update({ connection_status: connectionStatus, last_connection_update: new Date().toISOString() })
+    .update(update)
     .eq('instance_name', instanceName)
     .select('id, phone_number');
   if (error) console.error(`WEBHOOK: CONNECTION_UPDATE DB error: ${error.message}`);
-  else console.log(`WEBHOOK: CONNECTION_UPDATE saved - instance=${instanceName} status=${connectionStatus} rows=${updated?.length || 0}`);
+  else console.log(`WEBHOOK: CONNECTION_UPDATE saved - instance=${instanceName} status=${connectionStatus}` + (connectionStatus === 'close' ? ` reason=${discCode}/${discReason}` : '') + ` rows=${updated?.length || 0}`);
+
+  // Audit each disconnect with its reason (fire-and-forget) so the history
+  // survives the next reconnect overwriting the last_disconnect_* columns.
+  if (connectionStatus === 'close') {
+    try {
+      await supabase.from('audit_events').insert({
+        user_phone: null,
+        event_type: 'instance_disconnect',
+        payload: { instance: instanceName, code: discCode, reason: discReason },
+      });
+    } catch { /* best-effort */ }
+  }
 
   // Mark pending auth session as authenticated when WhatsApp pairing succeeds
   if (connectionStatus === 'open') {
