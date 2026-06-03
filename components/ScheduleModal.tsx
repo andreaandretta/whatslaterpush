@@ -64,7 +64,6 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const init = defaultDateTime();
   const [selectedDate, setSelectedDate] = useState<Date>(init.date);
   const [selectedTime, setSelectedTime] = useState<string>(init.time);
-  const [description, setDescription] = useState('');
   const [message, setMessage] = useState(initialMessage);
   const [reminder, setReminder] = useState<ReminderValue>('never');
   const [recurrence, setRecurrence] = useState<RecurrenceValue>('none');
@@ -94,7 +93,6 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       const d = defaultDateTime();
       setSelectedDate(d.date);
       setSelectedTime(d.time);
-      setDescription('');
       setMessage(initialMessage);
       setReminder('never');
       setRecurrence('none');
@@ -276,16 +274,6 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
             </button>
           </div>
 
-          <div className="px-4 pb-3">
-            <input
-              type="text"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Descrizione (facoltativa)"
-              className="w-full bg-transparent text-white placeholder-gray-500 outline-none text-base py-1"
-            />
-          </div>
-
           <div className="border-t border-[#2A3942] mx-4" />
 
           <div className="flex items-center gap-4 px-4 py-2">
@@ -464,7 +452,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
         />
         <SaveTemplateDialog
           open={saveDialogOpen}
-          defaultTitle={description.trim() || (contact.name ? `Per ${contact.name}` : 'Mio template')}
+          defaultTitle={contact.name ? `Per ${contact.name}` : 'Mio template'}
           defaultEmoji={null}
           onCancel={dismissSaveDialog}
           onSave={saveAsTemplate}

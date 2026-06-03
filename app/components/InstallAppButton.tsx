@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Download, Share, X, CheckCircle2, MoreVertical } from 'lucide-react';
+import { Share, X, CheckCircle2, MoreVertical } from 'lucide-react';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -101,10 +101,24 @@ export default function InstallAppButton() {
           type="button"
           onClick={handleClick}
           aria-label="Installa l'app WhatsLater"
-          className="flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-medium text-primary border border-primary/40 hover:bg-primary/10 transition-colors whitespace-nowrap"
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-semibold bg-[#25D366] hover:bg-[#1ebe5b] text-[#0b141a] transition-colors whitespace-nowrap"
         >
-          <Download className="w-4 h-4" />
-          <span className="hidden sm:inline">Installa app</span>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="6" y="2" width="12" height="20" rx="3" />
+            <path d="M12 7v6" />
+            <path d="m9.5 10.5 2.5 2.5 2.5-2.5" />
+          </svg>
+          <span>Installa app</span>
         </button>
       )}
 
