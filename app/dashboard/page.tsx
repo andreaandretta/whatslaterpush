@@ -510,14 +510,13 @@ function StatusStrip({ userPhone, subscription, messages }: {
     return `+${cc} ··· ${last4}`;
   })();
 
-  // Context-aware upgrade copy
+  // Context-aware upgrade copy. The 'trial' case is handled by <TrialBanner/>
+  // below (dismissible outline early on, fixed-urgent in the last 3 days).
   const upgradeCopy = ((): string | null => {
     if (!planKnown) return null;
     switch (subscription.plan) {
       case 'free':
         return 'Sblocca 20 msg/giorno con Personal €4.99 →';
-      case 'trial':
-        return `Trial scade tra ${trialDays}gg — continua con Personal €4.99 →`;
       case 'personal':
         return 'Passa a Professional per 35 msg/giorno →';
       case 'professional':
@@ -526,6 +525,7 @@ function StatusStrip({ userPhone, subscription, messages }: {
         return null;
     }
   })();
+  const showTrialBanner = planKnown && subscription.plan === 'trial';
 
   return (
     <div className="max-w-4xl mx-auto px-4 pt-20 pb-3 border-b border-[#2A3942] text-sm">
@@ -549,7 +549,7 @@ function StatusStrip({ userPhone, subscription, messages }: {
           )}
         </div>
         {/* Riga 2 mobile / parte destra desktop: counter + upgrade */}
-        {(showCounter || upgradeCopy) && (
+        {(showCounter || upgradeCopy || showTrialBanner) && (
           <div className="flex items-center justify-between gap-2 flex-wrap sm:justify-end sm:gap-3">
             {showCounter && (
               <span className="text-white font-medium">
@@ -557,11 +557,12 @@ function StatusStrip({ userPhone, subscription, messages }: {
                 <span className="text-gray-500 text-xs ml-1">(limite {limits.dailyLimit})</span>
               </span>
             )}
+            {showTrialBanner && <TrialBanner daysLeft={trialDays} />}
             {upgradeCopy && (
               <a
                 href="#prezzi"
-                // Trial/upgrade banner = warning ("action needed soon") → AMBER,
-                // not green. Keeps the dashboard's single-green-element rule.
+                // Upgrade banner (non-trial) = warning → AMBER, not green.
+                // Keeps the dashboard's single-green-element rule.
                 className="bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 hover:bg-amber-500/15 transition-colors"
               >
                 {upgradeCopy}
@@ -570,6 +571,93 @@ function StatusStrip({ userPhone, subscription, messages }: {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// --- Trial banner (Option C) ---
+// Days > 3 → outline pill with ✕ that snoozes the banner for 3 days via
+// localStorage. Days ≤ 3 → solid amber pill, no ✕, always visible (last call
+// to convert). Days ≤ 0 → "Trial scaduto" wording, otherwise identical.
+// Dismiss state is local-only — re-pair / new device starts fresh, which is
+// fine because the urgent window (≤ 3 days) overrides any stale flag anyway.
+const TRIAL_DISMISS_KEY = 'wl_trial_banner_dismissed';
+const TRIAL_DISMISS_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
+function TrialBanner({ daysLeft }: { daysLeft: number }) {
+  const urgent = daysLeft <= 3;
+  const expired = daysLeft <= 0;
+  // Hydration guard: localStorage read must run client-side only, otherwise
+  // SSR + first paint would render the dismissible state then flip to hidden.
+  const [resolved, setResolved] = useState(false);
+  const [hidden, setHidden] = useState(false);
+
+  useEffect(() => {
+    if (urgent) {
+      // Urgent window ignores the dismiss flag — always render.
+      setResolved(true);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(TRIAL_DISMISS_KEY);
+      if (raw) {
+        const ts = new Date(raw).getTime();
+        if (!isNaN(ts) && Date.now() - ts < TRIAL_DISMISS_TTL_MS) {
+          setHidden(true);
+        }
+      }
+    } catch {
+      // private mode / disabled storage — fail open (show the banner)
+    }
+    setResolved(true);
+  }, [urgent]);
+
+  if (!resolved || hidden) return null;
+
+  const text = expired
+    ? 'Trial scaduto — attiva Personal €4.99 →'
+    : daysLeft === 1
+      ? '⏰ Ultimo giorno di trial — attiva Personal €4.99 →'
+      : urgent
+        ? `⏰ Trial scade tra ${daysLeft} giorni — attiva Personal €4.99 →`
+        : `Trial scade tra ${daysLeft}gg — continua con Personal €4.99 →`;
+
+  if (urgent) {
+    return (
+      <a
+        href="#prezzi"
+        className="bg-[#FFA500] text-[#0b141a] px-2.5 py-1 rounded-full text-xs font-bold shrink-0 hover:opacity-90 transition-opacity"
+      >
+        {text}
+      </a>
+    );
+  }
+
+  const onDismiss = () => {
+    try {
+      localStorage.setItem(TRIAL_DISMISS_KEY, new Date().toISOString());
+    } catch {
+      // ignore — banner will re-appear next paint, acceptable
+    }
+    setHidden(true);
+  };
+
+  return (
+    <div className="flex items-center gap-0.5 shrink-0">
+      <a
+        href="#prezzi"
+        className="border border-[#FFA500]/50 text-[#FFA500] px-2.5 py-1 rounded-full text-xs font-semibold hover:bg-[#FFA500]/10 transition-colors"
+      >
+        {text}
+      </a>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Nascondi avviso trial per 3 giorni"
+        className="w-11 h-11 -m-2 inline-flex items-center justify-center text-[#FFA500]/70 hover:text-[#FFA500] rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FFA500]/40"
+      >
+        <X className="w-4 h-4" />
+      </button>
     </div>
   );
 }
