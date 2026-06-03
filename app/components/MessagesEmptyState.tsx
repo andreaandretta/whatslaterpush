@@ -1,28 +1,26 @@
 'use client';
 
 import React from 'react';
-import { MessageSquare, ArrowDown } from 'lucide-react';
+import { Calendar } from 'lucide-react';
 
-export function MessagesEmptyState() {
+interface Props {
+  className?: string;
+}
+
+// Empty queue state for the dashboard. Lives inside a flex-col parent that
+// passes `flex-1` so this block stretches to fill — `justify-center` then
+// centres the content in whatever vertical space remains. No fixed heights:
+// the FAB pulse downstairs is the call-to-action, not an arrow inside here.
+export function MessagesEmptyState({ className = '' }: Props) {
   return (
-    <div className="text-center py-12 px-4">
-      <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/15 ring-1 ring-primary/30 flex items-center justify-center">
-        <MessageSquare className="w-8 h-8 text-primary" />
+    <div className={`flex flex-col items-center justify-center text-center px-6 ${className}`}>
+      <div className="w-14 h-14 rounded-2xl bg-[#0b141a] flex items-center justify-center mb-4">
+        <Calendar className="w-7 h-7 text-[#3a4a52]" />
       </div>
-      <h2 className="text-xl font-bold mb-2 text-white">Ciao!</h2>
-      <p className="text-gray-300 max-w-sm mx-auto mb-2">
-        Programma il tuo primo messaggio da mandare quando vuoi.
+      <p className="text-base font-semibold text-white mb-1">Nessun messaggio in coda</p>
+      <p className="text-sm text-gray-400 leading-relaxed max-w-[260px]">
+        Programma il tuo primo promemoria col bottone verde qui sotto.
       </p>
-      <p className="text-sm text-gray-500 max-w-sm mx-auto mb-8">
-        Tocca il bottone verde qui sotto a destra.
-      </p>
-      <div className="flex justify-end pr-4 sm:pr-8">
-        <ArrowDown
-          className="w-8 h-8 text-primary"
-          style={{ animation: 'onboarding-nudge 1.4s ease-in-out infinite' }}
-          aria-hidden="true"
-        />
-      </div>
     </div>
   );
 }

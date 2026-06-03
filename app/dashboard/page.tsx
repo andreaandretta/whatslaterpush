@@ -317,7 +317,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#111B21] text-white font-sans pb-32">
+    <div className="min-h-screen flex flex-col bg-[#111B21] text-white font-sans">
       <DashboardNavbar userPhone={userPhone} plan={subscription.plan} onLogout={handleLogout} />
 
       {/* Status strip — fuses connected + plan + daily counter + contextual upgrade */}
@@ -327,7 +327,7 @@ export default function DashboardPage() {
         messages={messages}
       />
 
-      <main className="px-4 max-w-4xl mx-auto pt-6 pb-12 space-y-8">
+      <main className="flex-1 flex flex-col w-full max-w-2xl mx-auto px-4 pt-6 pb-12 space-y-8">
         {userPhone && (
           subscription.expired ? (
             <div className="bg-[#202C33] border border-red-500/40 rounded-2xl p-4 flex items-center justify-between">
@@ -343,7 +343,9 @@ export default function DashboardPage() {
               <p className="text-gray-500">Caricamento...</p>
             </div>
           ) : messages.length === 0 ? (
-            showOnboardingHints ? <MessagesEmptyState /> : <EmptyState />
+            showOnboardingHints
+              ? <MessagesEmptyState className="flex-1" />
+              : <EmptyState />
           ) : (
             <MessagesSection
               messages={messages}
@@ -426,12 +428,13 @@ export default function DashboardPage() {
       {showFAQ && <FAQSection theme="dark" />}
 
       {/* Micro-riga legale — sostituisce il footer marketing su dashboard.
-          Niente blocco verde / CTA, solo riassicurazione cifratura. */}
-      <div className="border-t border-[#2A3942] bg-[#0B141A] py-4 px-6 text-center">
+          Niente blocco verde / CTA, solo riassicurazione cifratura.
+          shrink-0 so the flex-col root keeps it anchored at the bottom. */}
+      <footer className="shrink-0 border-t border-[#2A3942] bg-[#0B141A] py-3 px-4 text-center">
         <p className="text-[11px] text-gray-600 leading-relaxed">
           © 2026 WhatsLater · I tuoi messaggi sono cifrati. Non li leggiamo mai.
         </p>
-      </div>
+      </footer>
 
       <InstallPrompt />
 
@@ -663,11 +666,12 @@ function TrialBanner({ daysLeft }: { daysLeft: number }) {
 }
 
 // --- Empty State (replaces WelcomeCard + "0 messages" placeholder) ---
-// flex-1 + justify-center così riempie lo spazio sotto la StatusStrip
-// invece di aggrapparsi in alto lasciando metà schermo bianco.
+// flex-1 lets the parent flex-col stretch this to fill remaining space;
+// justify-center then centres the content vertically. No min-h-[55vh] —
+// the parent now owns the height contract.
 function EmptyState() {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center text-center py-12 min-h-[55vh]">
+    <div className="flex-1 flex flex-col items-center justify-center text-center py-12">
       <div className="w-16 h-16 bg-primary/20 rounded-full flex items-center justify-center mb-4">
         <Calendar className="w-8 h-8 text-primary" />
       </div>
