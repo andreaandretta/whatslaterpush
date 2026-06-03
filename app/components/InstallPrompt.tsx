@@ -1,108 +1,40 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Share, X } from 'lucide-react';
-
-// Chrome/Android: emitted on installable PWAs, lets us defer the native prompt
-// until we've earned the right to ask (post first scheduled message).
-interface BeforeInstallPromptEvent extends Event {
-  readonly platforms: ReadonlyArray<string>;
-  prompt(): Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
-}
+import { useInstallPrompt } from '../hooks/useInstallPrompt';
 
 const DISMISSED_FLAG = 'wl_install_dismissed';
 
-// iOS Safari has no beforeinstallprompt. Detect it so we can render the
-// "Condividi → Aggiungi a Home" instruction instead of the native button.
-function isIosSafariStandaloneCapable(): boolean {
-  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
-  const ua = navigator.userAgent || '';
-  const isIos = /iPad|iPhone|iPod/.test(ua) && !(window as unknown as { MSStream?: unknown }).MSStream;
-  if (!isIos) return false;
-  // Already installed → don't prompt
-  const nav = navigator as Navigator & { standalone?: boolean };
-  if (nav.standalone === true) return false;
-  // Only Safari proper supports add-to-home; Chrome/Firefox on iOS can't.
-  const isSafari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
-  return isSafari;
-}
-
-function isAlreadyStandalone(): boolean {
-  if (typeof window === 'undefined') return false;
-  if (window.matchMedia?.('(display-mode: standalone)').matches) return true;
-  const nav = navigator as Navigator & { standalone?: boolean };
-  return nav.standalone === true;
-}
-
 export default function InstallPrompt() {
-  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
-  const [iosFallback, setIosFallback] = useState(false);
+  const { mounted, installed, deferred, ios, install } = useInstallPrompt();
   const [dismissed, setDismissed] = useState(false);
 
-  // Read localStorage flags + listen for the first-message event.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (isAlreadyStandalone()) return; // Already installed → never show.
-
     try {
       setDismissed(localStorage.getItem(DISMISSED_FLAG) === '1');
     } catch {
-      // localStorage can throw in private mode — fail silent, no prompt.
-      return;
+      // private mode / disabled storage — fail silent, no prompt.
     }
-
-    setIosFallback(isIosSafariStandaloneCapable());
-  }, []);
-
-  // Intercept the native prompt as soon as Chrome/Android offers it.
-  // We don't wait for the first-msg flag here — capturing it early means we
-  // still have a valid prompt() ref later when the banner becomes eligible.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const handler = (e: Event) => {
-      e.preventDefault();
-      setDeferred(e as BeforeInstallPromptEvent);
-    };
-    window.addEventListener('beforeinstallprompt', handler);
-    // If the app gets installed mid-session, swallow the banner immediately.
-    const installed = () => {
-      setDeferred(null);
-      try { localStorage.setItem(DISMISSED_FLAG, '1'); } catch { /* ignore */ }
-      setDismissed(true);
-    };
-    window.addEventListener('appinstalled', installed);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handler);
-      window.removeEventListener('appinstalled', installed);
-    };
   }, []);
 
   const handleInstall = useCallback(async () => {
-    if (!deferred) return;
-    try {
-      await deferred.prompt();
-      const choice = await deferred.userChoice;
-      if (choice.outcome === 'accepted') {
-        try { localStorage.setItem(DISMISSED_FLAG, '1'); } catch { /* ignore */ }
-        setDismissed(true);
-      }
-    } catch {
-      // ignore — user cancelled or browser rejected
-    } finally {
-      setDeferred(null);
+    const outcome = await install();
+    if (outcome === 'accepted') {
+      try { localStorage.setItem(DISMISSED_FLAG, '1'); } catch { /* ignore */ }
+      setDismissed(true);
     }
-  }, [deferred]);
+  }, [install]);
 
   const handleDismiss = useCallback(() => {
     try { localStorage.setItem(DISMISSED_FLAG, '1'); } catch { /* ignore */ }
     setDismissed(true);
   }, []);
 
-  // Visibility gate: only after first scheduled message, never if dismissed,
-  // and we need either a deferred prompt (Chrome/Android) or the iOS fallback.
-  const visible = !dismissed && (deferred !== null || iosFallback);
-  if (!visible) return null;
+  // Visibility gate: only mounted, not installed, not dismissed, and we
+  // need either a deferred prompt (Chrome/Android) or the iOS fallback.
+  if (!mounted || installed || dismissed) return null;
+  if (deferred === null && !ios) return null;
 
   return (
     <div
@@ -123,7 +55,7 @@ export default function InstallPrompt() {
             Aggiungi alla schermata Home
           </p>
           <p className="text-xs text-gray-400 mt-0.5">
-            {iosFallback
+            {ios
               ? 'Tocca Condividi e poi “Aggiungi a Home”.'
               : 'Apri WhatsLater con un tap.'}
           </p>
