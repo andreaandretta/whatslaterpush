@@ -199,6 +199,48 @@ export async function checkDropletRam(): Promise<CheckResult> {
   }
 }
 
+export async function checkInstanceFlapping(): Promise<CheckResult> {
+  const now = new Date().toISOString();
+  try {
+    const supabase = getSupabase();
+    const windowStart = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from('audit_events')
+      .select('payload')
+      .eq('event_type', 'instance_disconnect')
+      .gte('created_at', windowStart);
+    if (error) return { name: 'instance_flapping', status: 'critical', message: `Query error: ${error.message}`, checked_at: now };
+
+    const agg: Record<string, { n: number; codes: Set<number> }> = {};
+    for (const row of data || []) {
+      const pl: any = (row as any)?.payload || {};
+      const inst = typeof pl.instance === 'string' ? pl.instance : 'unknown';
+      if (!agg[inst]) agg[inst] = { n: 0, codes: new Set() };
+      agg[inst].n++;
+      if (typeof pl.code === 'number') agg[inst].codes.add(pl.code);
+    }
+
+    let worst: { inst: string; n: number; codes: number[] } | null = null;
+    for (const [inst, v] of Object.entries(agg)) {
+      if (!worst || v.n > worst.n) worst = { inst, n: v.n, codes: Array.from(v.codes) };
+    }
+
+    if (!worst || worst.n < 4) {
+      return { name: 'instance_flapping', status: 'ok', message: worst ? `Max ${worst.n} disconnessioni/3h` : 'Nessuna disconnessione recente', checked_at: now };
+    }
+
+    // 403 forbidden = likely ban/block; repeated flapping (>=8/3h) also critical.
+    const has403 = worst.codes.includes(403);
+    const codesStr = worst.codes.length ? ` [codici ${worst.codes.join(',')}]` : '';
+    if (has403 || worst.n >= 8) {
+      return { name: 'instance_flapping', status: 'critical', message: `${worst.inst}: ${worst.n} disconnessioni in 3h${codesStr} — rischio ban/blocco`, checked_at: now };
+    }
+    return { name: 'instance_flapping', status: 'warning', message: `${worst.inst}: ${worst.n} disconnessioni in 3h${codesStr}`, checked_at: now };
+  } catch (err: any) {
+    return { name: 'instance_flapping', status: 'critical', message: err?.message || 'Errore', checked_at: now };
+  }
+}
+
 // --- Run All Checks ---
 
 export async function runAllChecks(): Promise<CheckResult[]> {
@@ -210,6 +252,7 @@ export async function runAllChecks(): Promise<CheckResult[]> {
     checkMessagesStalled,
     checkFailedSpike,
     checkDropletRam,
+    checkInstanceFlapping,
   ];
   const results: CheckResult[] = [];
   for (const checkFn of checks) {
@@ -280,6 +323,7 @@ const CHECK_DESCRIPTIONS: Record<string, string> = {
   messages_stalled: 'Messaggi bloccati in stato "processing"',
   failed_spike: 'Picco di messaggi falliti',
   droplet_ram: 'RAM droplet elevata',
+  instance_flapping: 'Istanza instabile (disconnessioni ripetute / rischio ban)',
 };
 
 function formatItalianTime(): string {
