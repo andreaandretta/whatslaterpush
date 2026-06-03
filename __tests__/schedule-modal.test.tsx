@@ -28,11 +28,11 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
     expect(screen.getByText(/Messaggio per Mario Rossi/i)).toBeInTheDocument();
   });
 
-  test('shows description, message, FAB; advanced options collapsed by default with silent summary', () => {
+  test('shows message, FAB; advanced options collapsed by default with silent summary', () => {
     render(
       <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} />
     );
-    expect(screen.getByPlaceholderText(/Descrizione/i)).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/Descrizione/i)).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText(/Scrivi il messaggio/i)).toBeInTheDocument();
     expect(screen.getByText(/Opzioni avanzate/i)).toBeInTheDocument();
     expect(screen.getByText(/Nessuna notifica · invio automatico/i)).toBeInTheDocument();
