@@ -37,6 +37,14 @@ module.exports = withSentryConfig(withPWA(nextConfig), {
     project: process.env.SENTRY_PROJECT,
     authToken: process.env.SENTRY_AUTH_TOKEN,
     silent: !process.env.CI,
+    // Upload source maps for ALL client bundles (incl. shared chunks like
+    // _next/static/chunks/NNN-*.js), not just page/route entrypoints. Without
+    // this, client-side errors (e.g. unhandledrejection on /) stayed MINIFIED
+    // in Sentry even though server source maps uploaded fine.
+    widenClientFileUpload: true,
+    // Strip emitted .map files from the deployed output after upload so they
+    // are never served publicly or precached by the PWA service worker.
+    sourcemaps: { deleteSourcemapsAfterUpload: true },
     // Avoid ad-blocker drops by tunneling client SDK ingest through our own
     // domain. Disable by removing this line if you'd rather hit Sentry direct.
     tunnelRoute: '/monitoring',
