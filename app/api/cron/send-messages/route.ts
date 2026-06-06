@@ -87,10 +87,14 @@ export async function GET(req: NextRequest) {
       console.log('CRON: Cleaned up ' + authCleanup.length + ' expired pending_auth_sessions');
     }
 
-    // Midnight reset: reset daily counters for all users
+    // Daily reset (Europe/Rome): once per calendar day, not every cron tick.
+    // The date guard (last_daily_reset_at) is what makes the tier limits real —
+    // before this the counter was being zeroed every 60s.
+    const romeToday = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
     const { data: resetResult } = await supabase
       .from('user_instances')
-      .update({ messages_sent_today: 0, upsell_sent_today: false })
+      .update({ messages_sent_today: 0, upsell_sent_today: false, last_daily_reset_at: romeToday })
+      .lt('last_daily_reset_at', romeToday)
       .gt('messages_sent_today', 0)
       .select('id');
     if (resetResult?.length) {
@@ -105,9 +109,15 @@ export async function GET(req: NextRequest) {
       .lt('trial_ends_at', new Date().toISOString());
 
     for (const trial of (expiredTrials || [])) {
-      await supabase.from('user_instances')
+      // CAS: only the first concurrent cron trigger flips trial->free (others
+      // see plan already 'free' and get 0 rows back) => exactly one "trial
+      // scaduto" WhatsApp instead of up to 3 from the 3 concurrent triggers.
+      const { data: downgraded } = await supabase.from('user_instances')
         .update({ subscription_plan: 'free' })
-        .eq('phone_number', trial.phone_number);
+        .eq('phone_number', trial.phone_number)
+        .eq('subscription_plan', 'trial')
+        .select('phone_number');
+      if (!downgraded || downgraded.length === 0) continue;
       try {
         await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + trial.instance_name, {
           method: 'POST',
@@ -366,6 +376,19 @@ export async function GET(req: NextRequest) {
           return 'skipped' as const;
         }
 
+        // Atomic quota gate (anti-overshoot): increment messages_sent_today only
+        // if still strictly under the tier limit. NULL = at/over the limit (or a
+        // concurrent send took the last slot) -> release the processing lock back
+        // to pending and rate-limit. Refunded in the catch if the send fails.
+        const { data: claimedQuota, error: quotaErr } = await supabase
+          .rpc('claim_daily_quota', { p_phone: ownerPhone, p_limit: planLimits.dailyLimit });
+        if (quotaErr || claimedQuota == null) {
+          await supabase.from('scheduled_messages').update({ status: 'pending' }).eq('id', msg.id);
+          console.log('CRON: quota exhausted (atomic) for ' + ownerPhone + ' plan=' + plan + (quotaErr ? ' err=' + quotaErr.message : ''));
+          return 'rate_limited' as const;
+        }
+        const newSentToday: number = claimedQuota as number;
+
         // Anti-ban intra-batch jitter (800-2500ms). Extended from the prior
         // 200-400ms because 5 parallel sends within a few hundred ms looked
         // like a burst pattern to Baileys/WhatsApp. Still within the 8s
@@ -527,18 +550,8 @@ export async function GET(req: NextRequest) {
           }
         }
 
-        // Increment daily counter atomically via RPC. UPDATE ... RETURNING
-        // is a single MVCC operation, so concurrent calls in a
-        // Promise.allSettled batch for the same user observe post-increment
-        // values monotonically instead of all reading the same stale
-        // sentToday from the JOIN snapshot and writing back value+1
-        // (losing N-1 increments per batch).
-        const { data: incrementedTo, error: incrErr } = await supabase
-          .rpc('increment_messages_sent_today', { p_phone: ownerPhone });
-        if (incrErr) {
-          console.error('CRON: atomic increment RPC failed for ' + ownerPhone + ':', incrErr.message);
-        }
-        const newSentToday: number = typeof incrementedTo === 'number' ? incrementedTo : sentToday + 1;
+        // Daily counter was already incremented atomically at the pre-send
+        // quota claim (claim_daily_quota); newSentToday captured there.
 
         // Upsell at 80% of daily limit (once per day)
         const upsellThreshold = Math.floor(planLimits.dailyLimit * 0.8);
@@ -587,6 +600,12 @@ export async function GET(req: NextRequest) {
           const instanceName = userInst?.instance_name;
           const ownerPhone = userInst?.phone_number;
           const err = r.reason;
+          // Refund the quota slot claimed pre-send: this attempt failed. On a
+          // retry the next attempt re-claims; if terminal nothing was delivered.
+          // Either way this attempt must not consume the user's daily quota.
+          if (ownerPhone) {
+            await supabase.rpc('refund_daily_quota', { p_phone: ownerPhone });
+          }
           const newRetry = (msg.retry_count || 0) + 1;
           await supabase.from('scheduled_messages').update({
             status: newRetry >= 3 ? 'failed' : 'pending',
