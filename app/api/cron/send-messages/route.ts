@@ -94,7 +94,9 @@ export async function GET(req: NextRequest) {
     const { data: resetResult } = await supabase
       .from('user_instances')
       .update({ messages_sent_today: 0, upsell_sent_today: false, last_daily_reset_at: romeToday })
-      .lt('last_daily_reset_at', romeToday)
+      // NULL-guard: also reset rows whose date was never stamped (defense;
+      // claim_daily_quota normally stamps it, backfill cleared existing NULLs).
+      .or(`last_daily_reset_at.is.null,last_daily_reset_at.lt.${romeToday}`)
       .gt('messages_sent_today', 0)
       .select('id');
     if (resetResult?.length) {
