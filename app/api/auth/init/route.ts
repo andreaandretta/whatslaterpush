@@ -128,7 +128,10 @@ export async function POST(req: NextRequest) {
         number: cleanPhone,
         qrcode: true,
         integration: 'WHATSAPP-BAILEYS',
-        syncFullHistory: true,
+        // syncFullHistory:false — a fresh pairing must NOT pull the entire
+        // WhatsApp history; a burst of new signups was OOM-ing the 2GB droplet.
+        // Contacts populate lazily via incoming-message webhooks instead.
+        syncFullHistory: false,
         alwaysOnline: true,
         groupsIgnore: false,
         webhook: {
