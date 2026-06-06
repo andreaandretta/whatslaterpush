@@ -476,18 +476,22 @@ async function isMessageProcessed(msgId: string): Promise<boolean> {
   return !!data;
 }
 
-// ── In-memory dedup (covers non-scheduling events within same instance) ──
-const processedMsgIds = new Map<string, number>();
-const DEDUP_TTL_MS = 120_000;
-
-function isDuplicateInMemory(msgId: string): boolean {
-  const now = Date.now();
-  for (const [key, ts] of processedMsgIds) {
-    if (now - ts > DEDUP_TTL_MS) processedMsgIds.delete(key);
+// ── Atomic cross-lambda dedup via processed_webhook_events (Fix #3) ──
+// Claims a WhatsApp message id with INSERT ... ON CONFLICT DO NOTHING. Returns
+// true if THIS call claimed it (fresh -> process), false if already claimed
+// (Evolution retry / parallel lambda -> skip). Replaces the per-process Map
+// (useless across serverless instances) and the non-atomic SELECT-then-insert.
+async function claimWebhookEvent(msgId: string): Promise<boolean> {
+  if (!msgId) return true; // no id to dedup on -> let it through
+  const { data, error } = await supabase
+    .from('processed_webhook_events')
+    .upsert({ message_key: msgId }, { onConflict: 'message_key', ignoreDuplicates: true })
+    .select('message_key');
+  if (error) {
+    console.error('WEBHOOK: dedup claim error for ' + msgId + ':', error.message);
+    return true; // fail-open: better a rare dup than dropping a real message
   }
-  if (processedMsgIds.has(msgId)) return true;
-  processedMsgIds.set(msgId, now);
-  return false;
+  return !!(data && data.length > 0);
 }
 
 // ── Get pending partial context (awaiting_time, awaiting_recipient, or awaiting_confirm) ──
@@ -1028,8 +1032,8 @@ export async function POST(req) {
 
     // ── DEDUP: In-memory first (fast), then DB check before insert ──
     const msgId = msgKey?.id;
-    if (msgId && isDuplicateInMemory(msgId)) {
-      console.log('WEBHOOK: DUPLICATE (in-memory) msgId=' + msgId);
+    if (msgId && !(await claimWebhookEvent(msgId))) {
+      console.log('WEBHOOK: DUPLICATE (atomic claim) msgId=' + msgId);
       return NextResponse.json({ ok: true, deduplicated: true });
     }
 

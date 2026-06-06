@@ -35,6 +35,19 @@ export async function runWebhookLogsCleanup(): Promise<WebhookLogsCleanupResult>
   const removed = count || 0;
   console.log('CRON: Pruned ' + removed + ' webhook_logs older than ' + RETENTION_DAYS + ' days');
 
+  // Fix #3: prune the webhook dedup ledger too. Evolution retries arrive within
+  // seconds/minutes, so a 7-day window is far more than enough to dedup them.
+  try {
+    const dedupCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { count: dedupRemoved } = await (supabase
+      .from('processed_webhook_events')
+      .delete({ count: 'exact' }) as any)
+      .lt('ts', dedupCutoff);
+    if (dedupRemoved) console.log('CRON: Pruned ' + dedupRemoved + ' processed_webhook_events older than 7 days');
+  } catch (e: any) {
+    console.error('CRON: processed_webhook_events prune failed:', e?.message || e);
+  }
+
   if (removed === 0) {
     return { status: 'noop', removed_count: 0 };
   }
