@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { denyUnlessOpsAuthorized } from '../../../../lib/ops-auth';
-import { fetchDropletMetrics } from '../../../../lib/droplet';
-import { getPlanLimits } from '../../../../lib/plans';
+import { denyUnlessOpsAuthorized } from '../../../lib/ops-auth';
+import { fetchDropletMetrics } from '../../../lib/droplet';
+import { getPlanLimits } from '../../../lib/plans';
 import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
