@@ -290,6 +290,12 @@ export async function POST(req: NextRequest) {
     if (!ALLOWED_MEDIA.includes(media_type)) {
       return NextResponse.json({ error: 'invalid_media_type' }, { status: 400 });
     }
+    // IDOR guard: media_url must live under THIS user's own storage prefix
+    // (uploads are stored at {phone}/{uuid}-{file}); block cross-user paths and
+    // traversal so the cron never signs + sends someone else's private media.
+    if (media_url.includes('..') || !media_url.startsWith(phone + '/')) {
+      return NextResponse.json({ error: 'invalid_media_url' }, { status: 400 });
+    }
   }
 
   if (typeof scheduled_at !== 'string') {
