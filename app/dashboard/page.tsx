@@ -301,6 +301,7 @@ export default function DashboardPage() {
         userPhone={userPhone}
         subscription={subscription}
         messages={messages}
+        connected={connected}
       />
 
       <main className="flex-1 flex flex-col w-full max-w-2xl mx-auto px-4 pt-6 pb-12 space-y-8">
@@ -442,10 +443,11 @@ export default function DashboardPage() {
 }
 
 // --- Status Strip (fuses ConnectedCard + PlanBadge + DailyCapBadge + contextual upgrade) ---
-function StatusStrip({ userPhone, subscription, messages }: {
+function StatusStrip({ userPhone, subscription, messages, connected }: {
   userPhone: string;
   subscription: SubscriptionState;
   messages: ScheduledMessage[];
+  connected: boolean;
 }) {
   const planKnown = subscription.plan !== 'unknown';
   const planLabel = getPlanName(subscription.plan);
