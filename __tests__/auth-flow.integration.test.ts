@@ -153,13 +153,29 @@ describe('POST /api/auth/logout', () => {
   });
 });
 
-describe('GET /api/auth/check', () => {
+describe('POST /api/auth/check', () => {
+  function makeCheckReq(payload: any | undefined) {
+    const init: any = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    };
+    if (payload !== undefined) init.body = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    return new Request('http://localhost/api/auth/check', init);
+  }
+
+  test('returns 400 if body missing or malformed', async () => {
+    jest.resetModules();
+    jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+    const { POST } = await import('../app/api/auth/check/route');
+    const res = await POST(makeCheckReq('not-json{') as any);
+    expect(res.status).toBe(400);
+  });
+
   test('returns 400 if sessionId missing', async () => {
     jest.resetModules();
     jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
-    const { GET } = await import('../app/api/auth/check/route');
-    const req = new Request('http://localhost/api/auth/check', { method: 'GET' });
-    const res = await GET(req as any);
+    const { POST } = await import('../app/api/auth/check/route');
+    const res = await POST(makeCheckReq({}) as any);
     expect(res.status).toBe(400);
   });
 
@@ -167,9 +183,8 @@ describe('GET /api/auth/check', () => {
     jest.resetModules();
     jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
     mockSupa.setResponse('pending_auth_sessions:select', null, null);
-    const { GET } = await import('../app/api/auth/check/route');
-    const req = new Request('http://localhost/api/auth/check?sessionId=missing-id', { method: 'GET' });
-    const res = await GET(req as any);
+    const { POST } = await import('../app/api/auth/check/route');
+    const res = await POST(makeCheckReq({ sessionId: 'missing-id' }) as any);
     expect(res.status).toBe(410);
   });
 
@@ -180,9 +195,8 @@ describe('GET /api/auth/check', () => {
       { id: 'sess-1', phone: '393331234567', status: 'pending', instance_name: null, expires_at: new Date(Date.now() + 60000).toISOString() },
       null,
     );
-    const { GET } = await import('../app/api/auth/check/route');
-    const req = new Request('http://localhost/api/auth/check?sessionId=sess-1', { method: 'GET' });
-    const res = await GET(req as any);
+    const { POST } = await import('../app/api/auth/check/route');
+    const res = await POST(makeCheckReq({ sessionId: 'sess-1' }) as any);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.authenticated).toBe(false);
@@ -196,9 +210,8 @@ describe('GET /api/auth/check', () => {
       { id: 'sess-1', phone: '393331234567', status: 'authenticated', instance_name: 'SchedWhats-393331234567', expires_at: new Date(Date.now() + 60000).toISOString() },
       null,
     );
-    const { GET } = await import('../app/api/auth/check/route');
-    const req = new Request('http://localhost/api/auth/check?sessionId=sess-1', { method: 'GET' });
-    const res = await GET(req as any);
+    const { POST } = await import('../app/api/auth/check/route');
+    const res = await POST(makeCheckReq({ sessionId: 'sess-1' }) as any);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.authenticated).toBe(true);

@@ -12,9 +12,17 @@ function getSupabase() {
   );
 }
 
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const sessionId = searchParams.get('sessionId');
+// Polled by /connect every ~2.5s during the pairing window. Receives the
+// sessionId in the JSON body (not the URL) so it never lands in Vercel access
+// logs or Sentry URL breadcrumbs — Codex pre-launch audit finding #9.
+export async function POST(req: NextRequest) {
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : null;
   if (!sessionId) {
     return NextResponse.json({ error: 'sessionId required' }, { status: 400 });
   }

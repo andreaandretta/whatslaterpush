@@ -87,7 +87,13 @@ function ConnectFlow() {
     if (step !== '2' || !sessionId) return;
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/auth/check?sessionId=${sessionId}`);
+        // POST with sessionId in body keeps it out of URL access logs +
+        // Sentry breadcrumbs. The endpoint no longer accepts GET.
+        const res = await fetch('/api/auth/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId }),
+        });
         if (res.status === 410) {
           clearInterval(interval);
           return;
