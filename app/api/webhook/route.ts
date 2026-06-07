@@ -1263,6 +1263,16 @@ export async function POST(req) {
 
       // ── AI: cancel ──
       if (aiResult.action === 'cancel') {
+        // H#2 sanity check: only honor a cancel if the RAW message actually
+        // expresses cancel intent. Guards against the LLM hallucinating
+        // action=cancel on innocuous text and silently dropping a real
+        // scheduled message. The explicit "annulla N" flow still matches.
+        const CANCEL_INTENT = /(annull|cancell|elimin|rimuov|disdic|revoc|cancel|delete|remove)/i;
+        if (!CANCEL_INTENT.test(raw)) {
+          console.log('WEBHOOK: cancel skipped — no intent keyword in message');
+          await notifyOwner(instanceName, ownerPhone, aiResult.reply || 'Per annullare un messaggio scrivi "annulla [numero]" (es. "annulla 1").');
+          return NextResponse.json({ ok: true, cancel_skipped: 'no_intent' });
+        }
         const target = aiResult.cancel_target;
         if (target && /^\d+$/.test(target)) {
           const idx = parseInt(target) - 1;
