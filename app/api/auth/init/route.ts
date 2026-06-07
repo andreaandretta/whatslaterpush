@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { validatePhone } from '../../../lib/phone';
+import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -101,11 +102,38 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 
-  // user_instances upsert (mirrors logic from /api/connect getCodeAndPairing)
+  // SECURITY: this endpoint is UNAUTHENTICATED (pairing entry point). Guard
+  // against an attacker POSTing a victim's phone to reset their plan or nuke
+  // their connected instance. Read the existing row first.
+  const { data: existing } = await supabase
+    .from('user_instances')
+    .select('phone_number, connection_status')
+    .eq('phone_number', cleanPhone)
+    .maybeSingle();
+
+  // If the number is currently CONNECTED, only the owner (valid sw_session
+  // cookie for that phone) may re-init — otherwise a stranger could log out /
+  // delete a live instance just by knowing the number.
+  if (existing && existing.connection_status === 'open') {
+    const payload = await verifyCookie(req.cookies.get(AUTH_COOKIE_NAME)?.value);
+    if (payload?.phone !== cleanPhone) {
+      await supabase.from('pending_auth_sessions').delete().eq('id', sessionId);
+      return NextResponse.json(
+        { error: 'Questo numero e gia collegato. Apri WhatsLater e usa "Disconnetti" prima di ri-collegare.' },
+        { status: 409 }
+      );
+    }
+  }
+
+  // Clear a stale row that points this instance name at a different phone.
   await supabase.from('user_instances')
     .delete()
     .eq('instance_name', instanceName)
     .neq('phone_number', cleanPhone);
+
+  // Create the trial row ONLY for a brand-new phone. ignoreDuplicates means an
+  // existing user's subscription_plan / trial_ends_at are NEVER overwritten
+  // (closes the plan-reset hijack). New signups still get the 7-day trial.
   await supabase.from('user_instances').upsert(
     {
       phone_number: cleanPhone,
@@ -113,7 +141,7 @@ export async function POST(req: NextRequest) {
       subscription_plan: 'trial',
       trial_ends_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     },
-    { onConflict: 'phone_number' }
+    { onConflict: 'phone_number', ignoreDuplicates: true }
   );
 
   await forceDeleteInstance(instanceName);
