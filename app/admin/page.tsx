@@ -201,7 +201,10 @@ function AdminPage() {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-        <h1 className="text-xl font-bold text-gray-900">WhatsLater Admin</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-bold text-gray-900">WhatsLater Admin</h1>
+          <a href="/admin/tower" className="text-sm font-semibold text-green-600 hover:text-green-700">🗼 Torre</a>
+        </div>
         <div className="flex items-center gap-3 text-sm text-gray-500">
           <span>Agg: {lastUpdate}</span>
           <span className="relative flex h-2.5 w-2.5">

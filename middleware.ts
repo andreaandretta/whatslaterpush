@@ -42,6 +42,7 @@ const ADMIN_API_COOKIE_PATHS = [
   '/api/admin/droplet',
   '/api/admin/sla',
   '/api/admin/chat',
+  '/api/admin/tower',
 ];
 
 function isPublic(pathname: string): boolean {
