@@ -90,6 +90,7 @@ export async function GET(req: NextRequest) {
     messages,
     subscription_plan: user?.subscription_plan || 'unknown',
     trial_ends_at: user?.trial_ends_at || null,
+    connection_status: user?.connection_status || null,
     total_scheduled_lifetime: lifetimeCount ?? 0,
   });
 }

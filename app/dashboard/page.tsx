@@ -49,6 +49,7 @@ export default function DashboardPage() {
   const [messages, setMessages]         = useState<ScheduledMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(true);
   const [subscription, setSubscription] = useState<SubscriptionState>({ plan: 'unknown', trial_ends_at: null, expired: false });
+  const [connected, setConnected] = useState(true); // Evolution link state from /api/messages
   const [sessionValidated, setSessionValidated] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -105,6 +106,7 @@ export default function DashboardPage() {
         if (d.messages) {
           setMessages(Array.isArray(d.messages) ? d.messages : []);
           setSubscription({ plan: d.subscription_plan || 'free', trial_ends_at: d.trial_ends_at, expired: false });
+          setConnected(d.connection_status === 'open');
           if (typeof d.total_scheduled_lifetime === 'number') {
             const next = d.total_scheduled_lifetime;
             if (prevLifetimeRef.current === 0 && next === 1) {
@@ -512,8 +514,8 @@ function StatusStrip({ userPhone, subscription, messages }: {
           {/* Connected pill — neutral background, small primary dot for the
               "alive" signal. Reserves green-saturated treatment for FAB only. */}
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#202C33] border border-[#2A3942] text-xs text-gray-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_0_3px_rgba(37,211,102,0.18)]" aria-hidden></span>
-            Connesso
+            <span className={'w-1.5 h-1.5 rounded-full ' + (connected ? 'bg-primary shadow-[0_0_0_3px_rgba(37,211,102,0.18)]' : 'bg-amber-400 shadow-[0_0_0_3px_rgba(251,191,36,0.18)]')} aria-hidden></span>
+            {connected ? 'Connesso' : 'Disconnesso'}
             {maskedPhone && (
               <span className="font-semibold text-white tabular-nums ml-0.5">{maskedPhone}</span>
             )}

@@ -307,8 +307,8 @@ export async function GET(req: NextRequest) {
         if (decision === 'trial_expired') {
           console.log('CRON: Trial expired for ' + ownerPhone);
           await supabase.from('scheduled_messages').update({
-            status: 'cancelled',
-            error_message: 'Trial scaduto'
+            status: 'paused',
+            error_message: 'Trial scaduto — messaggio in pausa, riattiva con un piano'
           }).eq('id', msg.id);
           try {
             await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
