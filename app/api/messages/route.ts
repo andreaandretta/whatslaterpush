@@ -295,7 +295,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid_datetime' }, { status: 400 });
   }
   const scheduledDate = new Date(scheduled_at);
-  if (isNaN(scheduledDate.getTime()) || scheduledDate.getTime() < Date.now() + 60_000) {
+  const MAX_FUTURE_MS = 365 * 24 * 60 * 60 * 1000; // 1-year cap — reject 9999-01-01 junk
+  if (isNaN(scheduledDate.getTime()) || scheduledDate.getTime() < Date.now() + 60_000 || scheduledDate.getTime() > Date.now() + MAX_FUTURE_MS) {
     return NextResponse.json({ error: 'invalid_datetime' }, { status: 400 });
   }
 

@@ -867,7 +867,7 @@ export async function POST(req) {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
     rawBody = rawText.substring(0, 500);
-    console.log('WEBHOOK incoming:', rawBody);
+    console.log('WEBHOOK incoming (' + rawText.length + ' bytes)'); // no raw body in logs (PII: phone + message text)
 
     // Audit: structured trail of inbound webhook events. Don't await — the
     // webhook handler is latency-sensitive (Evolution drops if we're slow).
@@ -1134,7 +1134,7 @@ export async function POST(req) {
           await supabase.from('pending_contacts').delete().eq('owner_phone', ownerPhone).eq('recipient_number', num);
           await supabase.from('pending_contacts').insert({ owner_phone: ownerPhone, recipient_number: num, recipient_name: name });
         } else {
-          console.log('WEBHOOK: vCard saved for', ownerPhone, '-> recipient:', name, num);
+          console.log('WEBHOOK: vCard saved (recipient stored)'); // no phone/name in logs (PII)
         }
         await notifyOwner(instanceName, ownerPhone, '✅ Contatto "' + name + '" salvato!\nOra puoi scrivere, ad esempio:\n"Invia a ' + name + ' domani alle 15: il tuo messaggio"');
       }
@@ -1144,7 +1144,7 @@ export async function POST(req) {
     // ── Text message parsing ──
     const raw = msgContent?.conversation || msgContent?.extendedTextMessage?.text || msgContent?.imageMessage?.caption || '';
     if (!raw) { console.log('WEBHOOK: Empty text, skipping'); return NextResponse.json({ ok:true }); }
-    console.log('WEBHOOK: Text received:', raw);
+    console.log('WEBHOOK: Text received (' + raw.length + ' chars)'); // no message text in logs (PII)
     await dbLog('MSG_RECEIVED', { text: raw, sender: ownerPhone });
 
     // Ignore bot's own instruction text (safety guard)

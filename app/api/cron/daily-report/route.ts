@@ -131,6 +131,7 @@ export async function collectDailyReport(): Promise<DailyReportData> {
     if (plans) {
       for (const row of plans) {
         if (row.subscription_plan === 'personal') mrr += 4.99;
+        if (row.subscription_plan === 'professional') mrr += 9.99;
         if (row.subscription_plan === 'business') mrr += 19.99;
       }
     }
