@@ -4,6 +4,18 @@ const withPWA = require('@ducanh2912/next-pwa').default({
     disable: process.env.NODE_ENV === 'development',
     cacheOnFrontEndNav: true,
     fallbacks: { document: '/offline' },
+    // Exclude /api from the SW runtime cache: API responses are per-user and a
+    // shared 'apis' cache would serve one user's data to the next on a shared
+    // device. Providing runtimeCaching replaces next-pwa's default set, so the
+    // (non-PII) static-asset caching is re-declared here; the /offline document
+    // fallback above is independent and still works.
+    workboxOptions: {
+        runtimeCaching: [
+            { urlPattern: ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith('/api/'), handler: 'NetworkOnly' },
+            { urlPattern: /\/_next\/(static|image)\/.*/i, handler: 'StaleWhileRevalidate', options: { cacheName: 'next-assets', expiration: { maxEntries: 200, maxAgeSeconds: 2592000 } } },
+            { urlPattern: /\.(?:js|css|woff2?|png|jpe?g|svg|gif|webp|ico)$/i, handler: 'StaleWhileRevalidate', options: { cacheName: 'static-assets', expiration: { maxEntries: 200, maxAgeSeconds: 2592000 } } },
+        ],
+    },
 });
 
 /** @type {import('next').NextConfig} */
