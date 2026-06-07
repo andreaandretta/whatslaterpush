@@ -5,6 +5,10 @@ import { getPlanLimits } from '../../../lib/plans';
 import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
+// Opt every fetch in this route (incl. the Supabase RPC) out of Next's fetch
+// cache — otherwise the constant-body RPC POST got frozen and the snapshot
+// (monitor_fresh_sec / heartbeat) never updated between calls.
+export const fetchCache = 'force-no-store';
 
 // 2GB droplet (CLAUDE.md); Baileys ~50MB/instance (the operator's estimate).
 const DROPLET_RAM_MB = Number(process.env.DROPLET_RAM_MB) || 2048;
