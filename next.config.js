@@ -26,6 +26,25 @@ const nextConfig = {
     env: {
           SYSTEM_STATUS: process.env.SYSTEM_STATUS || 'active',
     },
+    // Baseline security headers. CSP is limited to frame-ancestors (clickjacking)
+    // on purpose: a full script/connect CSP needs a tested allowlist (Supabase,
+    // Sentry tunnel, pps.whatsapp.net, the inline beforeinstallprompt script) and
+    // a wrong directive would break prod — left to a dedicated pass.
+    async headers() {
+        return [
+            {
+                source: '/:path*',
+                headers: [
+                    { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
+                    { key: 'X-Content-Type-Options', value: 'nosniff' },
+                    { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+                    { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+                    { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+                    { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
+                ],
+            },
+        ];
+    },
 }
 
 // Compose order: PWA wraps base config (so SW + manifest + offline fallback are

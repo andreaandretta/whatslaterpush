@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
+import { scrubObject } from './sentry-pii';
 
 // Closed catalog of event_types. New events should be added here so the SLA
 // dashboard / queries know what to look for. Free-form strings still work but
@@ -76,7 +77,7 @@ export async function logAuditEvent(params: AuditEventParams): Promise<void> {
     const { error } = await supabase.from('audit_events').insert({
       user_phone: params.userPhone || null,
       event_type: params.eventType,
-      payload: params.payload || {},
+      payload: scrubObject(params.payload || {}), // M: keep phone/JID/email out of audit JSONB
       ip_address: params.ipAddress || null,
     });
     if (error) {
