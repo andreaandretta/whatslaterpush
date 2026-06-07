@@ -56,10 +56,13 @@ export async function GET(req: NextRequest) {
   const evoStatus = wfCount >= 8 ? 'critical' : (banRisk || offline > 0) ? 'warning' : 'ok';
 
   // C. Cron stress
-  const freshSec: number | null = typeof db.monitor_fresh_sec === 'number' ? db.monitor_fresh_sec : null;
-  const cronAlive = freshSec != null && freshSec <= CRON_STALE_SEC;
+  // cron_alive keyed on the per-tick send-cron heartbeat (60s cadence), NOT the
+  // slower monitor cadence. null = no beat yet (just deployed) -> unknown, not critical.
+  const hbSec: number | null = typeof db.cron_heartbeat_sec === 'number' ? db.cron_heartbeat_sec : null;
+  const monitorFreshSec: number | null = typeof db.monitor_fresh_sec === 'number' ? db.monitor_fresh_sec : null;
+  const cronAlive = hbSec == null ? null : hbSec <= CRON_STALE_SEC;
   const pendingOverdue = db.pending_overdue ?? 0;
-  const cronStatus = (!cronAlive || pendingOverdue >= 5) ? 'critical' : pendingOverdue > 0 ? 'warning' : 'ok';
+  const cronStatus = (cronAlive === false || pendingOverdue >= 5) ? 'critical' : pendingOverdue > 0 ? 'warning' : 'ok';
 
   // D. Residual capacity
   const openInstances: Array<{ plan: string; sent: number }> = Array.isArray(db.open_instances) ? db.open_instances : [];
@@ -102,7 +105,8 @@ export async function GET(req: NextRequest) {
     cron: {
       status: cronStatus,
       alive: cronAlive,
-      monitor_fresh_sec: freshSec,
+      heartbeat_sec: hbSec,
+      monitor_fresh_sec: monitorFreshSec,
       pending_overdue: pendingOverdue,
       pending_total: db.pending_total ?? 0,
       avg_processing_drift_ms: db.avg_drift_ms ?? null,

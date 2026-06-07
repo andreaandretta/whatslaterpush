@@ -87,6 +87,12 @@ export async function GET(req: NextRequest) {
       console.log('CRON: Cleaned up ' + authCleanup.length + ' expired pending_auth_sessions');
     }
 
+    // Cron heartbeat: stamp every tick so /api/ops/stress-index detects a
+    // stalled send-cron (>3min) before the queue visibly backs up.
+    try {
+      await supabase.from('ops_heartbeat').upsert({ name: 'send-messages', ts: new Date().toISOString() }, { onConflict: 'name' });
+    } catch (e) {}
+
     // Daily reset (Europe/Rome): once per calendar day, not every cron tick.
     // The date guard (last_daily_reset_at) is what makes the tier limits real —
     // before this the counter was being zeroed every 60s.
