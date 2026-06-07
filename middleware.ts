@@ -97,8 +97,6 @@ export async function middleware(request: NextRequest) {
     const payload = await verifyCookie(request.cookies.get(AUTH_COOKIE_NAME)?.value);
     const authorized = allowlist.length > 0 && payload != null && allowlist.includes(payload.phone);
     if (!authorized) {
-      // TEMP DIAGNOSTIC — remove after debugging /admin gate. No PII (counts/booleans/length only).
-      console.log(`[admin-gate] deny path=${pathname} allowlistCount=${allowlist.length} hasCookie=${payload != null} phoneLen=${payload?.phone?.length ?? 0} match=${payload != null && allowlist.includes(payload.phone)}`);
       if (adminPage) {
         // Bare 404 — information hiding from non-admin users and attackers.
         // No app/not-found.tsx exists, so the browser renders its default
