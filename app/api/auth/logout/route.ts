@@ -32,5 +32,11 @@ export async function POST(req: NextRequest) {
     path: '/',
     maxAge: 0,
   });
+  // Force the browser to drop SW caches, IndexedDB, localStorage, HTTP cache,
+  // and any leftover cookies so a shared device cannot serve the previous
+  // user's cached API responses on the next login. "storage" also unregisters
+  // the active service worker per the Clear-Site-Data spec, which neutralises
+  // any older SW that still has /api/ runtime-cached.
+  res.headers.set('Clear-Site-Data', '"cache", "cookies", "storage"');
   return res;
 }

@@ -187,6 +187,28 @@ function shouldSkipConfirm(
   return true;
 }
 
+// H#2 affirmative cancel-intent guard. The plain `cancell|annull` keyword check
+// let through false positives the LLM occasionally maps to action=cancel /
+// cancel_confirm: questions ("come faccio a cancellare?"), explicit negations
+// ("non cancellare nulla"), and question-word openers. Set allowBareNo=true on
+// the awaiting_confirm path where the system prompt maps a bare "no" reply to
+// cancel_confirm.
+function hasCancelIntent(text: string, allowBareNo = false): boolean {
+  const t = (text || '').trim();
+  if (!t) return false;
+  if (t.endsWith('?')) return false;
+  // Reject negation: "non cancellare", "non lo annullare", etc.
+  if (/\bnon\s+(?:lo|la|li|le|mi|ti|ci|vi|gli)?\s*(?:annull|cancell|elimin|rimuov|disdic|revoc)/i.test(t)) return false;
+  // Reject question openers (user is asking, not commanding)
+  if (/^(?:come|dove|quando|perch[eé]|cosa|chi|posso|puoi|potete)\b/i.test(t)) return false;
+  // Affirmative cancel keywords (IT + EN)
+  if (/\b(?:annull|cancell|elimin|rimuov|disdic|revoc|cancel|delete|remove|scarta)/i.test(t)) return true;
+  // Bare "no" continuation: matches "no", "no grazie", "no annulla", but NOT
+  // "non" (word-boundary after "no" prevents matching "non importa", "non so").
+  if (allowBareNo && /^no\b/i.test(t)) return true;
+  return false;
+}
+
 // Escape ILIKE wildcards to prevent pattern injection
 function escapeIlike(s: string): string {
   return s.replace(/%/g, '\\%').replace(/_/g, '\\_');
@@ -1263,12 +1285,12 @@ export async function POST(req) {
 
       // ── AI: cancel ──
       if (aiResult.action === 'cancel') {
-        // H#2 sanity check: only honor a cancel if the RAW message actually
-        // expresses cancel intent. Guards against the LLM hallucinating
-        // action=cancel on innocuous text and silently dropping a real
-        // scheduled message. The explicit "annulla N" flow still matches.
-        const CANCEL_INTENT = /(annull|cancell|elimin|rimuov|disdic|revoc|cancel|delete|remove)/i;
-        if (!CANCEL_INTENT.test(raw)) {
+        // H#2 sanity check: only honor a cancel if the RAW message expresses
+        // affirmative cancel intent (not a question or negation). Guards against
+        // the LLM hallucinating action=cancel on innocuous text and silently
+        // dropping a real scheduled message. The explicit "annulla N" flow
+        // still matches.
+        if (!hasCancelIntent(raw)) {
           console.log('WEBHOOK: cancel skipped — no intent keyword in message');
           await notifyOwner(instanceName, ownerPhone, aiResult.reply || 'Per annullare un messaggio scrivi "annulla [numero]" (es. "annulla 1").');
           return NextResponse.json({ ok: true, cancel_skipped: 'no_intent' });
@@ -1339,6 +1361,15 @@ export async function POST(req) {
 
       // ── AI: cancel_confirm (user cancelled via AI) ──
       if (aiResult.action === 'cancel_confirm' && pendingCtx?.status === 'awaiting_confirm') {
+        // Same H#2 guard as the cancel branch: the LLM occasionally maps
+        // ambiguous replies ("non importa", "boh", "lascia stare") to
+        // cancel_confirm. The hard-delete here is irreversible, so require
+        // affirmative cancel intent (or a bare "no") in the raw message.
+        if (!hasCancelIntent(raw, true)) {
+          console.log('WEBHOOK: cancel_confirm skipped — no intent keyword in message');
+          await notifyOwner(instanceName, ownerPhone, aiResult.reply || 'Ho un messaggio in attesa di conferma. Scrivi "annulla" per annullarlo o "ok" per confermare.');
+          return NextResponse.json({ ok: true, cancel_confirm_skipped: 'no_intent' });
+        }
         await supabase.from('scheduled_messages').delete().eq('id', pendingCtx.id);
         await notifyOwner(instanceName, ownerPhone, '❌ Messaggio annullato.');
         return NextResponse.json({ ok: true });
