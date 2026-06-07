@@ -38,18 +38,17 @@ function formatMs(ms: number): string {
   return `${(ms / 60_000).toFixed(1)} min`;
 }
 
-export function SlaSection({ secret }: { secret: string }) {
+export function SlaSection() {
   const [range, setRange] = useState<'24h' | '7d' | '30d'>('24h');
   const [data, setData] = useState<SlaResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!secret) return;
     let cancelled = false;
     setLoading(true);
     setErr(null);
-    fetch(`/api/admin/sla?since=${range}&secret=${encodeURIComponent(secret)}`)
+    fetch(`/api/admin/sla?since=${range}`)
       .then(async (r) => {
         const body = await r.json();
         if (cancelled) return;
@@ -70,7 +69,7 @@ export function SlaSection({ secret }: { secret: string }) {
     return () => {
       cancelled = true;
     };
-  }, [range, secret]);
+  }, [range]);
 
   return (
     <section className="mb-12">

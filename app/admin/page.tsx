@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useState, useRef, useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { SlaSection } from './SlaSection';
 
 // --- Types ---
@@ -97,8 +97,6 @@ export default function AdminPageWrapper() {
 
 function AdminPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const secret = searchParams.get('secret') || '';
 
   const [data, setData] = useState<AdminData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -109,13 +107,16 @@ function AdminPage() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [droplet, setDroplet] = useState<DropletData | null>(null);
 
+  // Auth is enforced by middleware (sw_session cookie + ADMIN_PHONES allowlist).
+  // If the user reaches this component, they're authorized — fetches rely on
+  // the cookie being sent automatically by the browser.
   const fetchData = useCallback(async () => {
     try {
       const [res, dropletRes] = await Promise.all([
-        fetch(`/api/admin/data?secret=${encodeURIComponent(secret)}`),
-        fetch(`/api/admin/droplet?secret=${encodeURIComponent(secret)}`),
+        fetch('/api/admin/data'),
+        fetch('/api/admin/droplet'),
       ]);
-      if (res.status === 401) { router.push('/'); return; }
+      if (res.status === 401 || res.status === 403) { router.push('/'); return; }
       if (res.ok) {
         const json = await res.json();
         setData(json);
@@ -126,14 +127,13 @@ function AdminPage() {
       }
     } catch { /* silent */ }
     setLoading(false);
-  }, [secret, router]);
+  }, [router]);
 
   useEffect(() => {
-    if (!secret) { router.push('/'); return; }
     fetchData();
     const interval = setInterval(fetchData, 300000);
     return () => clearInterval(interval);
-  }, [secret, fetchData, router]);
+  }, [fetchData]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -149,7 +149,7 @@ function AdminPage() {
       const res = await fetch('/api/admin/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ secret, question: q }),
+        body: JSON.stringify({ question: q }),
       });
       const json = await res.json();
       setChatMessages(prev => [...prev, { role: 'assistant', text: json.answer || 'Nessuna risposta.' }]);
@@ -554,7 +554,7 @@ function AdminPage() {
           </section>
         )}
 
-        <SlaSection secret={secret} />
+        <SlaSection />
       </div>
     </div>
   );

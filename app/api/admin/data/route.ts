@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { runAllChecks } from '../../../lib/monitoring';
+import { requireAdmin } from '../../../lib/admin-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -114,10 +115,8 @@ async function getBusinessData() {
 // --- Main handler ---
 
 export async function GET(req: NextRequest) {
-  const secret = new URL(req.url).searchParams.get('secret');
-  if (!secret || secret !== process.env.MONITORING_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const admin = await requireAdmin(req);
+  if (admin instanceof NextResponse) return admin;
 
   const supabase = getSupabase();
 

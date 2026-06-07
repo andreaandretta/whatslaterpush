@@ -1,8 +1,13 @@
 /**
  * Integration tests for GET /api/admin/sla.
  * Mocks Supabase with synthetic audit_events + scheduled_messages results.
+ *
+ * Auth migrated 2026-06-07 from CRON_SECRET (?secret=) to the sw_session
+ * cookie + ADMIN_PHONES allowlist (Codex finding #2 fix). Tests now build a
+ * signed sw_session for an allowlisted phone.
  */
-import { createMockSupabase, mockRequest } from './helpers/mocks';
+import { createMockSupabase } from './helpers/mocks';
+import { signCookie } from '../app/lib/auth-cookie';
 
 const mockSupa = createMockSupabase();
 jest.mock('@supabase/supabase-js', () => ({
@@ -10,7 +15,8 @@ jest.mock('@supabase/supabase-js', () => ({
 }));
 
 const ORIGINAL_ENV = process.env;
-const SECRET = 'sla-cron-secret';
+const AUTH_SECRET = '0'.repeat(128);
+const ADMIN_PHONE = '393331234567';
 
 beforeEach(() => {
   mockSupa.calls.length = 0;
@@ -18,19 +24,36 @@ beforeEach(() => {
     ...ORIGINAL_ENV,
     SUPABASE_URL: 'https://test.supabase.co',
     SUPABASE_SERVICE_ROLE_KEY: 'k',
-    CRON_SECRET: SECRET,
+    AUTH_COOKIE_SECRET: AUTH_SECRET,
+    ADMIN_PHONES: ADMIN_PHONE,
   };
 });
 afterEach(() => {
   process.env = ORIGINAL_ENV;
 });
 
-async function call(qs: string = `secret=${SECRET}`) {
+async function call(since: string = '', cookieValue: string | null | undefined = 'auto') {
   jest.resetModules();
   jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
   const { GET } = await import('../app/api/admin/sla/route');
-  const req: any = mockRequest({});
-  req.url = `https://whatslaterpush.vercel.app/api/admin/sla?${qs}`;
+
+  const url = since
+    ? `https://whatslaterpush.vercel.app/api/admin/sla?since=${since}`
+    : 'https://whatslaterpush.vercel.app/api/admin/sla';
+
+  let cookie: string | null;
+  if (cookieValue === 'auto') {
+    cookie = await signCookie({ phone: ADMIN_PHONE, instanceName: `SchedWhats-${ADMIN_PHONE}` });
+  } else {
+    cookie = cookieValue;
+  }
+
+  const req: any = new Request(url, { method: 'GET' });
+  const cookieMap = new Map<string, string>();
+  if (cookie) cookieMap.set('sw_session', cookie);
+  req.cookies = {
+    get: (n: string) => (cookieMap.has(n) ? { value: cookieMap.get(n) } : undefined),
+  };
   return GET(req);
 }
 
@@ -43,8 +66,8 @@ function makeSentEvent(driftMs: number, dayOffset = 0): { created_at: string; pa
 }
 
 describe('GET /api/admin/sla', () => {
-  test('401 without secret', async () => {
-    const res = await call('');
+  test('401 without sw_session cookie', async () => {
+    const res = await call('', null);
     expect(res.status).toBe(401);
   });
 
@@ -121,7 +144,7 @@ describe('GET /api/admin/sla', () => {
   test('since=7d label propagated in response', async () => {
     mockSupa.setResponse('audit_events:select', []);
     mockSupa.setResponse('scheduled_messages:select', null, null, { count: 0 });
-    const res = await call(`secret=${SECRET}&since=7d`);
+    const res = await call('7d');
     const body = await res.json();
     expect(body.since).toBe('7d');
   });
@@ -129,7 +152,7 @@ describe('GET /api/admin/sla', () => {
   test('since=invalid defaults to 24h', async () => {
     mockSupa.setResponse('audit_events:select', []);
     mockSupa.setResponse('scheduled_messages:select', null, null, { count: 0 });
-    const res = await call(`secret=${SECRET}&since=garbage`);
+    const res = await call('garbage');
     const body = await res.json();
     expect(body.since).toBe('24h');
   });

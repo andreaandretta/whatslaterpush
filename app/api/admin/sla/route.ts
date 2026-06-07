@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { requireAdmin } from '../../../lib/admin-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,16 +30,10 @@ const ON_TIME_MAX_MS = 60_000;
 const LATE_MAX_MS = 600_000;
 
 export async function GET(req: NextRequest) {
-  if (!process.env.CRON_SECRET) {
-    return NextResponse.json({ error: 'CRON_SECRET not configured' }, { status: 500 });
-  }
-  const url = new URL(req.url);
-  const queryToken = url.searchParams.get('secret');
-  const headerToken = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-  if ((queryToken || headerToken) !== process.env.CRON_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const admin = await requireAdmin(req);
+  if (admin instanceof NextResponse) return admin;
 
+  const url = new URL(req.url);
   const since = parseSince(url.searchParams.get('since'));
   const sinceIso = new Date(Date.now() - since.ms).toISOString();
   const supabase = getSupabase();

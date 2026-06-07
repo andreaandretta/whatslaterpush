@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { runAllChecks, CheckResult } from '../../../lib/monitoring';
 import { maskPhoneForLLM } from '../../../lib/audit';
+import { requireAdmin } from '../../../lib/admin-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -141,12 +142,11 @@ async function callAI(systemPrompt: string, question: string): Promise<string> {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { secret, question } = body;
+    const admin = await requireAdmin(req);
+    if (admin instanceof NextResponse) return admin;
 
-    if (!secret || secret !== process.env.MONITORING_SECRET) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const body = await req.json();
+    const { question } = body;
 
     if (!question || typeof question !== 'string' || question.trim().length === 0) {
       return NextResponse.json({ error: 'Question required' }, { status: 400 });

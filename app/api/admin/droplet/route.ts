@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchDropletMetrics, fetchDropletHistory24h } from '../../../lib/droplet';
+import { requireAdmin } from '../../../lib/admin-auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  const secret = new URL(req.url).searchParams.get('secret');
-  if (!secret || secret !== process.env.MONITORING_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const admin = await requireAdmin(req);
+  if (admin instanceof NextResponse) return admin;
 
   const [metrics, history] = await Promise.all([
     fetchDropletMetrics(),
