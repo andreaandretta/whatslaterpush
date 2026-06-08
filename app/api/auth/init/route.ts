@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { validatePhone } from '../../../lib/phone';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
+import { logAuditEvent } from '../../../lib/audit';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -224,6 +225,12 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+
+  // Numerator for the pairing_success_rate metric (Q1/Q3 decisions).
+  // Emitted only on the success branch where the client actually receives
+  // something pairable — init-500 / "no code generated" returns do NOT count
+  // as attempts (those are Evolution health, not pairing health).
+  void logAuditEvent({ eventType: 'pairing_started', payload: { instance_name: instanceName } });
 
   return NextResponse.json({ sessionId, instanceName, qrCode, pairingCode });
 }

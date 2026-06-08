@@ -72,7 +72,21 @@ export async function GET(req: NextRequest) {
   const openInstances: Array<{ plan: string; sent: number }> = Array.isArray(db.open_instances) ? db.open_instances : [];
   const dailyMessagesRemaining = openInstances.reduce((sum, i) => sum + Math.max(0, getPlanLimits(i.plan || 'free').dailyLimit - (i.sent || 0)), 0);
 
-  const overall = worstOf(dropletStatus, evoStatus, cronStatus);
+  // E. Pairing success rate (24h). Mirrors checkPairingBlackout in monitoring.ts:
+  // thresholds intentionally duplicated (small, divergent JSON shape) rather than
+  // shared via import to keep the JSON contract independent from the check fn.
+  const pairingStarted: number = db.pairing_started_24h ?? 0;
+  const pairingCompleted: number = db.pairing_completed_24h ?? 0;
+  const pairingRatePct = pairingStarted > 0
+    ? Math.round((pairingCompleted / pairingStarted) * 100)
+    : null;
+  let pairingStatus: 'ok' | 'warning' | 'critical';
+  if (pairingCompleted >= 1) pairingStatus = 'ok';
+  else if (pairingStarted === 0) pairingStatus = 'ok';
+  else if (pairingStarted >= 5) pairingStatus = 'critical';
+  else pairingStatus = 'warning';
+
+  const overall = worstOf(dropletStatus, evoStatus, cronStatus, pairingStatus);
 
   return NextResponse.json({
     ok: true,
@@ -119,6 +133,13 @@ export async function GET(req: NextRequest) {
       droplet_users_remaining: safeNewUsers,
       daily_messages_remaining: dailyMessagesRemaining,
       note: 'Stima a ' + EST_MB_PER_INSTANCE + 'MB/istanza su ' + DROPLET_RAM_MB + 'MB. daily_messages_remaining = somma quote tier residue delle istanze connesse.',
+    },
+    pairing: {
+      status: pairingStatus,
+      started_24h: pairingStarted,
+      completed_24h: pairingCompleted,
+      rate_pct: pairingRatePct,
+      thresholds: { critical_started_when_zero_completed: 5, warning_started_when_zero_completed: 1 },
     },
   });
 }

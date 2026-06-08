@@ -198,10 +198,11 @@ describe('checkFailedSpike', () => {
 // --- runAllChecks ---
 
 describe('runAllChecks', () => {
-  test('returns 7 results', async () => {
+  test('returns 9 results (8 pre-existing + pairing_blackout)', async () => {
     fetchMock.setJsonResponse('/instance/fetchInstances', [{ id: 1 }], 200);
     mockSupa.setResponse('scheduled_messages:select', null, null, { count: 0 });
     mockSupa.setResponse('user_instances:select', [{ id: '1' }], null, { count: 0 });
+    mockSupa.setResponse('audit_events:select', []);
     process.env.DO_API_TOKEN = 'test-token';
     process.env.DO_DROPLET_ID = '12345';
     fetchMock.setJsonResponse('/v2/monitoring/metrics/droplet/memory_free', {
@@ -220,11 +221,12 @@ describe('runAllChecks', () => {
       data: { result: [{ values: [['1712200000', '26843545600']] }] }
     });
     const results = await runAllChecks();
-    expect(results).toHaveLength(7);
+    expect(results).toHaveLength(9);
     results.forEach((r) => {
       expect(['ok', 'warning', 'critical']).toContain(r.status);
       expect(r.name).toBeTruthy();
     });
+    expect(results.map(r => r.name)).toContain('pairing_blackout');
   });
 });
 

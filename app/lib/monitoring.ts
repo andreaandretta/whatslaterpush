@@ -241,6 +241,48 @@ export async function checkInstanceFlapping(): Promise<CheckResult> {
   }
 }
 
+// 24h pairing blackout. Detects the May 2026 incident pattern (IPv6 droplet
+// silently dropped every `CONNECTION_UPDATE state=open` for ~30 days while
+// /api/auth/init kept handing out valid pairing codes — zero monitors caught it).
+// Threshold rationale (Q2 + Codex F4a): critical at >=5 attempts because at
+// early-stage volume a single confused user can produce 3 retries during a
+// single onboarding session, and 3-as-critical would page on a real but benign
+// edge case. The IPv6 bug produced >>5 init/day so the higher threshold still
+// catches it well within 24h.
+export async function checkPairingBlackout(): Promise<CheckResult> {
+  const now = new Date().toISOString();
+  try {
+    const supabase = getSupabase();
+    const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from('audit_events')
+      .select('event_type')
+      .in('event_type', ['pairing_started', 'pairing_completed'])
+      .gte('created_at', windowStart);
+    if (error) return { name: 'pairing_blackout', status: 'critical', message: `Query error: ${error.message}`, checked_at: now };
+
+    let started = 0;
+    let completed = 0;
+    for (const row of data || []) {
+      if ((row as any).event_type === 'pairing_started') started++;
+      else if ((row as any).event_type === 'pairing_completed') completed++;
+    }
+
+    if (completed >= 1) {
+      return { name: 'pairing_blackout', status: 'ok', message: `${completed}/${started} pairing riusciti in 24h`, checked_at: now };
+    }
+    if (started === 0) {
+      return { name: 'pairing_blackout', status: 'ok', message: 'Nessun tentativo di pairing nelle 24h', checked_at: now };
+    }
+    if (started >= 5) {
+      return { name: 'pairing_blackout', status: 'critical', message: `${started} tentativi, 0 successi in 24h — pairing rotto`, checked_at: now };
+    }
+    return { name: 'pairing_blackout', status: 'warning', message: `${started} tentativi, 0 successi in 24h — monitora`, checked_at: now };
+  } catch (err: any) {
+    return { name: 'pairing_blackout', status: 'critical', message: err?.message || 'Errore', checked_at: now };
+  }
+}
+
 // --- Run All Checks ---
 
 export async function runAllChecks(): Promise<CheckResult[]> {
@@ -253,6 +295,7 @@ export async function runAllChecks(): Promise<CheckResult[]> {
     checkFailedSpike,
     checkDropletRam,
     checkInstanceFlapping,
+    checkPairingBlackout,
   ];
   const results: CheckResult[] = [];
   for (const checkFn of checks) {
@@ -272,14 +315,22 @@ export async function runAllChecks(): Promise<CheckResult[]> {
 
 // --- Anti-spam ---
 
-export async function shouldAlert(checkName: string): Promise<boolean> {
+// Higher rank = more severe. Used by shouldAlert escalation pass-through:
+// a warning->critical transition within the 1h dedup window MUST not be
+// silenced (Codex review F1c — original dedup keyed on check_name only,
+// so escalation to a worse status was getting eaten for up to 1h).
+const STATUS_RANK: Record<string, number> = { ok: 0, warning: 1, critical: 2 };
+
+export async function shouldAlert(checkName: string, currentStatus?: string): Promise<boolean> {
   try {
     const supabase = getSupabase();
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    // Check if we already alerted (any channel) within the last hour
+    // Check if we already alerted (any channel) within the last hour.
+    // We also pull `status` so we can let escalations (warning->critical)
+    // bypass the dedup window — see comment on STATUS_RANK above.
     const { data, error } = await supabase
       .from('monitoring_alerts')
-      .select('created_at')
+      .select('created_at, status')
       .eq('check_name', checkName)
       .gte('created_at', oneHourAgo)
       .order('created_at', { ascending: false })
@@ -291,7 +342,17 @@ export async function shouldAlert(checkName: string): Promise<boolean> {
     if (!data || data.length === 0) return true;
     // Double-check: verify the alert is actually within the last hour (belt-and-suspenders)
     const lastAlert = new Date(data[0].created_at).getTime();
-    return Date.now() - lastAlert > 60 * 60 * 1000;
+    if (Date.now() - lastAlert > 60 * 60 * 1000) return true;
+    // Escalation pass-through: if the new status is strictly worse than the
+    // last-alerted status, allow the alert through despite being within the
+    // dedup window. Regressions to a milder status remain suppressed (we
+    // already alerted, no need to re-page for a partial recovery).
+    if (currentStatus !== undefined) {
+      const prevRank = STATUS_RANK[(data[0] as any).status] ?? 0;
+      const curRank = STATUS_RANK[currentStatus] ?? 0;
+      if (curRank > prevRank) return true;
+    }
+    return false;
   } catch {
     return true; // if we can't check, better to alert
   }
@@ -324,6 +385,7 @@ const CHECK_DESCRIPTIONS: Record<string, string> = {
   failed_spike: 'Picco di messaggi falliti',
   droplet_ram: 'RAM droplet elevata',
   instance_flapping: 'Istanza instabile (disconnessioni ripetute / rischio ban)',
+  pairing_blackout: 'Pairing non funziona — nessun completamento in 24h',
 };
 
 function formatItalianTime(): string {

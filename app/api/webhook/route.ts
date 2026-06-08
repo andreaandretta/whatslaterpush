@@ -466,6 +466,21 @@ async function handleConnectionUpdate(payload: any): Promise<NextResponse> {
         console.error(`WEBHOOK: pending_auth_sessions update error: ${sErr.message}`);
       } else {
         console.log(`WEBHOOK: pending_auth_sessions marked authenticated count=${sessions?.length || 0} phone=${ownerPhone}`);
+        // pairing_completed: numerator counterpart of pairing_started. Gated
+        // on the UPDATE actually flipping a row (the `.eq('status','pending')`
+        // guard above means we only see >0 sessions on a real pending->auth
+        // transition). Reconnect / restart-required (515) re-fires of
+        // CONNECTION_UPDATE state=open will find authenticated rows and
+        // produce count=0 here — no duplicate completion event emitted.
+        if (sessions && sessions.length > 0) {
+          try {
+            await supabase.from('audit_events').insert({
+              user_phone: null,
+              event_type: 'pairing_completed',
+              payload: { instance_name: instanceName },
+            });
+          } catch { /* best-effort */ }
+        }
       }
     } else {
       console.log(`WEBHOOK: state=open but no ownerJid in payload, skipping auth session update`);
