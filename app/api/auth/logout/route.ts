@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 import { AUTH_COOKIE_NAME, verifyCookie } from '../../../lib/auth-cookie';
 import { logAuditEvent, clientIpFromHeaders } from '../../../lib/audit';
+import { forceDeleteInstance, instanceNameForPhone } from '../../../lib/evolution';
 
 export const dynamic = 'force-dynamic';
+
+function getSupabase() {
+  return createClient(
+    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+}
 
 export async function POST(req: NextRequest) {
   // Best-effort attempt to attribute the logout to a user_phone. If the cookie
@@ -14,6 +23,32 @@ export async function POST(req: NextRequest) {
   // an anonymous logout.
   const raw = req.cookies?.get?.(AUTH_COOKIE_NAME)?.value;
   const payload = raw ? await verifyCookie(raw) : null;
+
+  // "Disconnetti" must be a REAL disconnect, not just a session logout. When we
+  // know whose session this is, tear down their WhatsApp connection too:
+  //   1. flip user_instances.connection_status to 'close' — deterministic, and
+  //      THIS is what unblocks the anti-hijack guard in /api/auth/init so the
+  //      owner can re-pair their own number (the guard 409s a number that is
+  //      still 'open' when the caller has no sw_session cookie — which is
+  //      exactly the post-logout state).
+  //   2. best-effort logout+delete the Evolution instance — actually unlinks the
+  //      device. Without this the socket stays open, no CONNECTION_UPDATE close
+  //      webhook fires, and connection_status would never leave 'open'.
+  // Both are best-effort and must NEVER block the cookie from clearing, or a
+  // user could get stuck unable to log out. Anonymous / invalid-cookie logouts
+  // skip teardown (no phone to attribute) — this also keeps the anti-hijack
+  // guard intact: you can only disconnect the number carried in YOUR cookie.
+  if (payload?.phone) {
+    try {
+      await getSupabase()
+        .from('user_instances')
+        .update({ connection_status: 'close' })
+        .eq('phone_number', payload.phone);
+    } catch { /* best-effort — cookie still clears below */ }
+    try {
+      await forceDeleteInstance(instanceNameForPhone(payload.phone));
+    } catch { /* best-effort — cookie still clears below */ }
+  }
 
   await logAuditEvent({
     userPhone: payload?.phone || null,

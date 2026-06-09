@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
+import { forceDeleteInstance } from '../../lib/evolution';
 
 function getSupabase() {
   return createClient(
@@ -15,27 +16,6 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.verce
 
 if (!EVO_URL || !EVO_KEY) {
   console.error('[connect] FATAL: EVOLUTION_API_URL or EVOLUTION_API_KEY not set');
-}
-
-async function forceDeleteInstance(name: string): Promise<void> {
-    console.log('[connect] forceDelete start:', name);
-    try {
-          await fetch(`${EVO_URL}/instance/logout/${name}`, {
-                  method: 'DELETE',
-                  headers: { apikey: EVO_KEY },
-          });
-    } catch (e) { console.log('[connect] logout error (ignored):', e); }
-    await new Promise(r => setTimeout(r, 500));
-    try {
-          await fetch(`${EVO_URL}/instance/delete/${name}`, {
-                  method: 'DELETE',
-                  headers: { apikey: EVO_KEY },
-          });
-    } catch (e) { console.log('[connect] delete error (ignored):', e); }
-    await new Promise(r => setTimeout(r, 500));
-    // Wait extra time for Evolution API to fully clean up
-  await new Promise(r => setTimeout(r, 1000));
-  console.log('[connect] forceDelete done:', name);
 }
 
 async function getOwnerPhone(name: string): Promise<string | null> {

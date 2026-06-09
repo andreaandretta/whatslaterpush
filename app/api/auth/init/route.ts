@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { validatePhone } from '../../../lib/phone';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
 import { logAuditEvent } from '../../../lib/audit';
+import { forceDeleteInstance } from '../../../lib/evolution';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -14,19 +15,6 @@ function getSupabase() {
     process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
-}
-
-async function forceDeleteInstance(name: string): Promise<void> {
-  const evoUrl = process.env.EVOLUTION_API_URL;
-  const evoKey = process.env.EVOLUTION_API_KEY;
-  try {
-    await fetch(`${evoUrl}/instance/logout/${name}`, { method: 'DELETE', headers: { apikey: evoKey! } });
-  } catch {}
-  await new Promise(r => setTimeout(r, 500));
-  try {
-    await fetch(`${evoUrl}/instance/delete/${name}`, { method: 'DELETE', headers: { apikey: evoKey! } });
-  } catch {}
-  await new Promise(r => setTimeout(r, 1500));
 }
 
 async function setWebhook(name: string): Promise<void> {
