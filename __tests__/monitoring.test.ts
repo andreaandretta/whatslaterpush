@@ -198,7 +198,7 @@ describe('checkFailedSpike', () => {
 // --- runAllChecks ---
 
 describe('runAllChecks', () => {
-  test('returns 9 results (8 pre-existing + pairing_blackout)', async () => {
+  test('returns 10 results (9 pre-existing + all_egress_down)', async () => {
     fetchMock.setJsonResponse('/instance/fetchInstances', [{ id: 1 }], 200);
     mockSupa.setResponse('scheduled_messages:select', null, null, { count: 0 });
     mockSupa.setResponse('user_instances:select', [{ id: '1' }], null, { count: 0 });
@@ -221,12 +221,13 @@ describe('runAllChecks', () => {
       data: { result: [{ values: [['1712200000', '26843545600']] }] }
     });
     const results = await runAllChecks();
-    expect(results).toHaveLength(9);
+    expect(results).toHaveLength(10);
     results.forEach((r) => {
       expect(['ok', 'warning', 'critical']).toContain(r.status);
       expect(r.name).toBeTruthy();
     });
     expect(results.map(r => r.name)).toContain('pairing_blackout');
+    expect(results.map(r => r.name)).toContain('all_egress_down');
   });
 });
 

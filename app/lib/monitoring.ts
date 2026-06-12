@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { fetchDropletMetrics } from './droplet';
+import { isEgressQuarantined, quarantineEgress, loadEgressFromEnv } from './egress-pool';
 
 // --- Types ---
 
@@ -249,6 +250,12 @@ export async function checkInstanceFlapping(): Promise<CheckResult> {
 // single onboarding session, and 3-as-critical would page on a real but benign
 // edge case. The IPv6 bug produced >>5 init/day so the higher threshold still
 // catches it well within 24h.
+// Fase 0 §6: split into (a) per-egress check when PAIRING_PROXY_ENABLED=true
+// + (b) legacy global check. Legacy auto-disables 25h after
+// PAIRING_PROXY_ENABLED_SINCE so it doesn't false-positive on transition data.
+// Per-egress check quarantines an egress (writes audit egress_quarantine via
+// quarantineEgress) when started>=5 / completed=0 in 24h; quarantineEgress is
+// idempotent so re-runs by concurrent cron triggers don't audit-spam.
 export async function checkPairingBlackout(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
@@ -256,30 +263,105 @@ export async function checkPairingBlackout(): Promise<CheckResult> {
     const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await supabase
       .from('audit_events')
-      .select('event_type')
+      .select('event_type,payload')
       .in('event_type', ['pairing_started', 'pairing_completed'])
       .gte('created_at', windowStart);
     if (error) return { name: 'pairing_blackout', status: 'critical', message: `Query error: ${error.message}`, checked_at: now };
 
-    let started = 0;
-    let completed = 0;
-    for (const row of data || []) {
-      if ((row as any).event_type === 'pairing_started') started++;
-      else if ((row as any).event_type === 'pairing_completed') completed++;
+    const rows = (data || []) as Array<{ event_type: string; payload: any }>;
+    const proxyEnabled = process.env.PAIRING_PROXY_ENABLED === 'true';
+
+    // === (a) Per-egress check (proxy mode only) ===
+    if (proxyEnabled) {
+      const perEgress = new Map<string, { started: number; completed: number }>();
+      for (const r of rows) {
+        const eid = r.payload?.egress_id;
+        if (!eid) continue; // pre-A1 data falls through to legacy below
+        const slot = perEgress.get(eid) || { started: 0, completed: 0 };
+        if (r.event_type === 'pairing_started') slot.started++;
+        else if (r.event_type === 'pairing_completed') slot.completed++;
+        perEgress.set(eid, slot);
+      }
+      const quarantined: string[] = [];
+      for (const [eid, { started, completed }] of perEgress.entries()) {
+        if (started >= 5 && completed === 0) {
+          await quarantineEgress(eid, 'blackout_24h', 24);
+          quarantined.push(eid);
+        }
+      }
+      if (quarantined.length > 0) {
+        return {
+          name: 'pairing_blackout',
+          status: 'critical',
+          message: `Egress quarantined: ${quarantined.join(', ')}`,
+          checked_at: now,
+        };
+      }
     }
 
-    if (completed >= 1) {
-      return { name: 'pairing_blackout', status: 'ok', message: `${completed}/${started} pairing riusciti in 24h`, checked_at: now };
+    // === (b) Legacy global check ===
+    // Skips entirely 25h after the proxy go-live: by that point every row in
+    // the window has egress_id, so the global aggregate is statistically
+    // identical to the per-egress one — no value in double-firing.
+    const since = process.env.PAIRING_PROXY_ENABLED_SINCE;
+    const legacyExpired = since && (Date.now() - new Date(since).getTime() > 25 * 60 * 60 * 1000);
+    if (proxyEnabled && legacyExpired) {
+      return { name: 'pairing_blackout', status: 'ok', message: 'Per-egress monitoring active; legacy skipped', checked_at: now };
     }
-    if (started === 0) {
-      return { name: 'pairing_blackout', status: 'ok', message: 'Nessun tentativo di pairing nelle 24h', checked_at: now };
+
+    // Legacy only sees rows without egress_id (pre-A1 era + proxy=off rows).
+    const legacyRows = proxyEnabled ? rows.filter(r => !r.payload?.egress_id) : rows;
+    let started = 0;
+    let completed = 0;
+    for (const r of legacyRows) {
+      if (r.event_type === 'pairing_started') started++;
+      else if (r.event_type === 'pairing_completed') completed++;
     }
-    if (started >= 5) {
-      return { name: 'pairing_blackout', status: 'critical', message: `${started} tentativi, 0 successi in 24h — pairing rotto`, checked_at: now };
-    }
+    if (completed >= 1) return { name: 'pairing_blackout', status: 'ok', message: `${completed}/${started} pairing riusciti in 24h`, checked_at: now };
+    if (started === 0) return { name: 'pairing_blackout', status: 'ok', message: 'Nessun tentativo di pairing nelle 24h', checked_at: now };
+    if (started >= 5) return { name: 'pairing_blackout', status: 'critical', message: `${started} tentativi, 0 successi in 24h — pairing rotto`, checked_at: now };
     return { name: 'pairing_blackout', status: 'warning', message: `${started} tentativi, 0 successi in 24h — monitora`, checked_at: now };
   } catch (err: any) {
     return { name: 'pairing_blackout', status: 'critical', message: err?.message || 'Errore', checked_at: now };
+  }
+}
+
+// Fase 0 §6 — fires when 100% of the pool is quarantined. checkPairingBlackout
+// already auto-quarantines individual egress; this check is the discriminator
+// that turns "1 egress down, route to next" into "freeze pairing — every
+// retry now burns reputation, stop trying until manual unquarantine or TTL
+// expiry". Emits audit pairing_freeze_activated so the event has its own
+// ledger entry independent of the underlying egress_quarantine rows.
+export async function checkAllEgressDown(): Promise<CheckResult> {
+  const now = new Date().toISOString();
+  try {
+    const pool = loadEgressFromEnv();
+    if (pool.length === 0) {
+      return { name: 'all_egress_down', status: 'ok', message: 'No egress pool configured', checked_at: now };
+    }
+    const states = await Promise.all(pool.map(e => isEgressQuarantined(e.id)));
+    const quarantinedCount = states.filter(Boolean).length;
+    if (quarantinedCount === pool.length) {
+      const supabase = getSupabase();
+      await supabase.from('audit_events').insert({
+        event_type: 'pairing_freeze_activated',
+        payload: { pool_size: pool.length, triggered_at: now },
+      });
+      return {
+        name: 'all_egress_down',
+        status: 'critical',
+        message: `All ${pool.length} egress quarantined. Pairing frozen.`,
+        checked_at: now,
+      };
+    }
+    return {
+      name: 'all_egress_down',
+      status: 'ok',
+      message: `${pool.length - quarantinedCount}/${pool.length} egress available`,
+      checked_at: now,
+    };
+  } catch (err: any) {
+    return { name: 'all_egress_down', status: 'critical', message: err?.message || 'Errore', checked_at: now };
   }
 }
 
@@ -296,6 +378,7 @@ export async function runAllChecks(): Promise<CheckResult[]> {
     checkDropletRam,
     checkInstanceFlapping,
     checkPairingBlackout,
+    checkAllEgressDown,
   ];
   const results: CheckResult[] = [];
   for (const checkFn of checks) {
