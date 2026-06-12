@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import * as Sentry from '@sentry/nextjs';
 import { validatePhone } from '../../../lib/phone';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
-import { logAuditEvent } from '../../../lib/audit';
+import { logAuditEvent, clientIpFromHeaders, hashContactRefSync } from '../../../lib/audit';
 import { forceDeleteInstance } from '../../../lib/evolution';
+import {
+  getEgressForPairing,
+  MisconfigError,
+  FrozenError,
+  type Egress,
+} from '../../../lib/egress-pool';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -76,6 +83,35 @@ export async function POST(req: NextRequest) {
   if (!evoUrl || !evoKey) {
     console.error('[auth/init] FATAL: EVOLUTION_API_URL or EVOLUTION_API_KEY not set');
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+
+  // Egress proxy selection (Fase 0 §2). Resolved BEFORE any side effect so
+  // misconfiguration / freeze don't leave half-written rows behind.
+  //   null            → proxy disabled, legacy direct egress
+  //   MisconfigError → operator error (pool empty/malformed but enabled): 500
+  //   FrozenError    → all egress quarantined: 503 with activation form
+  let egress: Egress | null;
+  try {
+    egress = await getEgressForPairing();
+  } catch (e) {
+    if (e instanceof MisconfigError) {
+      Sentry.captureException(e, { tags: { kind: 'pairing_misconfig' } });
+      return NextResponse.json(
+        { error: 'server_misconfiguration', message: 'Errore di configurazione. Stiamo verificando.' },
+        { status: 500 },
+      );
+    }
+    if (e instanceof FrozenError) {
+      return NextResponse.json(
+        {
+          error: 'pairing_frozen',
+          message: 'Sistema momentaneamente in sovraccarico. Ti contattiamo via WhatsApp.',
+          next_steps: { form_path: '/connect?step=activation-request' },
+        },
+        { status: 503 },
+      );
+    }
+    throw e;
   }
 
   const instanceName = `SchedWhats-${cleanPhone}`;
@@ -151,6 +187,18 @@ export async function POST(req: NextRequest) {
         syncFullHistory: false,
         alwaysOnline: true,
         groupsIgnore: false,
+        // Pairing-only egress proxy (Fase 0 §2). Injected only when an egress
+        // is selected; steady-state sessions remain direct on the droplet so
+        // proxy uptime isn't a hard dependency for already-paired users.
+        ...(egress
+          ? {
+              proxyHost: egress.host,
+              proxyPort: egress.port,
+              proxyProtocol: egress.protocol,
+              ...(egress.username ? { proxyUsername: egress.username } : {}),
+              ...(egress.password ? { proxyPassword: egress.password } : {}),
+            }
+          : {}),
         webhook: {
           enabled: true,
           url: `${appUrl}/api/webhook`,
@@ -218,7 +266,22 @@ export async function POST(req: NextRequest) {
   // Emitted only on the success branch where the client actually receives
   // something pairable — init-500 / "no code generated" returns do NOT count
   // as attempts (those are Evolution health, not pairing health).
-  void logAuditEvent({ eventType: 'pairing_started', payload: { instance_name: instanceName } });
+  //
+  // Fase 0 §2/§6: payload now carries egress_id (drives per-egress watchdog)
+  // and phone_hash (SHA-256 8-char, NOT plaintext — coerent with Sprint 6 PII
+  // policy from migration 20260527_audit_events.sql:7-9). Plaintext IP lands
+  // in the dedicated `ip_address` column via ipAddress param.
+  const sourceIp = clientIpFromHeaders(req.headers);
+  const phoneHash = hashContactRefSync(cleanPhone);
+  void logAuditEvent({
+    eventType: 'pairing_started',
+    payload: {
+      instance_name: instanceName,
+      egress_id: egress?.id || null,
+      phone_hash: phoneHash,
+    },
+    ipAddress: sourceIp,
+  });
 
   return NextResponse.json({ sessionId, instanceName, qrCode, pairingCode });
 }
