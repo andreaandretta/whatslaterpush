@@ -26,4 +26,4 @@ jobs:
           context: ./deploy/evolution-patched
           platforms: linux/amd64
           push: true
-          tags: andreaandretta/evo-patched:v2.3.7-${{ inputs.tag_suffix }}
+          tags: whatslater/evo-patched:v2.3.7-${{ inputs.tag_suffix }}
