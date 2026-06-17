@@ -1,0 +1,8 @@
+# Cloud-init user data per il server Hetzner (runbook 2026-06-12, Fase 1.4)
+# Incollare nel campo "Cloud config" alla creazione del server.
+# Al primo boot installa Coolify (~5-10 min dopo l'avvio).
+# Verifica: http://<IP>:8000 risponde con la pagina di registrazione Coolify.
+#cloud-config
+package_update: true
+runcmd:
+  - curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash

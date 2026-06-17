@@ -1,0 +1,75 @@
+# Evolution API v2.3.7 + Postgres — risorsa Docker Compose per Coolify
+# (runbook 2026-06-12, Fase 3). I valori ${...} vengono settati come env della
+# risorsa in Coolify al deploy — MAI committare segreti reali: repo pubblico.
+#
+# Note di progetto (aggiornate post-audit storico 2026-06-13):
+# - Tag PINNATO v2.3.7 (parità col nodo DO; niente :latest).
+# - NIENTE Redis: CACHE_LOCAL_ENABLED=true (workaround stabilità issue #2437 —
+#   rimuove il bottleneck cache durante pre-key/pairing — e un container in meno
+#   sul nodo). La cache è effimera by design.
+# - DATABASE_SAVE_DATA_INSTANCE=true è OBBLIGATORIO: le sessioni/credenziali
+#   Baileys vivono nel Postgres → backup/restore = dump del DB (runbook §Fase 6).
+# - SAVE_DATA_{CHATS,CONTACTS,LABELS,HISTORIC,MESSAGES}=false: la cache contatti
+#   vive su Supabase via webhook events (che si emettono comunque); meno carico
+#   in pairing. Foto/push_name: flusso repo→Supabase, niente da configurare qui
+#   (conferma audit storico Q1). Post re-pair: /api/admin/backfill-photos.
+# - CONFIG_SESSION_PHONE_CLIENT/NAME: parità col vecchio nodo (audit Q2).
+# - CONFIG_SESSION_PHONE_VERSION: NON settare (deprecata su 2.3.4+, ban risk).
+# - NODE_OPTIONS ipv4first del vecchio nodo: NON replicare (inutile, audit Q11).
+# - Niente porta host per Postgres: raggiungibile solo dalla rete interna.
+
+services:
+  evolution:
+    image: whatslater/evo-patched:v2.3.7-p1
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_URL: ${EVOLUTION_SERVER_URL}            # es. http://157.90.251.241:8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}   # generata fresca al deploy — DEVE coincidere con EVOLUTION_API_KEY su Vercel
+      LANGUAGE: it
+
+      CONFIG_SESSION_PHONE_CLIENT: "Evolution API V2"
+      CONFIG_SESSION_PHONE_NAME: "Chrome"
+
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${POSTGRES_PASSWORD}@postgres:5432/evolution?schema=public
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
+      DATABASE_SAVE_MESSAGE_UPDATE: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "false"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      DATABASE_SAVE_DATA_LABELS: "false"
+      DATABASE_SAVE_DATA_HISTORIC: "false"
+
+      CACHE_LOCAL_ENABLED: "true"
+      CACHE_REDIS_ENABLED: "false"
+
+      DEL_INSTANCE: "false"
+      QRCODE_LIMIT: "30"
+      LOG_LEVEL: ERROR,WARN,INFO
+    volumes:
+      - evolution_instances:/evolution/instances
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}        # generata fresca al deploy
+      POSTGRES_DB: evolution
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  evolution_instances:
+  postgres_data:
