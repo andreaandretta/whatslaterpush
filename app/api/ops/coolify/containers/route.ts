@@ -16,6 +16,10 @@ async function coolifyGet(path: string, token: string, signal: AbortSignal) {
 }
 
 // Whitelist safe fields (drop any secrets/env the Coolify payload may carry).
+// Image fields added for patch-verification: services (compose) carry the image
+// inside docker_compose_raw (services.*.image); applications (image-based deploy)
+// expose docker_image/docker_image_tag at top level. Whitelist all candidates so
+// the caller can eyeball which image tag is actually running.
 function safeResource(r: any, kind: string) {
   if (!r || typeof r !== 'object') return null;
   return {
@@ -24,6 +28,10 @@ function safeResource(r: any, kind: string) {
     name: r.name ?? null,
     status: r.status ?? null,
     fqdn: r.fqdn ?? null,
+    docker_image: r.docker_image ?? null,
+    docker_image_tag: r.docker_image_tag ?? null,
+    docker_registry_image_name: r.docker_registry_image_name ?? null,
+    docker_compose_raw: r.docker_compose_raw ?? null,
   };
 }
 
