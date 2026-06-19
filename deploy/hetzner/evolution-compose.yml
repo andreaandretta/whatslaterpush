@@ -20,7 +20,7 @@
 
 services:
   evolution:
-    image: whatslater/evo-patched:v2.3.7-p1
+    image: whatslater/evo-patched:v2.3.7-p2
     restart: unless-stopped
     ports:
       - "8080:8080"
