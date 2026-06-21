@@ -57,3 +57,7 @@ screenshots/*.png
 /public/worker-*.js.map
 /public/fallback-*.js
 /public/fallback-*.js.map
+
+# Playwright (local E2E artifacts — screenshots, traces, html report)
+/test-results/
+/playwright-report/
