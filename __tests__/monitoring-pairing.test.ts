@@ -90,6 +90,38 @@ describe('checkPairingBlackout', () => {
   });
 });
 
+// C1 regression: per-egress branch (PAIRING_PROXY_ENABLED=true). A healthy egress
+// must NOT be quarantined when its pairings succeed — which only holds once
+// pairing_completed carries egress_id (FIX 6a in the webhook).
+describe('checkPairingBlackout — per-egress (C1)', () => {
+  function egRows(opts: { started: number; completed: number; startedEgress: string; completedEgress: string | null }) {
+    const out: Array<{ event_type: string; payload: any }> = [];
+    for (let i = 0; i < opts.started; i++) out.push({ event_type: 'pairing_started', payload: { egress_id: opts.startedEgress } });
+    for (let i = 0; i < opts.completed; i++) out.push({ event_type: 'pairing_completed', payload: { egress_id: opts.completedEgress } });
+    return out;
+  }
+  const quarantineInsert = () => mockSupa.calls.find(c =>
+    c.table === 'audit_events' && c.operation === 'insert' && c.args[0]?.event_type === 'egress_quarantine');
+
+  test('5 SUCCESSFUL pairings on an egress do NOT quarantine it (the exact C1 scenario)', async () => {
+    process.env.PAIRING_PROXY_ENABLED = 'true';
+    mockSupa.setResponse('audit_events:select', egRows({ started: 5, completed: 5, startedEgress: 'eg-1', completedEgress: 'eg-1' }));
+    const result = await checkPairingBlackout();
+    expect(quarantineInsert()).toBeUndefined();   // egress NOT quarantined
+    expect(result.status).not.toBe('critical');
+  });
+
+  test('regression guard: the SAME 5+5 WITHOUT egress_id on completed DOES quarantine (the pre-fix bug)', async () => {
+    process.env.PAIRING_PROXY_ENABLED = 'true';
+    mockSupa.setResponse('audit_events:select', egRows({ started: 5, completed: 5, startedEgress: 'eg-1', completedEgress: null }));
+    const result = await checkPairingBlackout();
+    const q = quarantineInsert();
+    expect(q).toBeDefined();
+    expect(q!.args[0].payload.egress_id).toBe('eg-1');
+    expect(result.status).toBe('critical');
+  });
+});
+
 describe('shouldAlert escalation pass-through (Codex F1c)', () => {
   test('warning->critical bypasses 1h dedup window', async () => {
     // Last alert was 5min ago at warning level; a fresh critical must pass.

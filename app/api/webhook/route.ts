@@ -474,11 +474,30 @@ async function handleConnectionUpdate(payload: any): Promise<NextResponse> {
         // CONNECTION_UPDATE state=open will find authenticated rows and
         // produce count=0 here — no duplicate completion event emitted.
         if (sessions && sessions.length > 0) {
+          // C1 FIX: resolve the egress this pairing went through so the per-egress
+          // watchdog (checkPairingBlackout) counts THIS completion against the
+          // right egress. Previously pairing_completed carried NO egress_id, so the
+          // per-egress 'completed' counter stayed 0 and a HEALTHY egress got
+          // quarantined after just 5 SUCCESSFUL pairings. Backfill from the latest
+          // pairing_started for this instance (read-only; null on miss -> the
+          // legacy aggregation still works, no regression).
+          let egressId = null;
+          try {
+            const { data: startedRow } = await supabase
+              .from('audit_events')
+              .select('payload')
+              .eq('event_type', 'pairing_started')
+              .filter('payload->>instance_name', 'eq', instanceName)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            egressId = startedRow?.payload?.egress_id ?? null;
+          } catch { /* best-effort: leave egressId null */ }
           try {
             await supabase.from('audit_events').insert({
               user_phone: null,
               event_type: 'pairing_completed',
-              payload: { instance_name: instanceName },
+              payload: { instance_name: instanceName, egress_id: egressId },
             });
           } catch { /* best-effort */ }
         }
