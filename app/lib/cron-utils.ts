@@ -103,3 +103,45 @@ export function applyJitter(scheduledAt: string, maxJitterMs = 15_000): string {
   const offset = Math.floor(Math.random() * (maxJitterMs + 1));
   return new Date(base + offset).toISOString();
 }
+
+export interface RequeueUpdate {
+  status: 'pending' | 'failed';
+  // ALWAYS null on a requeue. A row that previously reached the send path has a
+  // stale send_attempted_at; leaving it set lets the stale-'processing' recovery
+  // (send-messages:156-165) mis-mark the NEXT attempt 'sent' without sending it.
+  send_attempted_at: null;
+  retry_count?: number;
+  error_message?: string;
+  scheduled_at?: string;
+}
+
+/**
+ * Update payload to release a message locked to 'processing' back to 'pending'
+ * when the atomic quota claim fails. Clears send_attempted_at (see RequeueUpdate).
+ */
+export function buildQuotaRequeueUpdate(): RequeueUpdate {
+  return { status: 'pending', send_attempted_at: null };
+}
+
+/**
+ * Update payload for a failed send attempt. retry < 3 → back to 'pending'
+ * (rescheduled +retry*5min from now); retry >= 3 → terminal 'failed' keeping the
+ * original scheduled_at. Always clears send_attempted_at (see RequeueUpdate).
+ */
+export function buildFailureRequeueUpdate(args: {
+  newRetryCount: number;
+  errorMessage: string;
+  originalScheduledAt: string;
+  now: number;
+}): RequeueUpdate {
+  const terminal = args.newRetryCount >= 3;
+  return {
+    status: terminal ? 'failed' : 'pending',
+    retry_count: args.newRetryCount,
+    error_message: args.errorMessage,
+    scheduled_at: terminal
+      ? args.originalScheduledAt
+      : new Date(args.now + args.newRetryCount * 5 * 60 * 1000).toISOString(),
+    send_attempted_at: null,
+  };
+}

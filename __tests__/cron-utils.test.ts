@@ -1,4 +1,4 @@
-import { shouldSendMessage, rescheduleTomorrow, rescheduleSoon, applyJitter, PendingMessage, UserInstance } from '../app/lib/cron-utils';
+import { shouldSendMessage, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, PendingMessage, UserInstance } from '../app/lib/cron-utils';
 
 function makeMessage(overrides: { user_instances?: Partial<UserInstance> | null } & Partial<Omit<PendingMessage, 'user_instances'>> = {}): PendingMessage {
   const defaultInstance: UserInstance = {
@@ -130,6 +130,46 @@ describe('shouldSendMessage', () => {
     });
     // Should return disconnected, not trial_expired
     expect(shouldSendMessage(msg)).toBe('disconnected');
+  });
+});
+
+// FIX 2: every requeue back to 'pending' MUST clear send_attempted_at, otherwise
+// a row that previously reached the send path carries a stale timestamp into its
+// next attempt; if that attempt's lambda dies in the pre-fetch window, the
+// stale-'processing' recovery (send-messages:156-165) mis-marks it 'sent' without
+// actually sending it. These builders centralise that invariant so the route's
+// two requeue sites cannot forget it.
+describe('buildQuotaRequeueUpdate', () => {
+  test('returns status pending and CLEARS send_attempted_at', () => {
+    expect(buildQuotaRequeueUpdate()).toEqual({ status: 'pending', send_attempted_at: null });
+  });
+});
+
+describe('buildFailureRequeueUpdate', () => {
+  const NOW = new Date('2026-06-15T18:00:00.000Z').getTime();
+
+  test('retry < 3 → pending, reschedule +N*5min, CLEARS send_attempted_at', () => {
+    const u = buildFailureRequeueUpdate({ newRetryCount: 1, errorMessage: 'HTTP 500', originalScheduledAt: '2026-06-15T17:00:00.000Z', now: NOW });
+    expect(u.status).toBe('pending');
+    expect(u.send_attempted_at).toBeNull();
+    expect(u.retry_count).toBe(1);
+    expect(u.error_message).toBe('HTTP 500');
+    expect(u.scheduled_at).toBe('2026-06-15T18:05:00.000Z'); // now + 1×5min
+  });
+
+  test('retry 2 → pending, reschedule +10min, CLEARS send_attempted_at', () => {
+    const u = buildFailureRequeueUpdate({ newRetryCount: 2, errorMessage: 'x', originalScheduledAt: '2026-06-15T17:00:00.000Z', now: NOW });
+    expect(u.status).toBe('pending');
+    expect(u.send_attempted_at).toBeNull();
+    expect(u.scheduled_at).toBe('2026-06-15T18:10:00.000Z');
+  });
+
+  test('retry >= 3 → terminal failed, keeps original scheduled_at, still CLEARS send_attempted_at', () => {
+    const u = buildFailureRequeueUpdate({ newRetryCount: 3, errorMessage: 'final', originalScheduledAt: '2026-06-15T17:00:00.000Z', now: NOW });
+    expect(u.status).toBe('failed');
+    expect(u.send_attempted_at).toBeNull();
+    expect(u.scheduled_at).toBe('2026-06-15T17:00:00.000Z'); // original — no reschedule on terminal
+    expect(u.retry_count).toBe(3);
   });
 });
 

@@ -2,7 +2,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { normalizeItalianPhone } from '../../../lib/phone';
-import { shouldSendMessage, rescheduleTomorrow, rescheduleSoon } from '../../../lib/cron-utils';
+import { shouldSendMessage, rescheduleTomorrow, rescheduleSoon, buildQuotaRequeueUpdate, buildFailureRequeueUpdate } from '../../../lib/cron-utils';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
 import { nextOccurrence } from '../../../lib/recurrence';
@@ -391,7 +391,9 @@ export async function GET(req: NextRequest) {
         const { data: claimedQuota, error: quotaErr } = await supabase
           .rpc('claim_daily_quota', { p_phone: ownerPhone, p_limit: planLimits.dailyLimit });
         if (quotaErr || claimedQuota == null) {
-          await supabase.from('scheduled_messages').update({ status: 'pending' }).eq('id', msg.id);
+          // Requeue: clear send_attempted_at so the released row does not carry a
+          // stale timestamp into its next attempt (see buildQuotaRequeueUpdate).
+          await supabase.from('scheduled_messages').update(buildQuotaRequeueUpdate()).eq('id', msg.id);
           console.log('CRON: quota exhausted (atomic) for ' + ownerPhone + ' plan=' + plan + (quotaErr ? ' err=' + quotaErr.message : ''));
           return 'rate_limited' as const;
         }
@@ -498,7 +500,6 @@ export async function GET(req: NextRequest) {
           evolutionMessageId = respJson?.key?.id || null;
         } catch {}
 
-        await recordSend(supabase, ownerPhone, instanceName);
         await supabase.from('scheduled_messages')
           .update({
             status: 'sent',
@@ -511,6 +512,17 @@ export async function GET(req: NextRequest) {
             disconnect_retry_count: 0,
           })
           .eq('id', msg.id);
+
+        // Anti-ban rate counter — recorded AFTER the row is durably marked 'sent'
+        // and wrapped so it CANNOT reject this promise. The message is already
+        // delivered; a throw here (e.g. rate_limit_record RPC blip) would fall
+        // into the failure handler below and trigger a bogus quota refund + a
+        // duplicate send on the next tick. It is a counter, not worth re-sending.
+        try {
+          await recordSend(supabase, ownerPhone, instanceName);
+        } catch (recordErr) {
+          console.warn('CRON: recordSend failed post-send (non-fatal):', (recordErr as Error)?.message);
+        }
 
         const driftMs = Date.now() - new Date(msg.scheduled_at).getTime();
         await logAuditEvent({
@@ -615,12 +627,15 @@ export async function GET(req: NextRequest) {
             await supabase.rpc('refund_daily_quota', { p_phone: ownerPhone });
           }
           const newRetry = (msg.retry_count || 0) + 1;
-          await supabase.from('scheduled_messages').update({
-            status: newRetry >= 3 ? 'failed' : 'pending',
-            retry_count: newRetry,
-            error_message: err?.message || 'Unknown error',
-            scheduled_at: newRetry < 3 ? new Date(Date.now() + (newRetry * 5 * 60 * 1000)).toISOString() : msg.scheduled_at
-          }).eq('id', msg.id);
+          // Requeue/terminal: clear send_attempted_at on the way back to 'pending'
+          // (and harmlessly on 'failed') so a retried row starts its next attempt
+          // clean (see buildFailureRequeueUpdate).
+          await supabase.from('scheduled_messages').update(buildFailureRequeueUpdate({
+            newRetryCount: newRetry,
+            errorMessage: err?.message || 'Unknown error',
+            originalScheduledAt: msg.scheduled_at,
+            now: Date.now(),
+          })).eq('id', msg.id);
           if (newRetry >= 3) {
             try {
               await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
