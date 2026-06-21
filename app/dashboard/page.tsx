@@ -216,6 +216,29 @@ export default function DashboardPage() {
     }
   }, [fetchMessages, showToast]);
 
+  // Retry — re-queue a failed message (status: failed → pending). The
+  // FailedMessageCard owns the inline spinner (it awaits this), so we DON'T
+  // optimistically flip the status: the card stays red/spinning until the
+  // PATCH + refetch resolve, then the refetch moves it back into the live
+  // queue. On failure we toast and leave the card so the user can retry again.
+  const handleRetry = useCallback(async (msg: MessagesSectionMessage) => {
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: msg.id, action: 'retry' }),
+      });
+      if (!res.ok) {
+        showToast('Non sono riuscito a rimetterlo in coda — riprova.');
+        return;
+      }
+      showToast('Rimesso in coda — riprovo a inviarlo a breve.');
+      await fetchMessages();
+    } catch {
+      showToast('Errore di rete — riprova.');
+    }
+  }, [fetchMessages, showToast]);
+
   // Status → coloured dot. Pending/awaiting/sending share the orange "in
   // attesa" bucket; sent green; failed red; cancelled gray.
   const statusConfig: Record<string, { color: string; label: string }> = {
@@ -276,13 +299,15 @@ export default function DashboardPage() {
   const showFAQ = showPricing;
 
   // Pulse ring on the FAB whenever the "Prossimi" tab would be empty —
-  // i.e. no message in pending/sending/paused/awaiting_* state. Mirrors the
-  // partition used by MessagesSection so the two stay in sync. Gated on
-  // `!messagesLoading` so the ring doesn't flicker on first paint before
-  // /api/messages has resolved.
+  // i.e. no message in pending/sending/paused/awaiting_*/failed state. Mirrors
+  // the MessagesSection partition (which now surfaces failed messages at the
+  // top of Prossimi) so the two stay in sync: a user whose only messages
+  // failed has actionable content (Riprova) and must NOT get the "schedule your
+  // first" pulse. Gated on `!messagesLoading` so the ring doesn't flicker on
+  // first paint before /api/messages has resolved.
   const queueEmpty =
     !messagesLoading &&
-    !messages.some((m) => m.status !== 'sent' && m.status !== 'failed' && m.status !== 'cancelled');
+    !messages.some((m) => m.status !== 'sent' && m.status !== 'cancelled');
 
   if (!sessionValidated) {
     return (
@@ -330,7 +355,9 @@ export default function DashboardPage() {
               onDuplicate={handleDuplicate}
               onEdit={handleEdit}
               onPauseToggle={handlePauseToggle}
+              onRetry={handleRetry}
               onShowToast={showToast}
+              connected={connected}
             />
           )
         )}

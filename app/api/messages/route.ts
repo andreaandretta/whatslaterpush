@@ -136,7 +136,7 @@ export async function PATCH(req: NextRequest) {
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
-  const { id, status, scheduled_at, message, recurrence_rule } = body || {};
+  const { id, status, scheduled_at, message, recurrence_rule, action } = body || {};
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
   const supabase = getSupabase();
@@ -149,6 +149,56 @@ export async function PATCH(req: NextRequest) {
 
   if (!existing) {
     return NextResponse.json({ error: 'Message not found or not owned' }, { status: 403 });
+  }
+
+  // Retry — re-queue a message the cron gave up on (status='failed', i.e. it
+  // exhausted its 3 automatic attempts). This is the ONLY way out of the
+  // otherwise-terminal 'failed' state, so it lives ahead of the EDITABLE_STATES
+  // guard below (which deliberately excludes 'failed'). We hand the row back to
+  // the cron with a clean slate: status='pending' + scheduled_at=now (jittered)
+  // so it's picked up on the next run, retry_count/disconnect_retry_count reset
+  // to 0 so it gets a fresh 3-strike budget, and error_message/send_attempted_at
+  // cleared so neither the stale-row UI nor the idempotency recovery is misled.
+  // All the cron's anti-ban layers (jitter, typing, cool-down, rate limits,
+  // atomic quota) still apply downstream — no cron change needed.
+  if (action === 'retry') {
+    if (existing.status !== 'failed') {
+      return NextResponse.json({ error: 'not_retryable', current_status: existing.status }, { status: 409 });
+    }
+    const retryUpdate = {
+      status: 'pending',
+      scheduled_at: applyJitter(new Date().toISOString()),
+      retry_count: 0,
+      disconnect_retry_count: 0,
+      error_message: null,
+      send_attempted_at: null,
+    };
+    // Conditional write scoped to status='failed' so a concurrent retry (double
+    // tap) or any race can't re-queue an already-requeued row twice.
+    const { data: retried, error: retryErr } = await supabase
+      .from('scheduled_messages')
+      .update(retryUpdate)
+      .eq('id', id)
+      .eq('instance_phone', phone)
+      .in('status', ['failed'])
+      .select('id, status, scheduled_at')
+      .single();
+
+    if (retryErr) {
+      if (retryErr.code === 'PGRST116') {
+        return NextResponse.json({ error: 'not_retryable' }, { status: 409 });
+      }
+      return NextResponse.json({ error: retryErr.message }, { status: 500 });
+    }
+
+    await logAuditEvent({
+      userPhone: phone,
+      eventType: 'schedule_retried',
+      payload: { message_id: id },
+      ipAddress: clientIpFromHeaders(req.headers),
+    });
+
+    return NextResponse.json({ message: retried });
   }
 
   // Terminal states are write-once. Cron may still flip pending → processing

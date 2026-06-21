@@ -7,6 +7,7 @@ import { scrubObject } from './sentry-pii';
 // won't be auto-classified.
 export type AuditEventType =
   | 'schedule_created'
+  | 'schedule_retried'
   | 'message_sent'
   | 'message_failed'
   | 'tier_changed'
