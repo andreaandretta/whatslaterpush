@@ -1,17 +1,20 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
-import { Copy, Pencil, Pause, Play, Trash2, X } from 'lucide-react';
+import { Copy, Pencil, Pause, Play, Trash2, RotateCcw, X } from 'lucide-react';
 
 export interface MessageActions {
   onDuplicate: () => void;
   onEdit: () => void;
   onPauseToggle: () => void;
+  onRetry: () => void;
   onDelete: () => void;
   isPaused: boolean;
   // Capabilities — when a message is already sent, only "duplicate" makes
-  // sense. Edit/pause/delete are hidden for sent items.
+  // sense. Edit/pause/delete are hidden for sent items. A failed message
+  // gets "retry" (re-queue) + delete, but not edit/pause.
   canEdit: boolean;
   canPause: boolean;
+  canRetry: boolean;
   canDelete: boolean;
 }
 
@@ -23,8 +26,8 @@ interface Props extends MessageActions {
 
 export function MessageActionsSheet({
   open, onClose, title,
-  onDuplicate, onEdit, onPauseToggle, onDelete,
-  isPaused, canEdit, canPause, canDelete,
+  onDuplicate, onEdit, onPauseToggle, onRetry, onDelete,
+  isPaused, canEdit, canPause, canRetry, canDelete,
 }: Props) {
   const sheetRef = useRef<HTMLDivElement>(null);
 
@@ -100,6 +103,9 @@ export function MessageActionsSheet({
 
         {/* Actions */}
         <div className="py-1">
+          {canRetry && (
+            <Item icon={RotateCcw} label="Riprova invio" onClick={onRetry} />
+          )}
           <Item icon={Copy} label="Duplica" onClick={onDuplicate} />
           {canEdit && (
             <Item icon={Pencil} label="Modifica orario / testo" onClick={onEdit} />

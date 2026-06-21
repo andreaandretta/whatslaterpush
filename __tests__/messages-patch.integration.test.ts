@@ -200,4 +200,35 @@ describe('PATCH /api/messages', () => {
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe('message_not_editable');
   });
+
+  describe('action: retry (failed → pending)', () => {
+    test('retry di un messaggio failed → 200, status pending', async () => {
+      currentRow = { ...currentRow!, status: 'failed', error_message: 'HTTP 400: bad number', retry_count: 3 };
+      const { PATCH } = await import('../app/api/messages/route');
+      const res = await PATCH(makeReq({ id: 'msg-1', action: 'retry' }));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.message.status).toBe('pending');
+      // clean slate: counters reset, error cleared
+      expect(body.message.retry_count).toBe(0);
+      expect(body.message.error_message).toBeNull();
+    });
+
+    test('retry su uno stato non-failed (es. sent) → 409 not_retryable', async () => {
+      currentRow = { ...currentRow!, status: 'sent' };
+      const { PATCH } = await import('../app/api/messages/route');
+      const res = await PATCH(makeReq({ id: 'msg-1', action: 'retry' }));
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe('not_retryable');
+    });
+
+    test('retry quando la cron riclaim la riga tra read e write → 409 not_retryable', async () => {
+      currentRow = { ...currentRow!, status: 'failed' };
+      updateMatched = false;
+      const { PATCH } = await import('../app/api/messages/route');
+      const res = await PATCH(makeReq({ id: 'msg-1', action: 'retry' }));
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe('not_retryable');
+    });
+  });
 });

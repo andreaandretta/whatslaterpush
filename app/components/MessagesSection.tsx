@@ -1,10 +1,11 @@
 'use client';
 import React, { useMemo, useState, useEffect } from 'react';
-import { Search, X, MoreVertical, Calendar, Inbox, Clock } from 'lucide-react';
+import { Search, X, MoreVertical, Calendar, Inbox, Clock, AlertCircle, RotateCcw, Plug, Loader2 } from 'lucide-react';
 import { ContactAvatar } from '../../components/ContactAvatar';
 import { StatusBadge, formatCountdown, formatRelativePast } from './StatusBadge';
 import { MessageActionsSheet } from './MessageActionsSheet';
 import { DeliveryStatusIcon } from './DeliveryStatusIcon';
+import { mapErrorReason } from '../lib/message-error';
 
 export interface ScheduledMessage {
   id: string;
@@ -28,7 +29,11 @@ interface Props {
   onDuplicate: (msg: ScheduledMessage) => void;
   onEdit: (msg: ScheduledMessage) => void;
   onPauseToggle: (msg: ScheduledMessage) => void;
+  onRetry: (msg: ScheduledMessage) => Promise<void> | void;
   onShowToast: (text: string, undo?: () => void) => void;
+  // Live Evolution link state — drives the "Ricollega WhatsApp" CTA on a
+  // failed card even when the stored error string is ambiguous.
+  connected: boolean;
 }
 
 type Tab = 'upcoming' | 'sent';
@@ -76,10 +81,13 @@ const UPCOMING_STATUSES = new Set([
   'pending', 'sending', 'paused',
   'awaiting_confirm', 'awaiting_contact', 'awaiting_datetime', 'awaiting_message',
 ]);
-const SENT_STATUSES = new Set(['sent', 'failed', 'cancelled']);
+// 'failed' is intentionally NOT here — failed messages get their own
+// "Non inviati" partition surfaced at the top of the Prossimi tab (they aren't
+// "inviati", and the Riprova affordance has to be where the user looks).
+const SENT_STATUSES = new Set(['sent', 'cancelled']);
 
 export default function MessagesSection({
-  messages, onDelete, onDuplicate, onEdit, onPauseToggle, onShowToast,
+  messages, onDelete, onDuplicate, onEdit, onPauseToggle, onRetry, onShowToast, connected,
 }: Props) {
   const [tab, setTab] = useState<Tab>('upcoming');
   const [query, setQuery] = useState('');
@@ -93,20 +101,23 @@ export default function MessagesSection({
     return () => clearInterval(t);
   }, []);
 
-  // Split into upcoming vs sent
-  const { upcoming, sent } = useMemo(() => {
+  // Split into failed (own actionable bucket) vs upcoming vs sent
+  const { upcoming, sent, failed } = useMemo(() => {
     const up: ScheduledMessage[] = [];
     const sn: ScheduledMessage[] = [];
+    const fl: ScheduledMessage[] = [];
     for (const m of messages) {
-      if (UPCOMING_STATUSES.has(m.status)) up.push(m);
+      if (m.status === 'failed') fl.push(m);
+      else if (UPCOMING_STATUSES.has(m.status)) up.push(m);
       else if (SENT_STATUSES.has(m.status)) sn.push(m);
       else up.push(m); // unknown statuses default to upcoming
     }
     // Upcoming: ascending (next first)
     up.sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime());
-    // Sent: descending (most recent first)
+    // Sent + failed: descending (most recent first)
     sn.sort((a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime());
-    return { upcoming: up, sent: sn };
+    fl.sort((a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime());
+    return { upcoming: up, sent: sn, failed: fl };
   }, [messages]);
 
   // Apply search
@@ -121,10 +132,16 @@ export default function MessagesSection({
 
   const visibleUpcoming = filter(upcoming);
   const visibleSent = filter(sent);
+  const visibleFailed = filter(failed);
   const list = tab === 'upcoming' ? visibleUpcoming : visibleSent;
   const buckets = tab === 'upcoming' ? UPCOMING_ORDER : SENT_ORDER;
   const titles = tab === 'upcoming' ? UPCOMING_GROUP_TITLES : SENT_GROUP_TITLES;
   const getBucket = tab === 'upcoming' ? upcomingBucket : sentBucket;
+
+  // Failed cards live at the top of the Prossimi tab (unfinished business),
+  // never under Inviati. The Prossimi tab count includes them.
+  const showFailedSection = tab === 'upcoming' && visibleFailed.length > 0;
+  const upcomingTabCount = visibleUpcoming.length + visibleFailed.length;
 
   // Group by bucket
   const grouped = useMemo(() => {
@@ -197,7 +214,7 @@ export default function MessagesSection({
 
       {/* Tabs */}
       <div className="flex items-center gap-1 mb-4 bg-[#202C33] border border-[#2A3942] rounded-full p-1 w-fit">
-        <TabButton active={tab === 'upcoming'} onClick={() => setTab('upcoming')} count={visibleUpcoming.length}>
+        <TabButton active={tab === 'upcoming'} onClick={() => setTab('upcoming')} count={upcomingTabCount}>
           Prossimi
         </TabButton>
         <TabButton active={tab === 'sent'} onClick={() => setTab('sent')} count={visibleSent.length}>
@@ -206,7 +223,7 @@ export default function MessagesSection({
       </div>
 
       {/* List */}
-      {list.length === 0 ? (
+      {list.length === 0 && !showFailedSection ? (
         <div className="bg-[#202C33] rounded-2xl border border-[#2A3942] p-10 text-center">
           <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[#2A3942] flex items-center justify-center">
             {tab === 'upcoming' ? <Calendar className="w-5 h-5 text-gray-500" /> : <Inbox className="w-5 h-5 text-gray-500" />}
@@ -221,6 +238,31 @@ export default function MessagesSection({
         </div>
       ) : (
         <div className="space-y-5">
+          {/* Non inviati — actionable failed cards pinned to the top of the
+              Prossimi tab so the Riprova affordance is where the user looks. */}
+          {showFailedSection && (
+            <div>
+              <div className="flex items-baseline gap-2 mb-2 px-1">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-red-400/90">
+                  Non inviati
+                </h3>
+                <span className="text-[11px] text-gray-600">·</span>
+                <span className="text-[11px] text-gray-500">{visibleFailed.length}</span>
+              </div>
+              <div className="space-y-2">
+                {visibleFailed.map((msg) => (
+                  <FailedMessageCard
+                    key={msg.id}
+                    msg={msg}
+                    connected={connected}
+                    onRetry={onRetry}
+                    onOpenActions={() => setActionMsg(msg)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           {buckets.map((bucket) => {
             const items = grouped[bucket];
             if (!items || items.length === 0) return null;
@@ -257,11 +299,13 @@ export default function MessagesSection({
         onDuplicate={() => actionMsg && onDuplicate(actionMsg)}
         onEdit={() => actionMsg && onEdit(actionMsg)}
         onPauseToggle={() => actionMsg && onPauseToggle(actionMsg)}
+        onRetry={() => actionMsg && onRetry(actionMsg)}
         onDelete={() => actionMsg && handleDelete(actionMsg)}
         isPaused={actionMsg?.status === 'paused'}
         canEdit={!!actionMsg && UPCOMING_STATUSES.has(actionMsg.status)}
         canPause={!!actionMsg && (actionMsg.status === 'pending' || actionMsg.status === 'paused')}
-        canDelete={!!actionMsg && UPCOMING_STATUSES.has(actionMsg.status)}
+        canRetry={!!actionMsg && actionMsg.status === 'failed'}
+        canDelete={!!actionMsg && (UPCOMING_STATUSES.has(actionMsg.status) || actionMsg.status === 'failed')}
       />
     </div>
   );
@@ -345,6 +389,93 @@ function MessageRow({ msg, tab, onOpenActions }: {
         <div className="flex items-center gap-2">
           <StatusBadge status={msg.status} countdown={countdown} />
           <DeliveryStatusIcon msg={msg} />
+        </div>
+      </div>
+
+      <button
+        onClick={onOpenActions}
+        aria-label="Azioni messaggio"
+        className="text-gray-500 hover:text-white shrink-0 p-2 -m-2 transition-colors"
+      >
+        <MoreVertical className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
+// Distinct red card for a message the cron gave up on (status='failed').
+// Surfaces the human error reason + an inline Riprova; a dropped-session
+// failure also gets a "Ricollega WhatsApp" CTA, since Riprova alone won't fix
+// it. Riprova shows a spinner while the re-queue request is in flight; the
+// card then disappears (the message becomes 'pending' and rejoins the queue).
+function FailedMessageCard({ msg, connected, onRetry, onOpenActions }: {
+  msg: ScheduledMessage;
+  connected: boolean;
+  onRetry: (msg: ScheduledMessage) => Promise<void> | void;
+  onOpenActions: () => void;
+}) {
+  const [retrying, setRetrying] = useState(false);
+  const text = msg.parsed_message || msg.caption || '';
+  const displayName = msg.recipient_name || `+${msg.recipient_number || '?'}`;
+  const reason = mapErrorReason(msg.error_message);
+  // Offer "Ricollega" when the failure looks like a dropped session OR the
+  // Evolution link is currently down — a plain Riprova won't fix either.
+  const showReconnect = reason.kind === 'disconnected' || !connected;
+
+  const handleRetry = async () => {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      await onRetry(msg);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl bg-[#2a1f1f] ring-1 ring-red-500/40 p-3 flex items-start gap-3">
+      <ContactAvatar
+        name={msg.recipient_name}
+        number={msg.recipient_number || ''}
+        size="md"
+        photoSrc={msg.photo_url || undefined}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline justify-between gap-2 mb-0.5">
+          <p className="font-semibold text-sm truncate text-white">{displayName}</p>
+          <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-red-400">
+            <AlertCircle className="w-3 h-3" />
+            Non inviato
+          </span>
+        </div>
+
+        {text && (
+          <p className="text-sm text-gray-400 mt-0.5 mb-1.5 line-clamp-2 leading-snug">{text}</p>
+        )}
+
+        <p className="text-[12px] text-red-400/80 mb-2.5">{reason.label}</p>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={handleRetry}
+            disabled={retrying}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {retrying
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <RotateCcw className="w-3.5 h-3.5" />}
+            {retrying ? 'Rimetto in coda…' : 'Riprova'}
+          </button>
+
+          {showReconnect && (
+            <a
+              href="/connect"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold bg-white/[0.06] text-gray-200 hover:bg-white/10 transition-colors"
+            >
+              <Plug className="w-3.5 h-3.5" />
+              Ricollega WhatsApp
+            </a>
+          )}
         </div>
       </div>
 

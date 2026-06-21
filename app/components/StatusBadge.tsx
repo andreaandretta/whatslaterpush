@@ -16,7 +16,7 @@ export const STATUS_META: Record<string, {
   pending:           { label: 'In coda',          tone: 'pending'   },
   sending:           { label: 'In invio…',        tone: 'sending'   },
   sent:              { label: 'Inviato',          tone: 'sent'      },
-  failed:            { label: 'Fallito',          tone: 'failed'    },
+  failed:            { label: 'Non inviato',      tone: 'failed'    },
   cancelled:         { label: 'Annullato',        tone: 'cancelled' },
   paused:            { label: 'In pausa',         tone: 'paused'    },
 };
