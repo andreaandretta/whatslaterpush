@@ -9,10 +9,15 @@
 #   sul nodo). La cache è effimera by design.
 # - DATABASE_SAVE_DATA_INSTANCE=true è OBBLIGATORIO: le sessioni/credenziali
 #   Baileys vivono nel Postgres → backup/restore = dump del DB (runbook §Fase 6).
-# - SAVE_DATA_{CHATS,CONTACTS,LABELS,HISTORIC,MESSAGES}=false: la cache contatti
-#   vive su Supabase via webhook events (che si emettono comunque); meno carico
-#   in pairing. Foto/push_name: flusso repo→Supabase, niente da configurare qui
-#   (conferma audit storico Q1). Post re-pair: /api/admin/backfill-photos.
+# - SAVE_DATA_CONTACTS/CHATS=true (Fase 1 fix 2026-06-21): la vecchia assunzione
+#   "la cache vive su Supabase, gli eventi si emettono comunque" era SBAGLIATA ed
+#   è la root cause del bug "contatti/foto spariti dopo il re-pair su Hetzner".
+#   Con false il Postgres Evolution resta vuoto → findContacts/findChats (fallback
+#   di /api/contacts + sorgente di /api/admin/backfill-photos) tornano [] e i
+#   contatti/foto non si ripopolano. Riabilitati per ripristinare persistenza +
+#   fallback live. Impatto: scritture su Postgres (disco), non RAM del processo.
+# - SAVE_DATA_{LABELS,HISTORIC,NEW_MESSAGE}=false: restano off — non servono al
+#   prodotto e tengono disco/RAM bassi (niente corpi messaggi persistiti).
 # - CONFIG_SESSION_PHONE_CLIENT/NAME: parità col vecchio nodo (audit Q2).
 # - CONFIG_SESSION_PHONE_VERSION: NON settare (deprecata su 2.3.4+, ban risk).
 # - NODE_OPTIONS ipv4first del vecchio nodo: NON replicare (inutile, audit Q11).
@@ -38,8 +43,8 @@ services:
       DATABASE_SAVE_DATA_INSTANCE: "true"
       DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
       DATABASE_SAVE_MESSAGE_UPDATE: "false"
-      DATABASE_SAVE_DATA_CONTACTS: "false"
-      DATABASE_SAVE_DATA_CHATS: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "true"
+      DATABASE_SAVE_DATA_CHATS: "true"
       DATABASE_SAVE_DATA_LABELS: "false"
       DATABASE_SAVE_DATA_HISTORIC: "false"
 
