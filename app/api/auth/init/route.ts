@@ -171,6 +171,31 @@ export async function POST(req: NextRequest) {
 
   await forceDeleteInstance(instanceName);
 
+  // Gate "solo cache vuota" (Fase 2, 2026-06-21): syncFullHistory pesa sulla RAM
+  // del nodo (Baileys bufferizza app-state/history al link). Lo attiviamo SOLO
+  // quando il numero non ha ancora contatti cachati su Supabase — cioè un primo
+  // pairing, l'unico caso che richiede il burst CONTACTS_SET/UPSERT della rubrica.
+  // Un re-pair (cache già popolata) salta il full-sync: la rubrica è su Supabase e
+  // le foto si rinfrescano via backfill (Leva 3). Default OOM-safe a false se la
+  // count fallisce (mai scatenare full-sync per un errore di rete).
+  // Storia: false hardcoded dal 2026-06-07 (commit 6d3fb6b) ha spento i burst →
+  // contatti spariti su ogni nuovo pairing.
+  let syncFullHistory = false;
+  try {
+    const { count: cachedContacts, error: countErr } = await supabase
+      .from('whatsapp_contacts')
+      .select('contact_number', { count: 'exact', head: true })
+      .eq('user_phone', cleanPhone);
+    if (countErr) {
+      console.error('[auth/init] contacts count failed, syncFullHistory=false:', countErr.message);
+    } else {
+      syncFullHistory = (cachedContacts ?? 0) === 0;
+    }
+  } catch (e: any) {
+    console.error('[auth/init] contacts count threw, syncFullHistory=false:', e?.message || e);
+  }
+  console.log(`[auth/init] pairing ${instanceName} syncFullHistory=${syncFullHistory} (cache-empty gate)`);
+
   let createRes: any;
   try {
     const res = await fetch(`${evoUrl}/instance/create`, {
@@ -181,10 +206,10 @@ export async function POST(req: NextRequest) {
         number: cleanPhone,
         qrcode: true,
         integration: 'WHATSAPP-BAILEYS',
-        // syncFullHistory:false — a fresh pairing must NOT pull the entire
-        // WhatsApp history; a burst of new signups was OOM-ing the 2GB droplet.
-        // Contacts populate lazily via incoming-message webhooks instead.
-        syncFullHistory: false,
+        // Fase 2 (2026-06-21): full-sync CONDIZIONALE — true solo al primo
+        // pairing (cache contatti vuota, vedi gate sopra) per ripristinare il
+        // burst rubrica, senza riesporre l'OOM da signup-burst sui nodi piccoli.
+        syncFullHistory,
         alwaysOnline: true,
         groupsIgnore: false,
         // Pairing-only egress proxy (Fase 0 §2). Injected only when an egress
