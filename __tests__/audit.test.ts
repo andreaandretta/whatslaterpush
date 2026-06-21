@@ -3,6 +3,31 @@
  * Mocks Supabase client globally.
  */
 import { createMockSupabase } from './helpers/mocks';
+import { maskInstanceNamesForLLM } from '../app/lib/audit';
+
+// FIX 5a: instance names (SchedWhats-<E.164>) embedded in the admin assistant's
+// system-check messages must be masked before reaching the 3rd-party LLM — the
+// webhook_inactive check leaks raw phones via instance names (finding #8).
+describe('maskInstanceNamesForLLM', () => {
+  test('masks the phone inside a SchedWhats-<E.164> instance name', () => {
+    const out = maskInstanceNamesForLLM('webhook_inactive: SchedWhats-393331234567 non configurato');
+    expect(out).not.toContain('393331234567'); // full number never leaks
+    expect(out).toContain('SchedWhats-[#');     // masked form (maskPhoneForLLM)
+  });
+
+  test('masks every instance name in the text', () => {
+    const out = maskInstanceNamesForLLM('SchedWhats-393331111111 e SchedWhats-393332222222 giù');
+    expect(out).not.toMatch(/3933311111|3933322222/);
+  });
+
+  test('leaves text without instance names unchanged', () => {
+    expect(maskInstanceNamesForLLM('tutti i sistemi ok')).toBe('tutti i sistemi ok');
+  });
+
+  test('empty input returned as-is', () => {
+    expect(maskInstanceNamesForLLM('')).toBe('');
+  });
+});
 
 const mockSupa = createMockSupabase();
 jest.mock('@supabase/supabase-js', () => ({

@@ -24,6 +24,15 @@ export function escapeIlike(s: string): string {
   return s.replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
+// Formats the self-chat contact list for the LLM prompt. NAMES ONLY — the phone
+// numbers must never reach the 3rd-party LLM (the send number is resolved
+// server-side from the chosen contact). Names are sanitized (strip control
+// chars/newlines, cap length) to blunt prompt injection via a contact name.
+export function formatContactListForLLM(contacts: { name: string; number?: string }[]): string {
+  const sanitizeName = (n: string) => (n || '').replace(/[\n\r\t\x00-\x1f]/g, ' ').substring(0, 50).trim();
+  return contacts.map(c => `- ${sanitizeName(c.name)}`).join('\n');
+}
+
 // ── Inline recipient/message extraction ──
 export function extractInlineRecipient(text: string): string | null {
   const m = /\b(?:manda|mandami|mandagli|mandale|scrivi|scrivimi|scrivigli|scrivile|invia|inviami|avvisa|avvisami|dici|digli|dille|ricordami|promemoria|reminder|comunica)\s+ad?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,25}?)(?=\s+(?:domani|fra|tra|stasera|stamattina|stanotte|all[ae]?\s+\d|il\s+\d|\d{1,2}[\/\-]\d))/i.exec(text);

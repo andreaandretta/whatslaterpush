@@ -5,7 +5,34 @@ import {
   romeToUtc,
   getRomeOffsetMs,
   escapeIlike,
+  formatContactListForLLM,
 } from '../app/lib/webhook-utils';
+
+// FIX 5a (A2): the self-chat contact list sent to the LLM must be NAMES ONLY.
+// The send number is resolved server-side from the chosen contact
+// (webhook recNum = contact.recipient_number), so the LLM never needs — and must
+// never receive — a phone number. Zero digits of the client roster leave to the LLM.
+describe('formatContactListForLLM', () => {
+  test('emits names only — never the phone number', () => {
+    expect(formatContactListForLLM([{ name: 'Marco' }, { name: 'Anna' }])).toBe('- Marco\n- Anna');
+  });
+
+  test('ignores any number field and leaks ZERO digits (privacy invariant a)', () => {
+    const out = formatContactListForLLM([{ name: 'Marco', number: '393331234567' } as any]);
+    expect(out).toBe('- Marco');
+    expect(out).not.toMatch(/\d/);
+  });
+
+  test('sanitizes names (strip newlines/control chars, cap 50) — prompt-injection guard', () => {
+    const out = formatContactListForLLM([{ name: 'Ev\nil\tName ' + 'x'.repeat(60) }]);
+    expect(out).not.toMatch(/[\n\r\t]/);
+    expect(out.length).toBeLessThanOrEqual('- '.length + 50);
+  });
+
+  test('empty list -> empty string', () => {
+    expect(formatContactListForLLM([])).toBe('');
+  });
+});
 
 describe('extractInlineRecipient', () => {
   test('extracts name after "invia a" before time keyword', () => {

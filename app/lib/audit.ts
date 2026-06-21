@@ -51,6 +51,15 @@ export function maskPhoneForLLM(phone: string): string {
   return `[#${hash}…${last4}]`;
 }
 
+// Masks WhatsApp instance names (SchedWhats-<E.164>) embedded in free text that
+// is about to be sent to a 3rd-party LLM (e.g. the admin assistant's system-check
+// messages). The phone inside the instance name gets the same maskPhoneForLLM
+// treatment as every other phone in that context, so a full number never leaks.
+export function maskInstanceNamesForLLM(text: string): string {
+  if (!text) return text;
+  return text.replace(/SchedWhats-(\d{6,15})/g, (_m, phone) => 'SchedWhats-' + maskPhoneForLLM(phone));
+}
+
 // Synchronous mirror of hashContactRef. The webhook dbLog scrubber runs in
 // Node runtime and needs to hash phones/names inside a tight loop over
 // payload keys — going async would force every caller to await. Output

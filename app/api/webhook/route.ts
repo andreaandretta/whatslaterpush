@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
-import { extractInlineRecipient, extractInlineMessage, extractInlinePhoneAndName, parseAIDatetime, getRomeOffsetMs, nowRome, romeToUtc } from '../../lib/webhook-utils';
+import { extractInlineRecipient, extractInlineMessage, extractInlinePhoneAndName, parseAIDatetime, getRomeOffsetMs, nowRome, romeToUtc, formatContactListForLLM } from '../../lib/webhook-utils';
 import { getPlanLimits } from '../../lib/plans';
 import { containsAmbiguousTimeKeyword, hasExplicitHHMM } from '../../lib/quick-capture-utils';
 import { scrubPiiForLog } from '../../lib/log-scrubber';
@@ -819,10 +819,9 @@ async function getContactList(ownerPhone: string): Promise<string> {
     }
   }
 
-  if (all.length === 0) return '';
-  // Sanitize contact names: strip control chars, newlines, limit length (prevent AI prompt injection)
-  const sanitizeName = (n: string) => n.replace(/[\n\r\t\x00-\x1f]/g, ' ').substring(0, 50).trim();
-  return all.map(c => `- ${sanitizeName(c.name)}: ${c.number}`).join('\n');
+  // NAMES ONLY to the LLM — never the phone numbers (privacy). The send number is
+  // resolved server-side from the chosen contact (recNum = contact.recipient_number).
+  return formatContactListForLLM(all);
 }
 
 export async function POST(req) {

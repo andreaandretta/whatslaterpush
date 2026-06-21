@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { runAllChecks, CheckResult } from '../../../lib/monitoring';
-import { maskPhoneForLLM } from '../../../lib/audit';
+import { maskPhoneForLLM, maskInstanceNamesForLLM } from '../../../lib/audit';
 import { requireAdmin } from '../../../lib/admin-auth';
 
 export const dynamic = 'force-dynamic';
@@ -40,8 +40,10 @@ async function buildContext(): Promise<string> {
   }
   const mrr = byPlan.personal * 4.99 + byPlan.professional * 9.99 + byPlan.business * 19.99;
 
+  // Mask instance names (SchedWhats-<phone>) embedded in check messages — e.g.
+  // webhook_inactive lists raw instance names — before they reach the LLM.
   const checksText = checks.map((c: CheckResult) =>
-    `- ${c.name}: ${c.status} — ${c.message}`
+    `- ${c.name}: ${c.status} — ${maskInstanceNamesForLLM(c.message)}`
   ).join('\n');
 
   const expiringText = (expiringRes.data || []).map((u: any) =>
