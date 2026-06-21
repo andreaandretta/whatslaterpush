@@ -84,6 +84,32 @@ describe('shouldSendMessage', () => {
     expect(shouldSendMessage(msg)).toBe('send');
   });
 
+  // Free is the terminal post-trial tier: its trial_ends_at is ALWAYS in the
+  // past (that's how the user became free). It must NEVER be reported as
+  // 'trial_expired' — its 3/day allowance is enforced downstream by
+  // claim_daily_quota (dailyLimit=3). Before this fix, every Free user's
+  // messages returned 'trial_expired' → paused forever (the 3/day branch was
+  // dead code). The existing suite only ever exercised 'trial', hiding it.
+  test('returns "send" for free plan with expired trial_ends_at (Free 3/day cap gates downstream, NOT trial_expired)', () => {
+    const msg = makeMessage({
+      user_instances: {
+        subscription_plan: 'free',
+        trial_ends_at: '2026-01-01T00:00:00.000Z', // past — every free user is post-trial
+      },
+    });
+    expect(shouldSendMessage(msg)).toBe('send');
+  });
+
+  test('returns "send" for free plan with null trial_ends_at', () => {
+    const msg = makeMessage({
+      user_instances: {
+        subscription_plan: 'free',
+        trial_ends_at: null,
+      },
+    });
+    expect(shouldSendMessage(msg)).toBe('send');
+  });
+
   test('returns "send" for personal subscription regardless of trial_ends_at', () => {
     const msg = makeMessage({
       user_instances: {
