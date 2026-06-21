@@ -120,6 +120,19 @@ describe('checkPairingBlackout — per-egress (C1)', () => {
     expect(q!.args[0].payload.egress_id).toBe('eg-1');
     expect(result.status).toBe('critical');
   });
+
+  test('#3 distributed blackout: 3 starts across 3 egresses (9/0) -> critical via the aggregate backstop', async () => {
+    process.env.PAIRING_PROXY_ENABLED = 'true';
+    const out: Array<{ event_type: string; payload: any }> = [];
+    for (const eg of ['eg-1', 'eg-2', 'eg-3']) {
+      for (let i = 0; i < 3; i++) out.push({ event_type: 'pairing_started', payload: { egress_id: eg } });
+    }
+    mockSupa.setResponse('audit_events:select', out);
+    const result = await checkPairingBlackout();
+    expect(quarantineInsert()).toBeUndefined();    // no single egress reached started>=5
+    expect(result.status).toBe('critical');        // aggregate over all rows catches it
+    expect(result.message).toContain('9 tentativi');
+  });
 });
 
 describe('shouldAlert escalation pass-through (Codex F1c)', () => {

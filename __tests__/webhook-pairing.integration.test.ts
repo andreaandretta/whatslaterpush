@@ -78,3 +78,26 @@ describe('Webhook pairing_completed — C1 egress_id', () => {
     expect(findPairingCompleted()).toBeUndefined();
   });
 });
+
+describe('Webhook instance_disconnect — #4 benign-515 guard', () => {
+  const findDisconnectAudit = () => mockSupa.calls.find(c =>
+    c.table === 'audit_events' && c.operation === 'insert' && c.args[0]?.event_type === 'instance_disconnect');
+
+  test('does NOT audit instance_disconnect for benign 515 (restartRequired after pairing)', async () => {
+    const res = await postWebhook({
+      event: 'connection.update', instance: 'SchedWhats-393331234567', data: { state: 'close', statusReason: 515 },
+    });
+    expect(res.status).toBe(200);
+    expect(findDisconnectAudit()).toBeUndefined();
+  });
+
+  test('audits instance_disconnect for a real disconnect code (e.g. 403 forbidden / ban)', async () => {
+    const res = await postWebhook({
+      event: 'connection.update', instance: 'SchedWhats-393331234567', data: { state: 'close', statusReason: 403 },
+    });
+    expect(res.status).toBe(200);
+    const audit = findDisconnectAudit();
+    expect(audit).toBeDefined();
+    expect(audit!.args[0].payload.code).toBe(403);
+  });
+});

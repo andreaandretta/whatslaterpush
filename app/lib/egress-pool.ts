@@ -47,7 +47,9 @@ interface LatestEgressEvent {
   payload: { egress_id: string; reason?: string; until?: string };
 }
 
-async function getLatestEgressEvent(egressId: string): Promise<LatestEgressEvent | null> {
+// Returns { error } distinctly from { event: null } so callers can FAIL CLOSED on
+// a read error instead of mistaking it for "no quarantine on record".
+async function getLatestEgressEvent(egressId: string): Promise<{ error: boolean; event: LatestEgressEvent | null }> {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from('audit_events')
@@ -59,37 +61,60 @@ async function getLatestEgressEvent(egressId: string): Promise<LatestEgressEvent
     .maybeSingle();
   if (error) {
     console.warn(`[egress-pool] getLatestEgressEvent err=${error.message}`);
-    return null;
+    return { error: true, event: null };
   }
-  return (data as unknown as LatestEgressEvent) || null;
+  return { error: false, event: (data as unknown as LatestEgressEvent) || null };
 }
 
 export async function isEgressQuarantined(egressId: string): Promise<boolean> {
-  const latest = await getLatestEgressEvent(egressId);
-  if (!latest) return false;
-  if (latest.event_type === 'egress_unquarantine') return false;
-  if (!latest.payload.until) return false;
-  return new Date(latest.payload.until).getTime() > Date.now();
+  const { error, event } = await getLatestEgressEvent(egressId);
+  // FAIL CLOSED: a read error must NOT make a quarantined (possibly Meta-banned)
+  // egress look healthy. getEgressForPairing's loop just skips this egress and
+  // tries the next, so a single read error costs one egress, not the whole pool;
+  // only a TOTAL DB outage (every check errors) escalates to FrozenError — correct,
+  // since at that point Supabase itself is down.
+  if (error) return true;
+  if (!event) return false;
+  if (event.event_type === 'egress_unquarantine') return false;
+  if (!event.payload.until) return false;
+  return new Date(event.payload.until).getTime() > Date.now();
 }
 
 // Idempotent: skip if already actively quarantined. Avoids audit spam when
 // multiple cron runs hit the same blackout threshold within the same minute.
 // Insert direct (not logAuditEvent) so egress_id and until round-trip the
 // scrubObject sentry-pii filter cleanly — neither is PII.
+// Re-write at most ~once/hour while an incident persists, so the audit ledger
+// isn't spammed by the 15-min cron yet the quarantine 'until' keeps advancing.
+const QUARANTINE_EXTEND_THRESHOLD_MS = 60 * 60 * 1000;
+
 export async function quarantineEgress(
   egressId: string,
   reason: string,
   ttlHours: number = 24,
 ): Promise<void> {
-  if (await isEgressQuarantined(egressId)) return;
-  const until = new Date(Date.now() + ttlHours * 3600_000).toISOString();
+  const newUntilMs = Date.now() + ttlHours * 3600_000;
+  const { error, event } = await getLatestEgressEvent(egressId);
+  // Can't reason about state during a DB read error; isEgressQuarantined already
+  // fails closed, so skip writing here.
+  if (error) return;
+  const activeUntilMs = (event && event.event_type === 'egress_quarantine' && event.payload.until)
+    ? new Date(event.payload.until).getTime()
+    : 0;
+  const isActive = activeUntilMs > Date.now();
+  // Already quarantined: re-write only if the fresh TTL pushes 'until' meaningfully
+  // forward (>1h). This EXTENDS the quarantine for an ONGOING incident (so the
+  // egress doesn't auto-recover 24h after the FIRST detection) while deduping the
+  // per-tick re-detections that would otherwise spam audit_events.
+  if (isActive && newUntilMs - activeUntilMs < QUARANTINE_EXTEND_THRESHOLD_MS) return;
+  const until = new Date(newUntilMs).toISOString();
   const supabase = getSupabase();
-  const { error } = await supabase.from('audit_events').insert({
+  const { error: insErr } = await supabase.from('audit_events').insert({
     event_type: 'egress_quarantine',
     payload: { egress_id: egressId, reason, until },
   });
-  if (error) {
-    console.warn(`[egress-pool] quarantine insert err=${error.message}`);
+  if (insErr) {
+    console.warn(`[egress-pool] quarantine insert err=${insErr.message}`);
   }
 }
 

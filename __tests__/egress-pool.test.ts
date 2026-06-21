@@ -149,6 +149,13 @@ describe('isEgressQuarantined', () => {
     const result = await isEgressQuarantined('ipr-fra-01');
     expect(result).toBe(false);
   });
+
+  // #1 FAIL-CLOSED: a DB read error must be treated as quarantined, never healthy.
+  it('returns TRUE on a DB read error (fail-closed — never route onto a maybe-banned egress)', async () => {
+    mockFrom.mockReturnValue(chainedSelect({ data: null, error: { message: 'db down' } }) as any);
+    const result = await isEgressQuarantined('ipr-fra-01');
+    expect(result).toBe(true);
+  });
 });
 
 describe('quarantineEgress idempotency', () => {
@@ -164,16 +171,40 @@ describe('quarantineEgress idempotency', () => {
     process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-key';
   });
 
-  it('skips insert when egress is already quarantined', async () => {
-    const futureIso = new Date(Date.now() + 3600_000).toISOString();
+  it('dedup: skips insert when recently quarantined (fresh TTL, gap < 1h)', async () => {
+    const untilIso = new Date(Date.now() + 23.5 * 3600_000).toISOString(); // ~30min into a fresh 24h
     mockFrom.mockReturnValue({
       ...chainedSelect({
-        data: { event_type: 'egress_quarantine', payload: { egress_id: 'ipr-fra-01', until: futureIso } },
+        data: { event_type: 'egress_quarantine', payload: { egress_id: 'ipr-fra-01', until: untilIso } },
         error: null,
       }),
       insert: insertSpy,
     } as any);
-    await quarantineEgress('ipr-fra-01', 'test-reason');
+    await quarantineEgress('ipr-fra-01', 'blackout_24h', 24);
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it('#2 EXTENDS (re-inserts a later until) when the active quarantine is aging (gap >= 1h)', async () => {
+    const oldUntilMs = Date.now() + 1 * 3600_000; // current quarantine expires in 1h
+    mockFrom.mockReturnValue({
+      ...chainedSelect({
+        data: { event_type: 'egress_quarantine', payload: { egress_id: 'ipr-fra-01', until: new Date(oldUntilMs).toISOString() } },
+        error: null,
+      }),
+      insert: insertSpy,
+    } as any);
+    await quarantineEgress('ipr-fra-01', 'blackout_24h', 24);
+    expect(insertSpy).toHaveBeenCalledTimes(1);
+    const inserted = insertSpy.mock.calls[0][0];
+    expect(new Date(inserted.payload.until).getTime()).toBeGreaterThan(oldUntilMs + 60 * 60 * 1000);
+  });
+
+  it('does not insert during a DB read error (state unknown; isEgressQuarantined fails closed)', async () => {
+    mockFrom.mockReturnValue({
+      ...chainedSelect({ data: null, error: { message: 'db down' } }),
+      insert: insertSpy,
+    } as any);
+    await quarantineEgress('ipr-fra-01', 'blackout_24h', 24);
     expect(insertSpy).not.toHaveBeenCalled();
   });
 
@@ -304,6 +335,43 @@ describe('getEgressForPairing', () => {
           }),
         }),
       }),
+    }) as any);
+    await expect(getEgressForPairing()).rejects.toThrow(FrozenError);
+  });
+
+  it('#1 skips an egress whose quarantine check ERRORS and uses the next healthy one', async () => {
+    process.env.PAIRING_PROXY_ENABLED = 'true';
+    process.env.PAIRING_EGRESS_POOL = 'ipr-fra-01,web-mil-01';
+    process.env.PAIRING_EGRESS_IPR_FRA_01_HOST = 'p1.x.com';
+    process.env.PAIRING_EGRESS_IPR_FRA_01_PORT = '8080';
+    process.env.PAIRING_EGRESS_WEB_MIL_01_HOST = 'p2.x.com';
+    process.env.PAIRING_EGRESS_WEB_MIL_01_PORT = '8081';
+    let callCount = 0;
+    mockFrom.mockImplementation(() => ({
+      select: () => ({ in: () => ({ filter: () => ({ order: () => ({ limit: () => ({
+        maybeSingle: () => {
+          callCount++;
+          // egress 1 check errors -> fail-closed -> skipped; egress 2 healthy -> used
+          if (callCount === 1) return Promise.resolve({ data: null, error: { message: 'db read failed' } });
+          return Promise.resolve({ data: null, error: null });
+        },
+      }) }) }) }) }),
+    }) as any);
+    const result = await getEgressForPairing();
+    expect(result?.id).toBe('web-mil-01');
+  });
+
+  it('#1 throws FrozenError only when EVERY egress check errors (total DB outage)', async () => {
+    process.env.PAIRING_PROXY_ENABLED = 'true';
+    process.env.PAIRING_EGRESS_POOL = 'ipr-fra-01,web-mil-01';
+    process.env.PAIRING_EGRESS_IPR_FRA_01_HOST = 'p1.x.com';
+    process.env.PAIRING_EGRESS_IPR_FRA_01_PORT = '8080';
+    process.env.PAIRING_EGRESS_WEB_MIL_01_HOST = 'p2.x.com';
+    process.env.PAIRING_EGRESS_WEB_MIL_01_PORT = '8081';
+    mockFrom.mockImplementation(() => ({
+      select: () => ({ in: () => ({ filter: () => ({ order: () => ({ limit: () => ({
+        maybeSingle: () => Promise.resolve({ data: null, error: { message: 'db down' } }),
+      }) }) }) }) }),
     }) as any);
     await expect(getEgressForPairing()).rejects.toThrow(FrozenError);
   });

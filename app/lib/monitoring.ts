@@ -299,21 +299,15 @@ export async function checkPairingBlackout(): Promise<CheckResult> {
       }
     }
 
-    // === (b) Legacy global check ===
-    // Skips entirely 25h after the proxy go-live: by that point every row in
-    // the window has egress_id, so the global aggregate is statistically
-    // identical to the per-egress one — no value in double-firing.
-    const since = process.env.PAIRING_PROXY_ENABLED_SINCE;
-    const legacyExpired = since && (Date.now() - new Date(since).getTime() > 25 * 60 * 60 * 1000);
-    if (proxyEnabled && legacyExpired) {
-      return { name: 'pairing_blackout', status: 'ok', message: 'Per-egress monitoring active; legacy skipped', checked_at: now };
-    }
-
-    // Legacy only sees rows without egress_id (pre-A1 era + proxy=off rows).
-    const legacyRows = proxyEnabled ? rows.filter(r => !r.payload?.egress_id) : rows;
+    // === (b) Aggregate backstop ===
+    // Runs over ALL rows whenever the per-egress branch did not already quarantine.
+    // Catches DISTRIBUTED blackouts the per-egress threshold misses: e.g. 3 starts
+    // across 3 egresses (9 total / 0 completions) — no single egress reaches
+    // started>=5, but pairing is globally broken. NO 25h 'ok' short-circuit: this
+    // aggregate stays a real safety net for the whole life of proxy mode.
     let started = 0;
     let completed = 0;
-    for (const r of legacyRows) {
+    for (const r of rows) {
       if (r.event_type === 'pairing_started') started++;
       else if (r.event_type === 'pairing_completed') completed++;
     }

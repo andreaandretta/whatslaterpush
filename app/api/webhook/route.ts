@@ -440,8 +440,12 @@ async function handleConnectionUpdate(payload: any): Promise<NextResponse> {
   else console.log(`WEBHOOK: CONNECTION_UPDATE saved - instance=${instanceName} status=${connectionStatus}` + (connectionStatus === 'close' ? ` reason=${discCode}/${discReason}` : '') + ` rows=${updated?.length || 0}`);
 
   // Audit each disconnect with its reason (fire-and-forget) so the history
-  // survives the next reconnect overwriting the last_disconnect_* columns.
-  if (connectionStatus === 'close') {
+  // survives the next reconnect overwriting the last_disconnect_* columns —
+  // EXCEPT benign 515 (restartRequired): Baileys emits it routinely right after
+  // pairing and on normal reconnects, so auditing it would feed checkInstanceFlapping
+  // false 'rischio ban' criticals and bloat audit_events. The last_disconnect_*
+  // columns above still record it for visibility; only the flapping signal skips.
+  if (connectionStatus === 'close' && discCode !== 515) {
     try {
       await supabase.from('audit_events').insert({
         user_phone: null,
