@@ -5,17 +5,29 @@ import { Share, X } from 'lucide-react';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 
 const DISMISSED_FLAG = 'wl_install_dismissed';
+const FIRST_MSG_FLAG = 'wl_first_msg_done';
 
 export default function InstallPrompt() {
   const { mounted, installed, deferred, ios, install } = useInstallPrompt();
   const [dismissed, setDismissed] = useState(false);
+  // Silent principle: don't pitch "install" to someone who hasn't sent a
+  // single message yet. The dashboard sets wl_first_msg_done + fires the
+  // `wl-first-msg-done` event on the user's first successful schedule; we gate
+  // on the flag AND listen for the event so the banner surfaces on that exact
+  // transition (and stays hidden before it). This gate had regressed — the flag
+  // was still being written by the dashboard but no longer read here.
+  const [firstMsgDone, setFirstMsgDone] = useState(false);
 
   useEffect(() => {
     try {
       setDismissed(localStorage.getItem(DISMISSED_FLAG) === '1');
+      setFirstMsgDone(localStorage.getItem(FIRST_MSG_FLAG) === '1');
     } catch {
       // private mode / disabled storage — fail silent, no prompt.
     }
+    const onFirstMsg = () => setFirstMsgDone(true);
+    window.addEventListener('wl-first-msg-done', onFirstMsg);
+    return () => window.removeEventListener('wl-first-msg-done', onFirstMsg);
   }, []);
 
   const handleInstall = useCallback(async () => {
@@ -33,7 +45,7 @@ export default function InstallPrompt() {
 
   // Visibility gate: only mounted, not installed, not dismissed, and we
   // need either a deferred prompt (Chrome/Android) or the iOS fallback.
-  if (!mounted || installed || dismissed) return null;
+  if (!mounted || installed || dismissed || !firstMsgDone) return null;
   if (deferred === null && !ios) return null;
 
   return (
