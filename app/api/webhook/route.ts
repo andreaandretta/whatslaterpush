@@ -5,6 +5,7 @@ import { extractInlineRecipient, extractInlineMessage, extractInlinePhoneAndName
 import { getPlanLimits } from '../../lib/plans';
 import { containsAmbiguousTimeKeyword, hasExplicitHHMM } from '../../lib/quick-capture-utils';
 import { scrubPiiForLog } from '../../lib/log-scrubber';
+import { claimWebhookEvent, releaseWebhookEvent } from '../../lib/webhook-dedup';
 export const dynamic = 'force-dynamic';
 
 const supabase = createClient(
@@ -513,23 +514,8 @@ async function isMessageProcessed(msgId: string): Promise<boolean> {
   return !!data;
 }
 
-// ── Atomic cross-lambda dedup via processed_webhook_events (Fix #3) ──
-// Claims a WhatsApp message id with INSERT ... ON CONFLICT DO NOTHING. Returns
-// true if THIS call claimed it (fresh -> process), false if already claimed
-// (Evolution retry / parallel lambda -> skip). Replaces the per-process Map
-// (useless across serverless instances) and the non-atomic SELECT-then-insert.
-async function claimWebhookEvent(msgId: string): Promise<boolean> {
-  if (!msgId) return true; // no id to dedup on -> let it through
-  const { data, error } = await supabase
-    .from('processed_webhook_events')
-    .upsert({ message_key: msgId }, { onConflict: 'message_key', ignoreDuplicates: true })
-    .select('message_key');
-  if (error) {
-    console.error('WEBHOOK: dedup claim error for ' + msgId + ':', error.message);
-    return true; // fail-open: better a rare dup than dropping a real message
-  }
-  return !!(data && data.length > 0);
-}
+// claimWebhookEvent / releaseWebhookEvent live in lib/webhook-dedup.ts (extracted
+// for unit testability). Both take the module supabase client as their 1st arg.
 
 // ── Get pending partial context (awaiting_time, awaiting_recipient, or awaiting_confirm) ──
 // Auto-expires records older than 1 hour to prevent stale context from blocking new messages
@@ -841,6 +827,11 @@ async function getContactList(ownerPhone: string): Promise<string> {
 
 export async function POST(req) {
   let rawBody = '';
+  // Tracks a dedup claim THIS request owns, so error paths (the outer catch and
+  // the 500-throws funnelled into it) can release it for Evolution's retry. Set
+  // only AFTER a successful claim. Success/handled returns leave the claim in
+  // place (never released) so an already-handled event is not re-processed.
+  let claimedMsgId = null;
   try {
     // Webhook authentication: validate secret from Evolution API (MANDATORY)
     const webhookSecret = process.env.WEBHOOK_SECRET;
@@ -1069,10 +1060,13 @@ export async function POST(req) {
 
     // ── DEDUP: In-memory first (fast), then DB check before insert ──
     const msgId = msgKey?.id;
-    if (msgId && !(await claimWebhookEvent(msgId))) {
+    if (msgId && !(await claimWebhookEvent(supabase, msgId))) {
       console.log('WEBHOOK: DUPLICATE (atomic claim) msgId=' + msgId);
       return NextResponse.json({ ok: true, deduplicated: true });
     }
+    // We now own the claim (or there was no msgId). Track it so the error paths
+    // below release it for Evolution's retry; success/handled returns keep it.
+    if (msgId) claimedMsgId = msgId;
 
     const senderRaw = (msgKey?.remoteJid || '').split('@')[0];
     const isFromMe = msgKey?.fromMe === true;
@@ -1204,7 +1198,7 @@ export async function POST(req) {
         if (updErr) {
           console.error('WEBHOOK: CONFIRM UPDATE FAILED:', updErr.message);
           await notifyOwner(instanceName, ownerPhone, 'Errore conferma: ' + updErr.message);
-          return NextResponse.json({ error: updErr.message }, { status: 500 });
+          throw new Error(updErr.message); // -> outer catch releases the dedup claim, then 500
         }
         await notifyOwner(instanceName, ownerPhone,
           '✅ Confermato! Messaggio a ' + (awaiting.recipient_name || awaiting.recipient_number) +
@@ -1365,7 +1359,7 @@ export async function POST(req) {
         const { error: updErr } = await supabase.from('scheduled_messages').update({ status: 'pending' }).eq('id', pendingCtx.id);
         if (updErr) {
           await notifyOwner(instanceName, ownerPhone, 'Errore conferma: ' + updErr.message);
-          return NextResponse.json({ error: updErr.message }, { status: 500 });
+          throw new Error(updErr.message); // -> outer catch releases the dedup claim, then 500
         }
         await notifyOwner(instanceName, ownerPhone,
           '✅ Confermato! Messaggio a ' + (pendingCtx.recipient_name || pendingCtx.recipient_number) +
@@ -1453,7 +1447,7 @@ export async function POST(req) {
         const { error: updErr } = await supabase.from('scheduled_messages').update(updates).eq('id', targetMsg.id);
         if (updErr) {
           await notifyOwner(instanceName, ownerPhone, 'Errore aggiornamento: ' + updErr.message);
-          return NextResponse.json({ error: updErr.message }, { status: 500 });
+          throw new Error(updErr.message); // -> outer catch releases the dedup claim, then 500
         }
 
         const { data: updated } = await supabase.from('scheduled_messages')
@@ -1673,8 +1667,14 @@ export async function POST(req) {
           }
           console.error('WEBHOOK: DB insert error:', insErr.message);
           await notifyOwner(instanceName, ownerPhone, 'Errore salvataggio: ' + insErr.message);
-          return NextResponse.json({ error: insErr.message }, { status: 500 });
+          throw new Error(insErr.message); // -> outer catch releases the dedup claim, then 500
         }
+
+        // INSERT committed: the message is durably scheduled. "Commit" the dedup
+        // claim (stop tracking it for release) so a throw in the notify/format code
+        // below can't release it and let Evolution's retry RE-INSERT = double
+        // schedule (there is no wa_message_id unique constraint to catch it).
+        claimedMsgId = null;
 
         let autoSaveSuffix = '';
         if (autoSaveResult.saved) autoSaveSuffix = '\n(salvato in rubrica)';
@@ -1816,8 +1816,12 @@ export async function POST(req) {
       }
       console.error('WEBHOOK: DB insert error:', insErr.message);
       await notifyOwner(instanceName, ownerPhone, 'Errore salvataggio: ' + insErr.message);
-      return NextResponse.json({ error: insErr.message }, { status: 500 });
+      throw new Error(insErr.message); // -> outer catch releases the dedup claim, then 500
     }
+
+    // INSERT committed (fallback path): commit the dedup claim so a downstream
+    // throw can't release it and cause Evolution's retry to re-insert.
+    claimedMsgId = null;
 
     await notifyOwner(instanceName, ownerPhone,
       '✅ Invierò a ' + recName + ' il ' + formatRome(scheduledAt) + ':\n' +
@@ -1827,6 +1831,10 @@ export async function POST(req) {
 
   } catch(e) {
     console.error('WEBHOOK: Unhandled error:', e.message);
+    // Release our dedup claim (if any) so Evolution's retry can REPROCESS this
+    // message — it was claimed at the top but processing failed/threw. Idempotent,
+    // and only on this error path: success/handled returns above keep the claim.
+    if (claimedMsgId) await releaseWebhookEvent(supabase, claimedMsgId);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
