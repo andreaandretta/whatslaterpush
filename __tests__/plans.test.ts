@@ -1,4 +1,62 @@
-import { getPlanLimits, getPlanName } from '../app/lib/plans';
+import { getPlanLimits, getPlanName, planFromStripePrice, resolveSubscriptionPlan } from '../app/lib/plans';
+
+// FIX 4: Stripe price->plan reverse mapping + subscription-status->plan decision.
+// These are the pure core of the webhook's tier sync; the webhook wiring that
+// uses them is integration-tested in payment-webhook.integration.test.ts.
+const PRICES = { personal: 'price_pers', professional: 'price_prof', business: 'price_biz' };
+
+describe('planFromStripePrice', () => {
+  test('maps each known price id to its plan', () => {
+    expect(planFromStripePrice('price_pers', PRICES)).toBe('personal');
+    expect(planFromStripePrice('price_prof', PRICES)).toBe('professional');
+    expect(planFromStripePrice('price_biz', PRICES)).toBe('business');
+  });
+
+  test('unknown price id -> null', () => {
+    expect(planFromStripePrice('price_nope', PRICES)).toBeNull();
+  });
+
+  test('null/undefined price id -> null', () => {
+    expect(planFromStripePrice(null, PRICES)).toBeNull();
+    expect(planFromStripePrice(undefined, PRICES)).toBeNull();
+  });
+
+  // The footgun: an UNCONFIGURED price slot (undefined) must NOT match an
+  // undefined/missing price id (undefined === undefined). Guards against
+  // accidentally granting 'personal' when STRIPE_PRICE_PERSONAL is unset.
+  test('undefined price id does NOT false-match an unconfigured (undefined) price slot', () => {
+    expect(planFromStripePrice(undefined, { personal: undefined, professional: 'price_prof', business: 'price_biz' })).toBeNull();
+  });
+});
+
+describe('resolveSubscriptionPlan', () => {
+  test('active/trialing -> the tier implied by the active price', () => {
+    expect(resolveSubscriptionPlan('active', 'price_pers', PRICES)).toBe('personal');
+    expect(resolveSubscriptionPlan('trialing', 'price_prof', PRICES)).toBe('professional');
+    expect(resolveSubscriptionPlan('active', 'price_biz', PRICES)).toBe('business');
+  });
+
+  test('past_due KEEPS the tier from the price (grace — Stripe is still retrying a recoverable blip)', () => {
+    expect(resolveSubscriptionPlan('past_due', 'price_biz', PRICES)).toBe('business');
+    expect(resolveSubscriptionPlan('past_due', 'price_pers', PRICES)).toBe('personal');
+  });
+
+  test('canceled / unpaid -> free (subscription truly ended / dunning exhausted)', () => {
+    expect(resolveSubscriptionPlan('canceled', 'price_biz', PRICES)).toBe('free');
+    expect(resolveSubscriptionPlan('unpaid', 'price_biz', PRICES)).toBe('free');
+  });
+
+  test('active with an UNKNOWN price -> null (do not clobber the stored plan on a price mis-config)', () => {
+    expect(resolveSubscriptionPlan('active', 'price_nope', PRICES)).toBeNull();
+  });
+
+  test('indeterminate statuses (incomplete/incomplete_expired/paused/unknown) -> null (no change)', () => {
+    expect(resolveSubscriptionPlan('incomplete', 'price_pers', PRICES)).toBeNull();
+    expect(resolveSubscriptionPlan('incomplete_expired', 'price_pers', PRICES)).toBeNull();
+    expect(resolveSubscriptionPlan('paused', 'price_pers', PRICES)).toBeNull();
+    expect(resolveSubscriptionPlan('something_new', 'price_pers', PRICES)).toBeNull();
+  });
+});
 
 describe('getPlanLimits', () => {
   test('returns trial limits (same as personal)', () => {

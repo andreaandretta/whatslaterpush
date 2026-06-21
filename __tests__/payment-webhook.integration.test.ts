@@ -35,12 +35,17 @@ const INSTANCE = 'SchedWhats-' + USER_PHONE;
 beforeEach(() => {
   mockSupa.calls.length = 0;
   fetchMock.calls.length = 0;
+  // Idempotency ledger empty by default (no dedup); the idempotency test overrides.
+  mockSupa.setResponse('processed_stripe_events:select', null);
   process.env = {
     ...ORIGINAL_ENV,
     SUPABASE_URL: 'https://test.supabase.co',
     SUPABASE_SERVICE_ROLE_KEY: 'test-key',
     STRIPE_SECRET_KEY: 'sk_test_x',
     STRIPE_WEBHOOK_SECRET: 'whsec_test',
+    STRIPE_PRICE_PERSONAL: 'price_pers',
+    STRIPE_PRICE_PROFESSIONAL: 'price_prof',
+    STRIPE_PRICE_BUSINESS: 'price_biz',
     EVOLUTION_API_URL: 'https://evo.test',
     EVOLUTION_API_KEY: 'evo-key',
   };
@@ -71,16 +76,34 @@ async function callWebhook(event: any) {
   return POST(req);
 }
 
-function makeCheckoutCompleted(plan: string, phone = USER_PHONE) {
+function makeCheckoutCompleted(plan: string, phone = USER_PHONE, paymentStatus: string = 'paid') {
   return {
+    id: 'evt_checkout',
     type: 'checkout.session.completed',
     data: {
       object: {
         client_reference_id: phone,
         customer: 'cus_test',
+        payment_status: paymentStatus,
         metadata: { phone, plan },
       },
     },
+  };
+}
+
+function makeSubscriptionUpdated(status: string, priceId: string, customer = 'cus_test') {
+  return {
+    id: 'evt_sub_upd',
+    type: 'customer.subscription.updated',
+    data: { object: { customer, status, items: { data: [{ price: { id: priceId } }] } } },
+  };
+}
+
+function makeInvoicePaymentFailed(customer = 'cus_test') {
+  return {
+    id: 'evt_inv_failed',
+    type: 'invoice.payment_failed',
+    data: { object: { customer } },
   };
 }
 
@@ -154,9 +177,10 @@ describe('POST /api/payment/webhook — checkout.session.completed', () => {
 
   test('ignores when phone is missing from session', async () => {
     const evt = {
+      id: 'evt_nophone',
       type: 'checkout.session.completed',
       data: {
-        object: { client_reference_id: null, customer: 'cus_test', metadata: { plan: 'personal' } },
+        object: { client_reference_id: null, customer: 'cus_test', payment_status: 'paid', metadata: { plan: 'personal' } },
       },
     };
     const res = await callWebhook(evt);
@@ -165,5 +189,88 @@ describe('POST /api/payment/webhook — checkout.session.completed', () => {
       (c) => c.table === 'user_instances' && c.operation === 'update'
     );
     expect(updateCall).toBeUndefined();
+  });
+});
+
+describe('POST /api/payment/webhook — FIX 4: payment_status gate', () => {
+  test('does NOT grant when checkout payment_status != paid', async () => {
+    mockSupa.setResponse('user_instances:select', { instance_name: INSTANCE, stripe_customer_id: 'cus_test' });
+    const res = await callWebhook(makeCheckoutCompleted('business', USER_PHONE, 'unpaid'));
+    expect(res.status).toBe(200);
+    const updateCall = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update');
+    expect(updateCall).toBeUndefined();
+    const notifyCall = fetchMock.calls.find((c) => c.url.includes('/message/sendText/'));
+    expect(notifyCall).toBeUndefined();
+  });
+});
+
+describe('POST /api/payment/webhook — FIX 4: customer.subscription.updated', () => {
+  test('syncs plan UP/DOWN from the active price (portal change)', async () => {
+    mockSupa.setResponse('user_instances:select', { phone_number: USER_PHONE, instance_name: INSTANCE, subscription_plan: 'personal' });
+    const res = await callWebhook(makeSubscriptionUpdated('active', 'price_biz'));
+    expect(res.status).toBe(200);
+    const updateCall = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update');
+    expect(updateCall).toBeDefined();
+    expect(updateCall!.args[0]).toMatchObject({ subscription_plan: 'business' });
+  });
+
+  test('past_due KEEPS the tier (grace — no downgrade on a recoverable blip)', async () => {
+    mockSupa.setResponse('user_instances:select', { phone_number: USER_PHONE, instance_name: INSTANCE, subscription_plan: 'business' });
+    await callWebhook(makeSubscriptionUpdated('past_due', 'price_biz'));
+    const updateCall = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update');
+    expect(updateCall).toBeUndefined();
+  });
+
+  test('canceled -> free (subscription truly ended)', async () => {
+    mockSupa.setResponse('user_instances:select', { phone_number: USER_PHONE, instance_name: INSTANCE, subscription_plan: 'business' });
+    await callWebhook(makeSubscriptionUpdated('canceled', 'price_biz'));
+    const updateCall = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update');
+    expect(updateCall!.args[0]).toMatchObject({ subscription_plan: 'free' });
+  });
+
+  test('no DB write when the resolved plan already matches the stored plan', async () => {
+    mockSupa.setResponse('user_instances:select', { phone_number: USER_PHONE, instance_name: INSTANCE, subscription_plan: 'business' });
+    await callWebhook(makeSubscriptionUpdated('active', 'price_biz'));
+    const updateCall = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update');
+    expect(updateCall).toBeUndefined();
+  });
+
+  test('unknown price on active status -> no clobber (null = leave plan as-is)', async () => {
+    mockSupa.setResponse('user_instances:select', { phone_number: USER_PHONE, instance_name: INSTANCE, subscription_plan: 'business' });
+    await callWebhook(makeSubscriptionUpdated('active', 'price_unknown'));
+    const updateCall = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update');
+    expect(updateCall).toBeUndefined();
+  });
+});
+
+describe('POST /api/payment/webhook — FIX 4: invoice.payment_failed (tier-neutral + nudge)', () => {
+  test('does NOT change the tier, and nudges a paying user to update their card', async () => {
+    mockSupa.setResponse('user_instances:select', { phone_number: USER_PHONE, instance_name: INSTANCE, subscription_plan: 'business' });
+    await callWebhook(makeInvoicePaymentFailed());
+    const updateCall = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update');
+    expect(updateCall).toBeUndefined(); // grace: no downgrade
+    const notifyCall = fetchMock.calls.find((c) => c.url.includes('/message/sendText/' + INSTANCE));
+    expect(notifyCall).toBeDefined();
+    expect(JSON.parse(String(notifyCall!.options.body)).text).toContain('Aggiorna il metodo di pagamento');
+  });
+
+  test('no tier change and no nudge when the user is already free', async () => {
+    mockSupa.setResponse('user_instances:select', { phone_number: USER_PHONE, instance_name: INSTANCE, subscription_plan: 'free' });
+    await callWebhook(makeInvoicePaymentFailed());
+    const updateCall = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update');
+    expect(updateCall).toBeUndefined();
+    const notifyCall = fetchMock.calls.find((c) => c.url.includes('/message/sendText/'));
+    expect(notifyCall).toBeUndefined();
+  });
+});
+
+describe('POST /api/payment/webhook — FIX 4: idempotency', () => {
+  test('skips an event already in processed_stripe_events (no side effects)', async () => {
+    mockSupa.setResponse('processed_stripe_events:select', { event_id: 'evt_sub_upd' });
+    mockSupa.setResponse('user_instances:select', { phone_number: USER_PHONE, instance_name: INSTANCE, subscription_plan: 'personal' });
+    const res = await callWebhook(makeSubscriptionUpdated('active', 'price_biz'));
+    expect(res.status).toBe(200);
+    const updateCall = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update');
+    expect(updateCall).toBeUndefined(); // deduplicated -> no tier change
   });
 });
