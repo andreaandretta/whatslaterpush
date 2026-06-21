@@ -5,7 +5,7 @@ import { normalizeItalianPhone } from '../../../lib/phone';
 import { shouldSendMessage, rescheduleTomorrow, rescheduleSoon, buildQuotaRequeueUpdate, buildFailureRequeueUpdate } from '../../../lib/cron-utils';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
-import { nextOccurrence } from '../../../lib/recurrence';
+import { reconcileRecurringChain } from '../../../lib/recurrence';
 import { computeTypingDelay, sendTypingPresence } from '../../../lib/typing-presence';
 import { logAuditEvent, hashContactRef } from '../../../lib/audit';
 
@@ -174,6 +174,62 @@ export async function GET(req: NextRequest) {
       .select('id');
     if (safeRetryRows?.length) {
       console.log('CRON: Safe-retry ' + safeRetryRows.length + ' rows (never reached send call, send_attempted_at IS NULL)');
+    }
+
+    // Recurrence reconciliation: ensure every active recurring chain has its next
+    // occurrence queued, even when the previous occurrence's creation never ran —
+    // a lambda death between status='sent' and the insert, or a row recovered by
+    // the stale-'processing' branch above (which only revives 'processing' rows).
+    // recurring_chains_needing_next() returns the latest row of each chain that has
+    // no live row and whose latest ended sent/failed; we compute the next
+    // occurrence (deterministic, no jitter) and INSERT it idempotently — the
+    // uniq_recurrence_occurrence partial index collapses concurrent/duplicate
+    // creations (23505 = already created). Non-fatal: must not block the send loop.
+    try {
+      const { data: deadChains } = await supabase.rpc('recurring_chains_needing_next');
+      const ids = (deadChains || []).map((r: any) => r.latest_id);
+      if (ids.length) {
+        const { data: latestRows } = await supabase
+          .from('scheduled_messages')
+          .select('*')
+          .in('id', ids);
+        for (const row of (latestRows || [])) {
+          const decision = reconcileRecurringChain({
+            hasLiveRow: false, // RPC already filtered to chains with no live row
+            latestStatus: row.status,
+            latestScheduledAt: row.scheduled_at,
+            rule: row.recurrence_rule,
+          });
+          if (!decision.insert) continue;
+          const chainId = row.parent_recurrence_id || row.id;
+          const { error: insErr } = await supabase.from('scheduled_messages').insert({
+            user_instance_id: row.user_instance_id,
+            instance_phone: row.instance_phone,
+            recipient_number: row.recipient_number,
+            recipient_name: row.recipient_name,
+            caption: row.caption,
+            parsed_message: row.parsed_message,
+            scheduled_at: decision.scheduledAt,
+            status: 'pending',
+            retry_count: 0,
+            max_retries: 3,
+            wa_message_id: null,
+            media_type: row.media_type || null,
+            media_url: row.media_url || null,
+            media_filename: row.media_filename || null,
+            media_caption: row.media_caption || null,
+            recurrence_rule: row.recurrence_rule,
+            parent_recurrence_id: chainId,
+          });
+          if (insErr && insErr.code !== '23505') {
+            console.error('CRON: recurrence reconcile insert failed (chain ' + chainId + '): ' + insErr.message);
+          } else if (!insErr) {
+            console.log('CRON: recurrence reconcile created next occurrence (chain ' + chainId + ') at ' + decision.scheduledAt);
+          }
+        }
+      }
+    } catch (reconErr) {
+      console.error('CRON: recurrence reconciliation error (non-fatal):', (reconErr as Error)?.message);
     }
 
     const { data: pendingMessages, error: queryErr } = await supabase
@@ -537,38 +593,12 @@ export async function GET(req: NextRequest) {
           },
         });
 
-        // Recurrence: if this row was part of a recurring schedule, compute
-        // the next occurrence and insert a new pending row. parent_recurrence_id
-        // propagates through the chain (first row's id is the group id).
-        if (msg.recurrence_rule) {
-          const next = nextOccurrence(msg.recurrence_rule, new Date(msg.scheduled_at));
-          if (next) {
-            const parentId = msg.parent_recurrence_id || msg.id;
-            await supabase.from('scheduled_messages').insert({
-              user_instance_id: msg.user_instance_id,
-              instance_phone: ownerPhone,
-              recipient_number: msg.recipient_number,
-              recipient_name: msg.recipient_name,
-              caption: msg.caption,
-              parsed_message: msg.parsed_message,
-              scheduled_at: next.toISOString(),
-              status: 'pending',
-              retry_count: 0,
-              max_retries: 3,
-              wa_message_id: null,
-              // Recurring media messages re-use the same storage path —
-              // no re-upload needed each cycle. The cron re-signs the URL
-              // at send time, so as long as the file exists in the bucket
-              // it'll be reachable.
-              media_type: msg.media_type || null,
-              media_url: msg.media_url || null,
-              media_filename: msg.media_filename || null,
-              media_caption: msg.media_caption || null,
-              recurrence_rule: msg.recurrence_rule,
-              parent_recurrence_id: parentId,
-            });
-          }
-        }
+        // Recurrence: the next occurrence is created by the reconciliation sweep
+        // at the TOP of this handler (single, idempotent, race-safe path via
+        // recurring_chains_needing_next() + the uniq_recurrence_occurrence index),
+        // NOT inline here. Inline creation could be skipped by a lambda death
+        // between this status='sent' UPDATE and the insert — silently ending the
+        // chain. Reconciliation also covers rows resurrected by stale-recovery.
 
         // Daily counter was already incremented atomically at the pre-send
         // quota claim (claim_daily_quota); newSentToday captured there.

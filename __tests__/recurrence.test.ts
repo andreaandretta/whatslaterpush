@@ -1,4 +1,48 @@
-import { parseRule, isValidRule, nextOccurrence, nextOccurrences } from '../app/lib/recurrence';
+import { parseRule, isValidRule, nextOccurrence, nextOccurrences, reconcileRecurringChain } from '../app/lib/recurrence';
+
+// FIX 3: the cron's reconciliation sweep is the single place that guarantees a
+// recurring chain's next occurrence exists, regardless of how the previous one
+// ended (happy-path, stale-recovery, or a lambda death between status='sent' and
+// the insert). This pure helper encodes the decision; the unique index makes the
+// resulting insert idempotent/race-safe.
+describe('reconcileRecurringChain', () => {
+  const DAILY = 'FREQ=DAILY';
+
+  test('no insert when the chain still has a live (non-terminal) row', () => {
+    expect(reconcileRecurringChain({ hasLiveRow: true, latestStatus: 'sent', latestScheduledAt: '2026-06-15T09:00:00.000Z', rule: DAILY }))
+      .toEqual({ insert: false });
+  });
+
+  test('no insert when the latest row was cancelled (user stopped the chain — do NOT revive)', () => {
+    expect(reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'cancelled', latestScheduledAt: '2026-06-15T09:00:00.000Z', rule: DAILY }))
+      .toEqual({ insert: false });
+  });
+
+  test('no insert when the latest row is non-terminal (defensive)', () => {
+    expect(reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'pending', latestScheduledAt: '2026-06-15T09:00:00.000Z', rule: DAILY }))
+      .toEqual({ insert: false });
+  });
+
+  test('inserts next DAILY occurrence when chain is dead and latest was sent', () => {
+    expect(reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'sent', latestScheduledAt: '2026-06-15T09:00:00.000Z', rule: DAILY }))
+      .toEqual({ insert: true, scheduledAt: '2026-06-16T09:00:00.000Z' });
+  });
+
+  test('inserts next occurrence when latest was FAILED (failed must not kill the chain)', () => {
+    const r = reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'failed', latestScheduledAt: '2026-06-15T09:00:00.000Z', rule: 'FREQ=WEEKLY;BYDAY=MO' });
+    expect(r.insert).toBe(true);
+  });
+
+  test('no insert when the rule is invalid', () => {
+    expect(reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'sent', latestScheduledAt: '2026-06-15T09:00:00.000Z', rule: 'FREQ=YEARLY' }))
+      .toEqual({ insert: false });
+  });
+
+  test('next occurrence is deterministic (no jitter), preserving time-of-day', () => {
+    expect(reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'sent', latestScheduledAt: '2026-06-15T18:30:45.123Z', rule: DAILY }))
+      .toEqual({ insert: true, scheduledAt: '2026-06-16T18:30:45.123Z' });
+  });
+});
 
 describe('parseRule', () => {
   test('parses FREQ=DAILY', () => {

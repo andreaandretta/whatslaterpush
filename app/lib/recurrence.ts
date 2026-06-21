@@ -111,3 +111,29 @@ export function nextOccurrences(rule: string, from: Date, count: number): Date[]
   }
   return out;
 }
+
+export type ReconcileDecision = { insert: false } | { insert: true; scheduledAt: string };
+
+/**
+ * Decide whether a recurring chain needs its next occurrence created. Used by the
+ * cron's reconciliation sweep — the single place that guarantees the next
+ * occurrence exists regardless of how the previous one ended (happy-path insert,
+ * stale-'processing' recovery, or a lambda death between status='sent' and the
+ * insert). The returned scheduledAt is the deterministic next occurrence (no
+ * jitter) so concurrent/duplicate creations collapse onto one row via the
+ * uniq_recurrence_occurrence index.
+ */
+export function reconcileRecurringChain(chain: {
+  hasLiveRow: boolean;
+  latestStatus: string;
+  latestScheduledAt: string;
+  rule: string;
+}): ReconcileDecision {
+  if (chain.hasLiveRow) return { insert: false };
+  // Only revive a chain whose latest row ended terminally as sent/failed. A
+  // 'cancelled' latest means the user stopped the chain — never revive it.
+  if (chain.latestStatus !== 'sent' && chain.latestStatus !== 'failed') return { insert: false };
+  const next = nextOccurrence(chain.rule, new Date(chain.latestScheduledAt));
+  if (!next) return { insert: false };
+  return { insert: true, scheduledAt: next.toISOString() };
+}
