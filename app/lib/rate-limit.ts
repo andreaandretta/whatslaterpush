@@ -14,11 +14,37 @@ export const RATE_LIMITS = {
   PER_USER_PER_MINUTE: 15,
   PER_USER_PER_DAY: 100,
   PER_INSTANCE_PER_MINUTE: 18,
-  SPAM_THRESHOLD: 50,
+  // H11(1): ABOVE the highest tier cap (Business = 50/day). The anti-spam block
+  // must catch only genuine abuse / a tier-cap bypass — never a Business customer
+  // who fully uses their plan. Was 50, i.e. EQUAL to the Business cap, so every
+  // maxed-out Business user got flagged as spam on their 50th legitimate send.
+  SPAM_THRESHOLD: 100,
 };
 
 const MINUTE_MS = 60_000;
-const DAY_MS = 86_400_000;
+
+// H11(2): next Europe/Rome calendar midnight as UTC ms — the SAME daily boundary
+// the cron uses to reset messages_sent_today. Resetting daily_count + the blocked
+// flag here (instead of a rolling now+24h) keeps the rate-limiter in step with the
+// tier quota: a user blocked at their cap unblocks exactly when the quota refills,
+// with no morning-after window where they're under cap but still rate-limited.
+// 00:00 is never inside the DST transition hour (02:00-03:00), so the offset probe
+// at the target midnight is unambiguous.
+export function nextRomeMidnightMs(nowMs: number): number {
+  const [y, mo, d] = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(nowMs)).split('-').map(Number);
+  // Next Rome calendar day's 00:00, treated first as if it were UTC...
+  const guess = Date.UTC(y, mo - 1, d + 1, 0, 0, 0);
+  // ...then shifted by Rome's offset at that midnight (probed via Intl).
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Rome', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(guess));
+  const g = (t: string) => Number(p.find((x) => x.type === t)!.value);
+  const romeAsUtc = Date.UTC(g('year'), g('month') - 1, g('day'), g('hour'), g('minute'), g('second'));
+  return guess - (romeAsUtc - guess);
+}
 
 // Reads current state for two keys without mutating. Applies window-reset
 // virtually so the caller sees post-reset values for blocked/counts when the
@@ -62,7 +88,7 @@ export async function recordSend(
   const instKey = 'inst:' + instanceName;
   const now = Date.now();
   const minuteReset = now + MINUTE_MS;
-  const dailyReset = now + DAY_MS;
+  const dailyReset = nextRomeMidnightMs(now); // H11(2): align with the Rome-midnight tier reset
 
   const [userRes, instRes] = await Promise.all([
     supabase.rpc('rate_limit_record', { p_key: userKey, p_now: now, p_minute_reset: minuteReset, p_daily_reset: dailyReset }),
