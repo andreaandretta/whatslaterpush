@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { X, Search, UserPlus, ChevronDown, ChevronUp, AlertCircle, Loader2, Upload, Settings2 } from 'lucide-react';
 import { validatePhone } from '../app/lib/phone';
+import { pickerStateForResponseStatus } from '../app/lib/contacts-picker-state';
 import { Button } from './Button';
 import { ContactAvatar } from './ContactAvatar';
 import { LabelPicker } from './LabelPicker';
@@ -34,6 +35,7 @@ interface ContactPickerModalProps {
 type PickerState =
   | { kind: 'loading' }
   | { kind: 'list'; contacts: Contact[]; recents: Contact[] }
+  | { kind: 'syncing' } // #3b: fresh instance, address book not synced yet — transient, retryable
   | { kind: 'error'; reason: 'timeout' | 'unavailable' | 'unauthorized' };
 
 export default function ContactPickerModal({ open, onClose, onSelect }: ContactPickerModalProps) {
@@ -75,18 +77,21 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     fetch('/api/contacts' + qs, { signal: abort.signal })
       .then(async (res) => {
         clearTimeout(timer);
-        if (res.status === 401) { setState({ kind: 'error', reason: 'unauthorized' }); return; }
-        if (!res.ok) { setState({ kind: 'error', reason: 'unavailable' }); return; }
+        // #3b: 401 → hard auth error; any other non-2xx (notably 502/504 = fresh
+        // instance, contacts not synced yet + Evolution unreachable) → transient
+        // "syncing…" state with a retry, not a broken picker.
+        const errState = pickerStateForResponseStatus(res.status);
+        if (errState) { setState(errState); return; }
         const body = await res.json();
         const contacts: Contact[] = Array.isArray(body.contacts) ? body.contacts : [];
         const recents: Contact[] = Array.isArray(body.recents) ? body.recents : [];
         setState({ kind: 'list', contacts, recents });
         if (contacts.length === 0 && !labelFilterId) setManualOpen(true);
       })
-      .catch((e) => {
+      .catch(() => {
         clearTimeout(timer);
-        if (e?.name === 'AbortError') setState({ kind: 'error', reason: 'timeout' });
-        else setState({ kind: 'error', reason: 'unavailable' });
+        // Timeout/network blip while the address book is still syncing → syncing + retry.
+        setState({ kind: 'syncing' });
       });
 
     return () => { clearTimeout(timer); abort.abort(); };
@@ -324,6 +329,29 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
                 {state.reason === 'unauthorized' && 'Sessione scaduta. '}
                 Puoi inserire il numero manualmente.
               </span>
+            </div>
+          )}
+
+          {/* #3b: fresh instance whose address book hasn't synced yet (or a reconnect
+              in progress). Not an error — a transient state with a Retry, so a
+              just-registered user never sees a broken/empty picker. "Nuovo contatto"
+              above stays available the whole time. */}
+          {state.kind === 'syncing' && (
+            <div className="p-6 mx-4 my-3 rounded-xl text-center" style={{ backgroundColor: '#2A3942' }}>
+              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" style={{ color: '#25D366' }} />
+              <p className="text-sm font-medium text-white mb-1">Sto sincronizzando i tuoi contatti…</p>
+              <p className="text-xs mb-3" style={{ color: '#AEBAC1' }}>
+                Può richiedere qualche minuto dopo il collegamento di WhatsApp. Intanto puoi
+                usare &quot;Nuovo contatto&quot; qui sopra.
+              </p>
+              <Button
+                type="button"
+                onClick={() => { setState({ kind: 'loading' }); setRefetchKey((k) => k + 1); }}
+                className="!bg-[#25D366] hover:!bg-[#1DA851] !text-white !border-transparent"
+                size="sm"
+              >
+                Riprova
+              </Button>
             </div>
           )}
 
