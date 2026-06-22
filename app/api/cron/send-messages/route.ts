@@ -2,7 +2,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { normalizeItalianPhone } from '../../../lib/phone';
-import { shouldSendMessage, rescheduleTomorrow, rescheduleSoon, buildQuotaRequeueUpdate, buildFailureRequeueUpdate } from '../../../lib/cron-utils';
+import { shouldSendMessage, rescheduleTomorrow, rescheduleSoon, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt } from '../../../lib/cron-utils';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
 import { reconcileRecurringChain } from '../../../lib/recurrence';
@@ -495,17 +495,22 @@ export async function GET(req: NextRequest) {
         const sendKind = signedMediaUrl ? 'media' : 'text';
         console.log('CRON: Sending msg ' + msg.id + ' kind=' + sendKind + ' via instance=' + instanceName + ' to=' + msg.recipient_number);
 
-        // Stamp send_attempted_at BEFORE the HTTP call. The stale-processing
-        // cleanup at the top of this handler uses this column to decide
-        // whether a 'processing' row stuck >2min should be retried (NULL =
-        // never reached fetch, safe) or marked sent (NOT NULL = fetch was
-        // in flight, Evolution probably delivered, retry would duplicate).
-        // Best-effort: if this UPDATE itself fails, we proceed with the
-        // fetch anyway — the worst case becomes the original race (potential
-        // duplicate) rather than skipping a legitimate send.
-        await supabase.from('scheduled_messages')
-          .update({ send_attempted_at: new Date().toISOString() })
-          .eq('id', msg.id);
+        // Atomic point-of-no-return claim (replaces the old unconditional stamp).
+        // send_attempted_at flips null->now() exactly once per attempt, so the
+        // loser of two concurrent invocations skips HERE instead of double-sending.
+        // This is the gate that actually holds when the upstream status CAS leaks
+        // (2026-06-22 double-delivery): it sits AFTER the random jitter, so the two
+        // invocations hit it staggered and the DB serializes them. The
+        // stale-'processing' recovery at the top still keys off this column's
+        // null/non-null meaning (NULL = never reached fetch, safe to retry).
+        if (!(await claimSendAttempt(supabase, msg.id))) {
+          // Lost the race: a concurrent invocation owns this send. Refund the
+          // quota slot we claimed pre-send (both incremented messages_sent_today;
+          // only the winner delivers) so the user isn't double-charged, then skip.
+          await supabase.rpc('refund_daily_quota', { p_phone: ownerPhone });
+          console.log('CRON: send already claimed by concurrent invocation, skipping id=' + msg.id);
+          return 'skipped' as const;
+        }
 
         const sendCtrl = new AbortController();
         const sendTimeout = setTimeout(() => sendCtrl.abort(), 8000);

@@ -45,6 +45,19 @@ export async function register() {
   // Initial delay of 10s to let the server fully boot
   await new Promise(r => setTimeout(r, 10000));
 
+  // Stagger to the :30 mark so this self-cron does NOT fire simultaneously with
+  // the cron-job.org pinger (which hits :00). Same 60s cadence + redundancy, but
+  // the two triggers now land ~30s apart instead of colliding at :00 — removing
+  // the simultaneous double-claim race at the source. (The send_attempted_at gate
+  // in send-messages is the safety net; this just reduces how often two
+  // invocations race at all — see the 2026-06-22 double-delivery.)
+  {
+    const now = new Date();
+    let delay = ((30 - now.getUTCSeconds() + 60) % 60) * 1000 - now.getUTCMilliseconds();
+    if (delay < 0) delay += 60_000;
+    await new Promise(r => setTimeout(r, delay));
+  }
+
   async function runCron() {
     try {
       const url = CRON_URL + (CRON_SECRET ? `?secret=${CRON_SECRET}` : '');

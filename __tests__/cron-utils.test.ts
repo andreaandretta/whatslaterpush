@@ -1,4 +1,5 @@
-import { shouldSendMessage, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, PendingMessage, UserInstance } from '../app/lib/cron-utils';
+import { shouldSendMessage, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, PendingMessage, UserInstance } from '../app/lib/cron-utils';
+import { createMockSupabase } from './helpers/mocks';
 
 function makeMessage(overrides: { user_instances?: Partial<UserInstance> | null } & Partial<Omit<PendingMessage, 'user_instances'>> = {}): PendingMessage {
   const defaultInstance: UserInstance = {
@@ -260,5 +261,43 @@ describe('applyJitter', () => {
   test('preserves ISO 8601 format', () => {
     const result = applyJitter(BASE);
     expect(result).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  });
+});
+
+describe('claimSendAttempt — atomic point-of-no-return send gate (anti double-send)', () => {
+  test('returns true when the conditional update claims the row (send_attempted_at was null)', async () => {
+    const mock = createMockSupabase();
+    mock.setResponse('scheduled_messages:update', [{ id: 'm1' }]);
+    expect(await claimSendAttempt(mock.client as any, 'm1')).toBe(true);
+  });
+
+  test('returns false when the row was already attempted (0 rows) -> caller must skip', async () => {
+    const mock = createMockSupabase();
+    mock.setResponse('scheduled_messages:update', []);
+    expect(await claimSendAttempt(mock.client as any, 'm1')).toBe(false);
+  });
+
+  test('returns false on a null/ambiguous result (never assume the claim won)', async () => {
+    const mock = createMockSupabase(); // no setResponse -> data is null
+    expect(await claimSendAttempt(mock.client as any, 'm1')).toBe(false);
+  });
+
+  test('issues the single-winner guard: stamp send_attempted_at WHERE id=msgId AND send_attempted_at IS NULL', async () => {
+    const mock = createMockSupabase();
+    mock.setResponse('scheduled_messages:update', [{ id: 'm1' }]);
+    await claimSendAttempt(mock.client as any, 'm1');
+
+    const call = mock.calls.find((c) => c.table === 'scheduled_messages' && c.operation === 'update')!;
+    expect(call).toBeDefined();
+    // payload stamps the timestamp
+    expect(call.args[0]).toHaveProperty('send_attempted_at');
+    expect(typeof call.args[0].send_attempted_at).toBe('string');
+    // WHERE id = msgId
+    const idEq = call.chain.find((c) => c.method === 'eq' && c.args[0] === 'id');
+    expect(idEq!.args[1]).toBe('m1');
+    // WHERE send_attempted_at IS NULL  — the atomic single-winner guard
+    const isNull = call.chain.find((c) => c.method === 'is' && c.args[0] === 'send_attempted_at');
+    expect(isNull).toBeDefined();
+    expect(isNull!.args[1]).toBeNull();
   });
 });

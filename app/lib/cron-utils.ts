@@ -1,6 +1,7 @@
 /**
  * Pure utility functions extracted from cron/send-messages for testability.
  */
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 export interface UserInstance {
   id: string;
@@ -144,4 +145,30 @@ export function buildFailureRequeueUpdate(args: {
       : new Date(args.now + args.newRetryCount * 5 * 60 * 1000).toISOString(),
     send_attempted_at: null,
   };
+}
+
+/**
+ * Atomic point-of-no-return claim for the actual Evolution send.
+ *
+ * `send_attempted_at` flips null -> now() exactly once per attempt (it is reset to
+ * null on every requeue — see RequeueUpdate), so this conditional UPDATE has
+ * exactly ONE winner even if two concurrent cron invocations both passed the
+ * upstream status='processing' CAS. That CAS empirically leaked in prod
+ * (2026-06-22 double-delivery: two triggers fired at :00, both claimed, both sent);
+ * this gate is the real safety net because it sits AFTER the random jitter, so the
+ * two invocations reach it staggered and the DB serializes them cleanly.
+ *
+ * Returns true iff THIS invocation won the claim and may send. false => a
+ * concurrent invocation already owns this send; the caller MUST skip without
+ * re-sending AND refund the quota slot it claimed pre-send (both invocations
+ * incremented messages_sent_today, only the winner delivers).
+ */
+export async function claimSendAttempt(supabase: SupabaseClient, msgId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('scheduled_messages')
+    .update({ send_attempted_at: new Date().toISOString() })
+    .eq('id', msgId)
+    .is('send_attempted_at', null)
+    .select('id');
+  return Array.isArray(data) && data.length > 0;
 }
