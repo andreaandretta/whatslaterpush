@@ -98,3 +98,19 @@ export function normalizeItalianPhoneForCsv(raw: string): string | null {
   // Other length patterns we don't accept here — be conservative.
   return null;
 }
+
+// H9: per-user DB-bloat ceiling for whatsapp_contacts (tier-INDEPENDENT — the
+// paid "X contatti" tier cap is enforced separately at scheduling). Given the
+// user's current contact count and how many GENUINELY-NEW contacts an import
+// carries, returns how many new ones fit under `ceiling` and how many are dropped.
+// Duplicates are excluded by the caller (they update in place, no growth).
+export function capContactImport(
+  currentCount: number,
+  newCount: number,
+  ceiling: number,
+): { allowedNew: number; capped: number } {
+  const remaining = Math.max(0, ceiling - currentCount);
+  const wanted = Math.max(0, newCount);
+  const allowedNew = Math.min(wanted, remaining);
+  return { allowedNew, capped: wanted - allowedNew };
+}

@@ -2,10 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
 import { logAuditEvent } from '../../../lib/audit';
+import { capContactImport } from '../../../lib/csv-parser';
 
 export const dynamic = 'force-dynamic';
 
 const MAX_ROWS = 1000;
+// H9: absolute per-user ceiling on whatsapp_contacts to stop unbounded growth /
+// repeated-import abuse (tier-independent; generous so it never blocks a real
+// rubrica — tune here if needed).
+const MAX_CONTACTS_PER_USER = 5000;
 const E164_RE = /^39\d{8,11}$/;
 
 function getSupabase() {
@@ -84,8 +89,28 @@ export async function POST(req: NextRequest) {
   const existingSet = new Set((existing || []).map((c: { contact_number: string }) => c.contact_number));
   const skippedDuplicates = valid.filter((v) => existingSet.has(v.phone)).length;
 
+  // H9: enforce the per-user contact ceiling. Count current contacts, then import
+  // only as many GENUINELY-NEW rows as fit (duplicates update in place -> no
+  // growth). At the ceiling with new rows -> reject; otherwise import what fits
+  // and report how many were capped out (never silently dropped).
+  const { count: currentRaw } = await supabase
+    .from('whatsapp_contacts')
+    .select('contact_number', { count: 'exact', head: true })
+    .eq('user_phone', userPhone);
+  const currentCount = currentRaw || 0;
+  const newRows = valid.filter((v) => !existingSet.has(v.phone));
+  const { allowedNew, capped } = capContactImport(currentCount, newRows.length, MAX_CONTACTS_PER_USER);
+  if (allowedNew === 0 && newRows.length > 0) {
+    return NextResponse.json(
+      { error: 'contact_limit_reached', limit: MAX_CONTACTS_PER_USER, current: currentCount },
+      { status: 409 },
+    );
+  }
+  const allowedNewSet = new Set(newRows.slice(0, allowedNew).map((v) => v.phone));
+  const toImport = valid.filter((v) => existingSet.has(v.phone) || allowedNewSet.has(v.phone));
+
   // Bulk upsert via the existing RPC.
-  const rpcRows = valid.map((v) => ({
+  const rpcRows = toImport.map((v) => ({
     user_phone: userPhone,
     contact_number: v.phone,
     name: v.name || '',
@@ -102,15 +127,17 @@ export async function POST(req: NextRequest) {
     userPhone,
     eventType: 'csv_import',
     payload: {
-      imported: valid.length,
+      imported: toImport.length,
       skipped_duplicates: skippedDuplicates,
+      capped,
       error_count: errors.length,
     },
   });
 
   return NextResponse.json({
-    imported: valid.length,
+    imported: toImport.length,
     skipped_duplicates: skippedDuplicates,
+    capped,
     errors,
   });
 }

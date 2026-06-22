@@ -1,4 +1,31 @@
-import { parseCsv, normalizeItalianPhoneForCsv } from '../app/lib/csv-parser';
+import { parseCsv, normalizeItalianPhoneForCsv, capContactImport } from '../app/lib/csv-parser';
+
+// H9: per-user DB-bloat ceiling on whatsapp_contacts. Given current count + the
+// number of genuinely-NEW contacts in an import, decides how many fit and how
+// many are dropped (duplicates don't count — they don't grow the table).
+describe('capContactImport', () => {
+  const CEIL = 5000;
+
+  test('well under the ceiling: all new contacts fit, nothing capped', () => {
+    expect(capContactImport(10, 5, CEIL)).toEqual({ allowedNew: 5, capped: 0 });
+  });
+
+  test('partially fills the ceiling: only the remaining slots fit, the rest are capped', () => {
+    expect(capContactImport(4998, 5, CEIL)).toEqual({ allowedNew: 2, capped: 3 });
+  });
+
+  test('already at the ceiling: no new contact fits', () => {
+    expect(capContactImport(5000, 5, CEIL)).toEqual({ allowedNew: 0, capped: 5 });
+  });
+
+  test('over the ceiling (defensive): still 0 allowed', () => {
+    expect(capContactImport(6000, 5, CEIL)).toEqual({ allowedNew: 0, capped: 5 });
+  });
+
+  test('zero new contacts (all duplicates): nothing to allow or cap', () => {
+    expect(capContactImport(10, 0, CEIL)).toEqual({ allowedNew: 0, capped: 0 });
+  });
+});
 
 describe('parseCsv', () => {
   test('parses simple CSV with header and rows', () => {

@@ -132,4 +132,33 @@ describe('POST /api/contacts/import', () => {
     const res = await POST(req);
     expect(res.status).toBe(500);
   });
+
+  test('H9: caps new contacts at the per-user ceiling and reports capped', async () => {
+    mockSupa.setResponse('whatsapp_contacts:select', [], null, { count: 4998 }); // near ceiling, no dups
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 2);
+    const req = await authedReq({
+      rows: [
+        { name: 'A', phone: '393401111111' },
+        { name: 'B', phone: '393402222222' },
+        { name: 'C', phone: '393403333333' },
+      ],
+    });
+    const { POST } = await import('../app/api/contacts/import/route');
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.imported).toBe(2); // only 5000-4998 = 2 fit
+    expect(body.capped).toBe(1);
+  });
+
+  test('H9: 409 contact_limit_reached when already at the ceiling and the import has new rows', async () => {
+    mockSupa.setResponse('whatsapp_contacts:select', [], null, { count: 5000 });
+    const req = await authedReq({ rows: [{ name: 'A', phone: '393401111111' }] });
+    const { POST } = await import('../app/api/contacts/import/route');
+    const res = await POST(req);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toBe('contact_limit_reached');
+    expect(body.limit).toBe(5000);
+  });
 });
