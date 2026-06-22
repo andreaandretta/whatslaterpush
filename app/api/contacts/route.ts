@@ -53,6 +53,82 @@ function isVisibleInPicker(c: OutContact): boolean {
   return c.name !== `+${c.number}` || c.addedManually === true;
 }
 
+// #3a: at/above this many SYNCED cached rows for the instance (the cache size,
+// measured BEFORE the visibility/label filters) we trust the cache as the whole
+// address book and skip Evolution entirely (fast, immune to reconnect flakiness).
+// Below it the cache is treated as too thin to be complete, so we ALSO consult the
+// live source and merge (seeding the cache in first, so it always survives — if
+// Evolution fails we still serve the cache and the picker never empties).
+//
+// Tunable on purpose: our ICP-D audience (coaches/parishes/driving schools) skews
+// SMALL, so many users sit at ~15-40 contacts and will land on the live+merge path
+// (= one Evolution call per picker open). That's functionally correct thanks to the
+// seed-merge but it's extra load/latency for them — watch the `UNDER_THRESHOLD` log
+// below and lower this if too many users fall under it.
+//   Backlog (better long-term, not now): (1) a `contacts_synced_at` flag set when a
+//   bulk CONTACTS_SET arrives = a clean gate instead of this size heuristic; and/or
+//   (2) serve the cache fast + refresh live in the BACKGROUND instead of blocking
+//   the picker on the live call.
+const CACHE_ONLY_MIN = 25;
+
+type CachedContactRow = { contact_number: string; name: string | null; push_name: string | null; profile_pic_url: string | null; added_manually: boolean | null };
+
+// whatsapp_contacts rows -> picker contacts (+ visibility filter). Shared by the
+// fast cache-only path and the live+seed path so the cache behaves identically.
+function cachedRowsToContacts(rows: CachedContactRow[], phone: string): OutContact[] {
+  const out: OutContact[] = [];
+  for (const row of rows) {
+    const num = row.contact_number;
+    if (!num || num === phone) continue;
+    const name = (row.name && row.name.trim()) || null;
+    const pushName = (row.push_name && row.push_name.trim()) || null;
+    const entry: OutContact = { number: num, name: name || pushName || `+${num}` };
+    if (pushName) entry.pushName = pushName;
+    const photoUrl = (row.profile_pic_url && row.profile_pic_url.trim()) || null;
+    if (photoUrl) entry.photoUrl = photoUrl;
+    if (row.added_manually === true) entry.addedManually = true;
+    out.push(entry);
+  }
+  return out.filter(isVisibleInPicker);
+}
+
+// ?label=<uuid> → intersect with that label's assignment list; no-op without ?label.
+async function applyLabelFilter(supabase: any, phone: string, url: URL, out: OutContact[]): Promise<OutContact[]> {
+  const labelId = url.searchParams.get('label');
+  if (!labelId) return out;
+  const { data: assignments } = await supabase
+    .from('contact_label_assignments')
+    .select('contact_number')
+    .eq('user_phone', phone)
+    .eq('label_id', labelId);
+  const allowed = new Set((assignments || []).map((a: any) => a.contact_number));
+  return out.filter(c => allowed.has(c.number));
+}
+
+// Recenti: up to 10 distinct most-recent recipients (excl. cancelled). first-wins =
+// latest (query is ORDER BY created_at DESC). Enriches from `byNumber` so a recent
+// that's also a known contact keeps its name/photo. Computed for BOTH paths.
+async function computeRecents(supabase: any, phone: string, byNumber: Map<string, OutContact>): Promise<OutContact[]> {
+  const { data: recentRows } = await supabase
+    .from('scheduled_messages')
+    .select('recipient_number, recipient_name')
+    .eq('instance_phone', phone)
+    .neq('status', 'cancelled')
+    .order('created_at', { ascending: false })
+    .limit(50);
+  const recents: OutContact[] = [];
+  const seen = new Set<string>();
+  for (const row of (recentRows || []) as Array<{ recipient_number: string; recipient_name: string | null }>) {
+    const num = row.recipient_number;
+    if (!num || num === phone) continue;
+    if (seen.has(num)) continue;
+    seen.add(num);
+    recents.push(byNumber.get(num) ?? { number: num, name: (row.recipient_name && row.recipient_name.trim()) || `+${num}` });
+    if (recents.length >= 10) break;
+  }
+  return recents;
+}
+
 export async function GET(req: NextRequest) {
   const raw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
   const payload = await verifyCookie(raw);
@@ -79,73 +155,34 @@ export async function GET(req: NextRequest) {
     .from('whatsapp_contacts')
     .select('contact_number, name, push_name, profile_pic_url, added_manually')
     .eq('user_phone', phone);
+  const cachedContacts = cachedRowsToContacts((cached || []) as CachedContactRow[], phone);
+  // Sync-completeness signal = the TOTAL synced rows for this instance, BEFORE the
+  // visibility AND label filters. We gate cache-only on THIS (the instance's cache
+  // size), not on what the user is currently viewing — so a fully-synced user who
+  // filters by a small label (e.g. 5 contacts) still takes the fast cache path
+  // instead of a useless live Evolution call.
+  const syncedCount = cached?.length || 0;
 
-  if (cached && cached.length > 0) {
-    const raw: OutContact[] = [];
-    for (const row of cached as Array<{ contact_number: string; name: string | null; push_name: string | null; profile_pic_url: string | null; added_manually: boolean | null }>) {
-      const num = row.contact_number;
-      if (!num || num === phone) continue;
-      const name = (row.name && row.name.trim()) || null;
-      const pushName = (row.push_name && row.push_name.trim()) || null;
-      const displayName = name || pushName;
-      const addedManually = row.added_manually === true;
-      const entry: OutContact = { number: num, name: displayName || `+${num}` };
-      if (pushName) entry.pushName = pushName;
-      const photoUrl = (row.profile_pic_url && row.profile_pic_url.trim()) || null;
-      if (photoUrl) entry.photoUrl = photoUrl;
-      if (addedManually) entry.addedManually = true;
-      raw.push(entry);
-    }
-    let out = raw.filter(isVisibleInPicker);
-
-    // Optional label filter: ?label=<uuid> → only contacts in that label.
-    // Pulls the assignment list for the user+label and intersects with `out`.
-    const labelId = new URL(req.url).searchParams.get('label');
-    if (labelId) {
-      const { data: assignments } = await supabase
-        .from('contact_label_assignments')
-        .select('contact_number')
-        .eq('user_phone', phone)
-        .eq('label_id', labelId);
-      const allowed = new Set((assignments || []).map(a => a.contact_number));
-      out = out.filter(c => allowed.has(c.number));
-    }
-
-    out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
-
-    // Recenti: 10 destinatari distinti più recenti, esclusi i cancelled.
-    // Pulliamo 50 righe DESC e dedupliamo client-side: ORDER BY created_at DESC
-    // garantisce che la prima occorrenza di un recipient_number è la sua
-    // riga più recente (first-wins = latest).
-    const { data: recentRows } = await supabase
-      .from('scheduled_messages')
-      .select('recipient_number, recipient_name')
-      .eq('instance_phone', phone)
-      .neq('status', 'cancelled')
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    const cachedByNumber = new Map<string, OutContact>(out.map((c) => [c.number, c]));
-    const recents: OutContact[] = [];
-    const seenNumbers = new Set<string>();
-    for (const row of (recentRows || []) as Array<{ recipient_number: string; recipient_name: string | null }>) {
-      const num = row.recipient_number;
-      if (!num || num === phone) continue;
-      if (seenNumbers.has(num)) continue;
-      seenNumbers.add(num);
-      const fromCache = cachedByNumber.get(num);
-      recents.push(fromCache ?? {
-        number: num,
-        name: (row.recipient_name && row.recipient_name.trim()) || `+${num}`,
-      });
-      if (recents.length >= 10) break;
-    }
-
-    console.log('CONTACTS:GET source=supabase count=' + out.length + ' recents=' + recents.length + ' raw=' + cached.length);
+  // Fast cache-only path: a substantial synced cache is trusted as the full address
+  // book, so we skip the entire Evolution pipeline (saves 5-15s, immune to reconnect
+  // flakiness). #3a: gated on the instance's synced-row count >= CACHE_ONLY_MIN — no
+  // longer a bare ">0", which let a 1-row cache shadow the real address book forever.
+  if (syncedCount >= CACHE_ONLY_MIN) {
+    const out = [...await applyLabelFilter(supabase, phone, new URL(req.url), cachedContacts)]
+      .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+    const recents = await computeRecents(supabase, phone, new Map(out.map((c) => [c.number, c])));
+    console.log('CONTACTS:GET source=cache-only count=' + out.length + ' recents=' + recents.length + ' raw=' + (cached?.length || 0));
     return NextResponse.json({ contacts: out, recents });
   }
 
-  console.log('CONTACTS:GET source=evolution (cache empty)');
+  // Thin/empty cache (< CACHE_ONLY_MIN) → consult the live Evolution source AND seed
+  // it with the cache. Seeding first means the cache wins for what it has and ALWAYS
+  // survives — if Evolution fails we still serve the cache (picker never empties).
+  // The UNDER_THRESHOLD log is the signal for tuning CACHE_ONLY_MIN with real data.
+  console.log('CONTACTS:GET source=live+seed UNDER_THRESHOLD cache=' + cachedContacts.length + ' min=' + CACHE_ONLY_MIN);
+
+  const byNumber = new Map<string, OutContact>();
+  for (const c of cachedContacts) byNumber.set(c.number, c);
 
   let rawFromContacts: any[] = [];
   let rawFromChats: any[] = [];
@@ -160,17 +197,27 @@ export async function GET(req: NextRequest) {
   if (groupsRes.status === 'fulfilled') rawGroups = groupsRes.value || [];
 
   if (contactsRes.status === 'rejected' && chatsRes.status === 'rejected') {
-    const msg = (contactsRes.reason?.message || chatsRes.reason?.message || '') as string;
-    if (msg.includes('timeout') || msg.includes('aborted')) {
-      return NextResponse.json({ error: 'evolution_timeout' }, { status: 504 });
+    // Evolution is down. If we have ANY seeded cache, serve it — the picker must
+    // never empty (#3a). Only when there's nothing cached do we surface the error,
+    // and the client shows a "syncing…/retry" state for that case (#3b).
+    if (byNumber.size === 0) {
+      const msg = (contactsRes.reason?.message || chatsRes.reason?.message || '') as string;
+      if (msg.includes('timeout') || msg.includes('aborted')) {
+        return NextResponse.json({ error: 'evolution_timeout' }, { status: 504 });
+      }
+      return NextResponse.json({ error: 'evolution_unavailable' }, { status: 502 });
     }
-    return NextResponse.json({ error: 'evolution_unavailable' }, { status: 502 });
+    console.log('CONTACTS:GET evolution down — serving seeded cache only count=' + byNumber.size);
+    const out = [...await applyLabelFilter(supabase, phone, new URL(req.url), Array.from(byNumber.values()).filter(isVisibleInPicker))]
+      .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+    const recents = await computeRecents(supabase, phone, byNumber);
+    return NextResponse.json({ contacts: out, recents });
   }
 
   // Prefer findChats (richer for Baileys-synced instances), fall back to
-  // findContacts when chats is empty.
+  // findContacts when chats is empty. byNumber is already seeded with the cache
+  // above; the discovery loops below skip numbers it already has (cache wins).
   const rawContacts: any[] = rawFromChats.length > 0 ? rawFromChats : rawFromContacts;
-  const byNumber = new Map<string, OutContact>();
 
   // JIDs can include a device suffix like `393401234567:5@s.whatsapp.net` — we
   // must strip the `:N` before normalising, otherwise the digits get folded
@@ -317,9 +364,11 @@ export async function GET(req: NextRequest) {
     console.error('NAME_BACKFILL_FAILED', err?.message || err);
   }
 
-  const out: OutContact[] = Array.from(byNumber.values()).filter(isVisibleInPicker);
-  out.sort((a, b) => a.name.localeCompare(b.name, 'it'));
-
-  // Evolution-fallback path: utente fresco, niente storia da mostrare.
-  return NextResponse.json({ contacts: out, recents: [] });
+  const merged: OutContact[] = Array.from(byNumber.values()).filter(isVisibleInPicker);
+  merged.sort((a, b) => a.name.localeCompare(b.name, 'it'));
+  const out = await applyLabelFilter(supabase, phone, new URL(req.url), merged);
+  // Recents computed here too (was hardcoded []): a thin-cache user can still have
+  // send history, and #3a serves this live+seed path for them.
+  const recents = await computeRecents(supabase, phone, byNumber);
+  return NextResponse.json({ contacts: out, recents });
 }

@@ -51,18 +51,20 @@ beforeEach(() => {
 
 afterEach(() => { process.env = ORIGINAL_ENV; });
 
-async function callGet(opts: { authed?: boolean } = { authed: true }) {
+async function callGet(opts: { authed?: boolean; label?: string } = {}) {
+  const authed = opts.authed !== false; // default true
   jest.resetModules();
   jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
   jest.mock('../lib/evolution/client', () => ({ evolutionClient: { findContacts: findContactsMock, findChats: findChatsMock, fetchAllGroups: fetchAllGroupsMock, whatsappNumbers: whatsappNumbersMock } }));
   const { GET } = await import('../app/api/contacts/route');
 
   const cookies: Record<string, string> = {};
-  if (opts.authed) {
+  if (authed) {
     const value = await signCookie({ phone: USER_PHONE, instanceName: INSTANCE });
     cookies[AUTH_COOKIE_NAME] = value;
   }
   const req: any = mockRequest({}, {});
+  if (opts.label) req.url = 'https://whatslaterpush.vercel.app/api/contacts?label=' + opts.label;
   req.cookies = { get: (name: string) => cookies[name] ? { value: cookies[name] } : undefined };
   return GET(req);
 }
@@ -234,22 +236,19 @@ describe('GET /api/contacts', () => {
     ]);
   });
 
-  test('returns from supabase cache when whatsapp_contacts has rows', async () => {
-    mockSupa.setResponse('whatsapp_contacts:select', [
-      { contact_number: '393401111111', name: 'Mario Rossi', push_name: 'Mario' },
-      { contact_number: '393402222222', name: null,          push_name: 'Anna' },
-      { contact_number: '393403333333', name: 'Luca Bianchi', push_name: null },
-    ]);
-    // Evolution mocks return [] by default; assert below they are never hit.
+  test('cache-only fast path when cache is substantial (>= CACHE_ONLY_MIN): no Evolution call', async () => {
+    // #3a: cache-only now requires a substantial cache. 25 named rows -> trusted as
+    // the whole address book -> Evolution skipped entirely.
+    const rows = Array.from({ length: 25 }, (_, i) => ({
+      contact_number: '39340000' + String(1000 + i),
+      name: 'Contact ' + i, push_name: 'C' + i, profile_pic_url: null, added_manually: false,
+    }));
+    mockSupa.setResponse('whatsapp_contacts:select', rows);
 
     const res = await callGet();
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.contacts).toEqual([
-      { number: '393402222222', name: 'Anna',         pushName: 'Anna' },
-      { number: '393403333333', name: 'Luca Bianchi' },
-      { number: '393401111111', name: 'Mario Rossi',  pushName: 'Mario' },
-    ]);
+    expect(body.contacts.length).toBe(25);
     expect(findContactsMock).not.toHaveBeenCalled();
     expect(findChatsMock).not.toHaveBeenCalled();
     expect(fetchAllGroupsMock).not.toHaveBeenCalled();
@@ -443,14 +442,20 @@ describe('GET /api/contacts', () => {
       expect(body.recents.map((r: any) => r.number)).toEqual(['393401111111']);
     });
 
-    test('evolution-fallback path returns recents: [] for API shape consistency', async () => {
+    test('live+seed path now COMPUTES recents from scheduled_messages (was hardcoded [])', async () => {
       mockSupa.setResponse('whatsapp_contacts:select', []);
+      mockSupa.setResponse('scheduled_messages:select', [
+        { recipient_number: '393404444444', recipient_name: 'Sara R.' },
+      ]);
       findChatsMock.mockResolvedValue([
         { remoteJid: '393404444444@s.whatsapp.net', pushName: 'Sara', name: 'Sara R.' },
       ]);
       const res = await callGet();
       const body = await res.json();
-      expect(body.recents).toEqual([]);
+      // Enriched from the discovered contact in byNumber (pushName wins as display).
+      expect(body.recents).toEqual([
+        { number: '393404444444', name: 'Sara', pushName: 'Sara' },
+      ]);
     });
   });
 
@@ -508,6 +513,79 @@ describe('GET /api/contacts', () => {
       const body = await res.json();
       const mario = body.contacts.find((c: any) => c.number === '393401111111');
       expect(mario.addedManually).toBeUndefined();
+    });
+  });
+
+  describe('#3a thin-cache live+seed merge', () => {
+    test('cache below CACHE_ONLY_MIN consults live AND merges (cached manual + live both present)', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393409999999', name: 'Manual Lead', push_name: null, profile_pic_url: null, added_manually: true },
+      ]);
+      findChatsMock.mockResolvedValue([
+        { remoteJid: '393401111111@s.whatsapp.net', pushName: 'Live Marco', name: null },
+      ]);
+      const res = await callGet();
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(findChatsMock).toHaveBeenCalled(); // thin cache -> live IS consulted (not shadowed)
+      const nums = body.contacts.map((c: any) => c.number).sort();
+      expect(nums).toEqual(['393401111111', '393409999999']); // manual (cache) + Marco (live)
+    });
+
+    test('cache seed WINS over live for a number present in both', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393401111111', name: 'Cached Name', push_name: 'Cached', profile_pic_url: 'https://pps.whatsapp.net/cached.jpg', added_manually: false },
+      ]);
+      findChatsMock.mockResolvedValue([
+        { remoteJid: '393401111111@s.whatsapp.net', pushName: 'Live Name', name: 'Live Name' },
+      ]);
+      const res = await callGet();
+      const body = await res.json();
+      const c = body.contacts.find((x: any) => x.number === '393401111111');
+      expect(c.name).toBe('Cached Name');       // cache wins
+      expect(c.photoUrl).toBe('https://pps.whatsapp.net/cached.jpg');
+    });
+
+    test('fully-synced cache + small label filter STAYS cache-only (gate on synced count, not post-filter visible)', async () => {
+      // 30 synced rows -> instance is fully synced. Filtering by a 2-contact label
+      // must NOT drop to the live path just because the visible result is small.
+      const rows = Array.from({ length: 30 }, (_, i) => ({
+        contact_number: '39340000' + String(1000 + i),
+        name: 'Contact ' + i, push_name: 'C' + i, profile_pic_url: null, added_manually: false,
+      }));
+      mockSupa.setResponse('whatsapp_contacts:select', rows);
+      mockSupa.setResponse('contact_label_assignments:select', [
+        { contact_number: '393400001000' }, { contact_number: '393400001001' },
+      ]);
+      const res = await callGet({ label: 'label-uuid-1' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.contacts.map((c: any) => c.number).sort()).toEqual(['393400001000', '393400001001']);
+      // The whole point: no useless Evolution call despite the filtered view being < 25.
+      expect(findChatsMock).not.toHaveBeenCalled();
+      expect(findContactsMock).not.toHaveBeenCalled();
+    });
+
+    test('cache below threshold + Evolution DOWN: serves seeded cache (200, picker never empties)', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393409999999', name: 'Manual Lead', push_name: null, profile_pic_url: null, added_manually: true },
+      ]);
+      findContactsMock.mockRejectedValue(new Error('Evolution API error: 500 - down'));
+      findChatsMock.mockRejectedValue(new Error('Evolution API error: 500 - down'));
+      const res = await callGet();
+      expect(res.status).toBe(200); // NOT 502 — the cache survives
+      const body = await res.json();
+      expect(body.contacts).toEqual([
+        { number: '393409999999', name: 'Manual Lead', addedManually: true },
+      ]);
+    });
+
+    test('empty cache + Evolution DOWN still surfaces the error (502 → client shows syncing/retry in #3b)', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', []);
+      findContactsMock.mockRejectedValue(new Error('Evolution API error: 500 - down'));
+      findChatsMock.mockRejectedValue(new Error('Evolution API error: 500 - down'));
+      const res = await callGet();
+      expect(res.status).toBe(502);
     });
   });
 });
