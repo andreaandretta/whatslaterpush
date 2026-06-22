@@ -23,6 +23,23 @@ export interface CleanupResult {
   candidates: number;
   removed_storage: number;
   nullified_rows: number;
+  skipped_in_use: number;
+}
+
+// H8: partition candidate terminal rows into removable vs in-use. A media_url
+// still referenced by a LIVE row (in `inUse`) must NOT be removed — recurring
+// chains share one file across occurrences, so deleting a >30d 'sent' copy would
+// break the live future occurrence. Duplicate media_urls collapse to one path.
+export function partitionRemovableMedia(
+  candidates: Array<{ id: string; media_url: string }>,
+  inUse: Set<string>,
+): { removablePaths: string[]; removableIds: string[]; skipped: number } {
+  const removable = candidates.filter((c) => c.media_url && !inUse.has(c.media_url));
+  return {
+    removablePaths: Array.from(new Set(removable.map((c) => c.media_url))),
+    removableIds: removable.map((c) => c.id),
+    skipped: candidates.length - removable.length,
+  };
 }
 
 export async function runMediaCleanup(): Promise<CleanupResult> {
@@ -41,17 +58,32 @@ export async function runMediaCleanup(): Promise<CleanupResult> {
   const rows = (candidates || []) as Array<{ id: string; media_url: string }>;
 
   if (rows.length === 0) {
-    return { status: 'noop', candidates: 0, removed_storage: 0, nullified_rows: 0 };
+    return { status: 'noop', candidates: 0, removed_storage: 0, nullified_rows: 0, skipped_in_use: 0 };
   }
 
-  const paths = rows.map(r => r.media_url).filter(Boolean);
-  const ids = rows.map(r => r.id);
+  const allPaths = rows.map(r => r.media_url).filter(Boolean);
+
+  // H8: exclude media still referenced by a LIVE (non-terminal) row. Recurring
+  // chains reuse one media_url across occurrences, so a >30d 'sent' copy can share
+  // its storage file with a future pending occurrence — removing it would break
+  // the live chain (createSignedUrl -> 'Failed to sign media URL' forever).
+  const { data: inUseRows, error: inUseErr } = await supabase.rpc('recurring_media_in_use', { p_paths: allPaths });
+  if (inUseErr) throw new Error('cleanup-media in-use check failed: ' + inUseErr.message);
+  const inUse = new Set<string>(((inUseRows || []) as Array<{ media_url: string }>).map((r) => r.media_url));
+
+  const { removablePaths, removableIds, skipped } = partitionRemovableMedia(rows, inUse);
+
+  if (removablePaths.length === 0) {
+    // Whole batch still referenced by live rows (e.g. active recurring media) —
+    // nothing to free this run; they'll be cleaned once their chains end.
+    return { status: 'ok', candidates: rows.length, removed_storage: 0, nullified_rows: 0, skipped_in_use: skipped };
+  }
 
   // Storage remove first: if Storage fails we abort and retry next week.
   // The DB still references the (now possibly-deleted) path until cleared,
   // which is safe — send-messages only signs URLs at send time and these rows
   // are already in terminal state (sent/cancelled/failed).
-  const { error: storageErr } = await supabase.storage.from(BUCKET).remove(paths);
+  const { error: storageErr } = await supabase.storage.from(BUCKET).remove(removablePaths);
   if (storageErr) throw new Error('cleanup-media storage remove failed: ' + storageErr.message);
 
   const { error: updErr } = await supabase
@@ -62,19 +94,20 @@ export async function runMediaCleanup(): Promise<CleanupResult> {
       media_filename: null,
       media_caption: null,
     })
-    .in('id', ids);
+    .in('id', removableIds);
   if (updErr) throw new Error('cleanup-media update failed: ' + updErr.message);
 
   await logAuditEvent({
     eventType: 'media_cleanup',
-    payload: { removed_count: rows.length, batch_size: BATCH_SIZE },
+    payload: { removed_count: removableIds.length, skipped_in_use: skipped, batch_size: BATCH_SIZE },
   });
 
   return {
     status: 'ok',
     candidates: rows.length,
-    removed_storage: paths.length,
-    nullified_rows: ids.length,
+    removed_storage: removablePaths.length,
+    nullified_rows: removableIds.length,
+    skipped_in_use: skipped,
   };
 }
 

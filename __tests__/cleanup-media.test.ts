@@ -163,3 +163,62 @@ describe('runMediaCleanup — audit log', () => {
     expect(row.payload.batch_size).toBe(100);
   });
 });
+
+describe('partitionRemovableMedia (H8 pure)', () => {
+  test('no in-use -> everything removable, nothing skipped', async () => {
+    const { partitionRemovableMedia } = await import('../app/api/cron/cleanup-media/route');
+    const r = partitionRemovableMedia([{ id: 'a', media_url: 'x/1.jpg' }, { id: 'b', media_url: 'x/2.jpg' }], new Set());
+    expect(r.removablePaths).toEqual(['x/1.jpg', 'x/2.jpg']);
+    expect(r.removableIds).toEqual(['a', 'b']);
+    expect(r.skipped).toBe(0);
+  });
+
+  test('a shared (in-use) path is excluded from removal', async () => {
+    const { partitionRemovableMedia } = await import('../app/api/cron/cleanup-media/route');
+    const r = partitionRemovableMedia(
+      [{ id: 'a', media_url: 'x/shared.jpg' }, { id: 'b', media_url: 'x/free.mp4' }],
+      new Set(['x/shared.jpg']),
+    );
+    expect(r.removablePaths).toEqual(['x/free.mp4']);
+    expect(r.removableIds).toEqual(['b']);
+    expect(r.skipped).toBe(1);
+  });
+
+  test('duplicate media_urls collapse to one removable path (both ids nullified)', async () => {
+    const { partitionRemovableMedia } = await import('../app/api/cron/cleanup-media/route');
+    const r = partitionRemovableMedia([{ id: 'a', media_url: 'x/dup.jpg' }, { id: 'b', media_url: 'x/dup.jpg' }], new Set());
+    expect(r.removablePaths).toEqual(['x/dup.jpg']);
+    expect(r.removableIds).toEqual(['a', 'b']);
+  });
+});
+
+describe('runMediaCleanup — H8 in-use exclusion', () => {
+  test('skips a media_url still referenced by a LIVE recurring row (preserves its file)', async () => {
+    mockSupa.setResponse('scheduled_messages:select', [
+      { id: 'm1', media_url: 'u/shared-recurring.jpg' }, // shared with a live future occurrence
+      { id: 'm2', media_url: 'u/one-shot.mp4' },          // safe
+    ]);
+    mockSupa.setRpcResponse('recurring_media_in_use', [{ media_url: 'u/shared-recurring.jpg' }]);
+    const { runMediaCleanup } = await import('../app/api/cron/cleanup-media/route');
+    const result = await runMediaCleanup();
+
+    expect(storageCalls).toHaveLength(1);
+    expect(storageCalls[0].args[0]).toEqual(['u/one-shot.mp4']); // recurring file NOT removed
+    expect(result.removed_storage).toBe(1);
+    expect(result.skipped_in_use).toBe(1);
+    const upd = findUpdate()!;
+    expect(upd.chain.find(c => c.method === 'in' && c.args[0] === 'id')!.args[1]).toEqual(['m2']);
+  });
+
+  test('all candidates in use -> no Storage remove, no UPDATE, reports skipped_in_use', async () => {
+    mockSupa.setResponse('scheduled_messages:select', [{ id: 'm1', media_url: 'u/a.jpg' }]);
+    mockSupa.setRpcResponse('recurring_media_in_use', [{ media_url: 'u/a.jpg' }]);
+    const { runMediaCleanup } = await import('../app/api/cron/cleanup-media/route');
+    const result = await runMediaCleanup();
+
+    expect(storageCalls).toHaveLength(0);
+    expect(findUpdate()).toBeUndefined();
+    expect(result.removed_storage).toBe(0);
+    expect(result.skipped_in_use).toBe(1);
+  });
+});
