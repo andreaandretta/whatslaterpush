@@ -26,9 +26,9 @@ function getSupabase() {
 // Self-fetch one of our own JSON endpoints with a hard timeout so a slow upstream
 // (DigitalOcean / Evolution / Coolify) can never push this route past the Vercel
 // lambda limit. Returns null on any failure; the page renders that card as "n/d".
-async function fetchJson(url: string): Promise<any> {
+async function fetchJson(url: string, headers?: Record<string, string>): Promise<any> {
   try {
-    const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(6000) });
+    const res = await fetch(url, { cache: 'no-store', headers, signal: AbortSignal.timeout(6000) });
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -43,15 +43,19 @@ export async function GET(req: NextRequest) {
   const origin = req.nextUrl.origin;
   const ops = process.env.OPS_SECRET || '';
   // OPS_SECRET is used ONLY here, server-side, to reach our secret-guarded
-  // /api/ops/* proxies. It is never included in the JSON returned to the client.
-  const opsQs = ops ? `?secret=${encodeURIComponent(ops)}` : '';
+  // /api/ops/* proxies. Passed as an Authorization: Bearer header (NOT a ?secret=
+  // query param) so it never lands in the self-fetch URL -> stays out of Vercel
+  // request logs for this internal hop. It is never returned to the client.
+  // (The ops routes still accept ?secret= for GET-only external callers like the
+  // Cowork Torre — that deprecated fallback is unrelated to this internal caller.)
+  const opsHeaders = ops ? { Authorization: `Bearer ${ops}` } : undefined;
   const supabase = getSupabase();
 
   const [usersRes, droplet, evolution, coolify, health] = await Promise.all([
     supabase.rpc('admin_tower_users'),
-    fetchJson(`${origin}/api/ops/droplet/metrics${opsQs}`),
-    fetchJson(`${origin}/api/ops/evolution/instances${opsQs}`),
-    fetchJson(`${origin}/api/ops/coolify/containers${opsQs}`),
+    fetchJson(`${origin}/api/ops/droplet/metrics`, opsHeaders),
+    fetchJson(`${origin}/api/ops/evolution/instances`, opsHeaders),
+    fetchJson(`${origin}/api/ops/coolify/containers`, opsHeaders),
     fetchJson(`${origin}/api/health`),
   ]);
 
