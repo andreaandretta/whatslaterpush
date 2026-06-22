@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { User } from 'lucide-react';
+import { computeInitials } from '../app/lib/contact-initials';
 
 interface ContactAvatarProps {
   name?: string;
@@ -25,17 +27,6 @@ const SIZES = {
   lg: 'w-14 h-14 text-base',
 };
 
-function computeInitials(name: string | undefined, number: string): string {
-  const n = (name || '').trim();
-  if (n) {
-    const words = n.split(/\s+/).filter(Boolean);
-    if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
-    return words[0][0].toUpperCase();
-  }
-  const digits = number.replace(/\D/g, '');
-  return digits.slice(-3);
-}
-
 function hashNumber(number: string): number {
   let h = 0;
   for (let i = 0; i < number.length; i++) h = (h * 31 + number.charCodeAt(i)) >>> 0;
@@ -43,7 +34,7 @@ function hashNumber(number: string): number {
 }
 
 export function ContactAvatar({ name, number, size = 'md', className = '', photoSrc }: ContactAvatarProps) {
-  const initials = computeInitials(name, number);
+  const initials = computeInitials(name);
   const sizeClass = SIZES[size];
 
   const [loaded, setLoaded] = useState(false);
@@ -68,7 +59,9 @@ export function ContactAvatar({ name, number, size = 'md', className = '', photo
       className={`${color} ${sizeClass} rounded-full flex items-center justify-center text-white font-semibold shrink-0 relative overflow-hidden ${className}`}
       aria-hidden="true"
     >
-      <span className={loaded && showImage ? 'opacity-0' : 'opacity-100'}>{initials}</span>
+      <span className={`flex items-center justify-center ${loaded && showImage ? 'opacity-0' : 'opacity-100'}`}>
+        {initials || <User className="w-1/2 h-1/2" aria-hidden="true" />}
+      </span>
       {showImage && (
         <img
           src={photoSrc}

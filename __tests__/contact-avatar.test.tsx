@@ -17,14 +17,24 @@ describe('ContactAvatar', () => {
     expect(screen.getByText('A')).toBeInTheDocument();
   });
 
-  test('falls back to last 3 digits of number when name missing', () => {
-    render(<ContactAvatar number="393339998877" />);
-    expect(screen.getByText('877')).toBeInTheDocument();
+  test('#2: renders a neutral person glyph (NOT the last 3 digits) when the name is missing', () => {
+    const { container } = render(<ContactAvatar number="393339998877" />);
+    expect(container.querySelector('svg')).toBeInTheDocument(); // person glyph
+    expect(screen.queryByText('877')).not.toBeInTheDocument();  // no digit "avatar"
   });
 
-  test('falls back to last 3 digits when name is empty string', () => {
-    render(<ContactAvatar name="" number="393331234567" />);
-    expect(screen.getByText('567')).toBeInTheDocument();
+  test('#2: renders the neutral person glyph when the name is an empty string', () => {
+    const { container } = render(<ContactAvatar name="" number="393331234567" />);
+    expect(container.querySelector('svg')).toBeInTheDocument();
+    expect(screen.queryByText('567')).not.toBeInTheDocument();
+  });
+
+  // Positive lock-in for the #2 fix: an unsynced contact (no name AND no photo) must
+  // render the glyph and ZERO phone digits, so it never looks like "the photo is a number".
+  test('#2: a contact with NO name and NO photo shows the glyph and zero digits', () => {
+    const { container } = render(<ContactAvatar number="393331239999" />);
+    expect(container.querySelector('svg')).toBeInTheDocument();
+    expect(container.textContent || '').not.toMatch(/\d/);
   });
 
   test('assigns deterministic color from number hash', () => {
