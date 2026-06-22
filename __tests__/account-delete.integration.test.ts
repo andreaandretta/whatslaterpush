@@ -19,6 +19,11 @@ const INSTANCE = 'SchedWhats-' + USER_PHONE;
 beforeEach(() => {
   mockSupa.calls.length = 0;
   fetchMock.calls.length = 0;
+  // Safe defaults (response maps persist across tests): empty media, successful
+  // remove + cascade. Individual tests override as needed.
+  mockSupa.setStorageResponse('message-media:list', []);
+  mockSupa.setStorageResponse('message-media:remove', null);
+  mockSupa.setRpcResponse('delete_user_account', null);
   process.env = {
     ...ORIGINAL_ENV,
     SUPABASE_URL: 'https://test.supabase.co',
@@ -65,17 +70,18 @@ describe('POST /api/account/delete — confirmation gate', () => {
   test('400 confirmation_mismatch when body.confirmation does not equal the authed phone', async () => {
     const res = await callDelete({ confirmation: '393909999999' });
     expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe('confirmation_mismatch');
-    // The user row must NOT be touched when confirmation fails.
-    const userInstanceCall = mockSupa.calls.find(c => c.table === 'user_instances' && c.operation === 'delete');
-    expect(userInstanceCall).toBeUndefined();
+    expect((await res.json()).error).toBe('confirmation_mismatch');
+    // Nothing destructive must run when confirmation fails.
+    expect(mockSupa.calls.find(c => c.operation === 'delete_user_account')).toBeUndefined();
+    expect(mockSupa.calls.find(c => c.table === 'storage:message-media')).toBeUndefined();
   });
 });
 
-describe('POST /api/account/delete — cascade happy path (smoke)', () => {
-  test('200 ok with deleted_tables and phone_hash in the response body', async () => {
+describe('POST /api/account/delete — happy path', () => {
+  test('200 ok: purges media, runs the atomic RPC cascade, returns removed_media + phone_hash', async () => {
     mockUserInstanceLookup();
+    mockSupa.setStorageResponse('message-media:list', [{ name: 'a.jpg' }, { name: 'b.png' }]);
+    mockSupa.setRpcResponse('delete_user_account', null);
     fetchMock.setJsonResponse('/instance/logout/', { ok: true });
 
     const res = await callDelete({ confirmation: USER_PHONE });
@@ -83,48 +89,61 @@ describe('POST /api/account/delete — cascade happy path (smoke)', () => {
     const body = await res.json();
     expect(body.status).toBe('ok');
     expect(body.phone_hash).toMatch(/^h:[0-9a-f]{8}$/);
-    // All 10 tables in the cascade (7 looped + rate_limit_state + audit_events + user_instances).
-    expect(body.deleted_tables).toEqual(expect.arrayContaining([
-      'scheduled_messages',
-      'whatsapp_contacts',
-      'user_templates',
-      'contact_label_assignments',
-      'contact_labels',
-      'pending_contacts',
-      'pending_auth_sessions',
-      'rate_limit_state',
-      'audit_events',
-      'user_instances',
-    ]));
+    expect(body.removed_media).toBe(2);
     expect(body.evolution_disconnected).toBe(true);
+    expect(body.deleted_tables).toBeUndefined(); // replaced by the atomic RPC
+
+    const rpc = mockSupa.calls.find(c => c.operation === 'delete_user_account');
+    expect(rpc).toBeDefined();
+    expect(rpc!.args[0]).toEqual({ p_phone: USER_PHONE, p_instance_name: INSTANCE });
+
+    const list = mockSupa.calls.find(c => c.table === 'storage:message-media' && c.operation === 'list');
+    expect(list!.args[0]).toBe(USER_PHONE);
+    const remove = mockSupa.calls.find(c => c.table === 'storage:message-media' && c.operation === 'remove');
+    expect(remove!.args[0]).toEqual([USER_PHONE + '/a.jpg', USER_PHONE + '/b.png']);
+  });
+
+  test('no media: removed_media=0, no remove call, RPC still runs', async () => {
+    mockUserInstanceLookup();
+    mockSupa.setStorageResponse('message-media:list', []);
+    mockSupa.setRpcResponse('delete_user_account', null);
+    const res = await callDelete({ confirmation: USER_PHONE });
+    const body = await res.json();
+    expect(body.removed_media).toBe(0);
+    expect(mockSupa.calls.find(c => c.table === 'storage:message-media' && c.operation === 'remove')).toBeUndefined();
+    expect(mockSupa.calls.find(c => c.operation === 'delete_user_account')).toBeDefined();
   });
 });
 
-describe('POST /api/account/delete — cascade ordering', () => {
-  test('audit_events is deleted BEFORE the account_deleted insert, and user_instances delete is LAST', async () => {
+describe('POST /api/account/delete — storage-first, abort on failure (no half-delete)', () => {
+  test('500 storage_purge_failed on remove error, and the DB cascade RPC is NOT called', async () => {
     mockUserInstanceLookup();
-    await callDelete({ confirmation: USER_PHONE });
+    mockSupa.setStorageResponse('message-media:list', [{ name: 'a.jpg' }]);
+    mockSupa.setStorageResponse('message-media:remove', null, { message: 'storage down' });
 
-    const ops = mockSupa.calls.map(c => ({ table: c.table, op: c.operation }));
-    const auditDeleteIdx = ops.findIndex(o => o.table === 'audit_events' && o.op === 'delete');
-    const auditInsertIdx = ops.findIndex(o => o.table === 'audit_events' && o.op === 'insert');
-    const userInstancesDeleteIdx = ops.findIndex(o => o.table === 'user_instances' && o.op === 'delete');
+    const res = await callDelete({ confirmation: USER_PHONE });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe('storage_purge_failed');
+    expect(mockSupa.calls.find(c => c.operation === 'delete_user_account')).toBeUndefined(); // nothing deleted
+  });
+});
 
-    expect(auditDeleteIdx).toBeGreaterThanOrEqual(0);
-    expect(auditInsertIdx).toBeGreaterThan(auditDeleteIdx);
-
-    // No DB write must happen after the user_instances delete except the
-    // final account_deleted audit insert.
-    const writesAfterUserInstances = ops
-      .slice(userInstancesDeleteIdx + 1)
-      .filter(o => o.op === 'delete' || o.op === 'update' || o.op === 'insert');
-    expect(writesAfterUserInstances).toEqual([{ table: 'audit_events', op: 'insert' }]);
+describe('POST /api/account/delete — RPC cascade error', () => {
+  test('500 cascade_failed when the transactional RPC errors', async () => {
+    mockUserInstanceLookup();
+    mockSupa.setStorageResponse('message-media:list', []);
+    mockSupa.setRpcResponse('delete_user_account', null, { message: 'tx aborted' });
+    const res = await callDelete({ confirmation: USER_PHONE });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe('cascade_failed');
   });
 });
 
 describe('POST /api/account/delete — final audit event', () => {
-  test('writes audit_events row with event_type=account_deleted and phone_hash payload', async () => {
+  test('account_deleted: user_phone null, phone_hash + removed_media payload, NO ip_address (GDPR), after the RPC', async () => {
     mockUserInstanceLookup();
+    mockSupa.setStorageResponse('message-media:list', [{ name: 'a.jpg' }]);
+    mockSupa.setRpcResponse('delete_user_account', null);
     await callDelete({ confirmation: USER_PHONE });
 
     const finalInsert = mockSupa.calls
@@ -133,28 +152,34 @@ describe('POST /api/account/delete — final audit event', () => {
     expect(finalInsert).toBeDefined();
     const row = finalInsert.args[0];
     expect(row.event_type).toBe('account_deleted');
-    // user_phone column is null — the user no longer exists.
     expect(row.user_phone).toBeNull();
     expect(row.payload.phone_hash).toMatch(/^h:[0-9a-f]{8}$/);
-    expect(Array.isArray(row.payload.deleted_tables)).toBe(true);
-    expect(typeof row.payload.evolution_disconnected).toBe('boolean');
+    expect(row.payload.removed_media).toBe(1);
+    expect(row.payload).not.toHaveProperty('deleted_tables');
+    // GDPR: the deletion record must not store the requester IP.
+    expect(row.ip_address).toBeFalsy();
+    expect(row.payload).not.toHaveProperty('ip_address');
+
+    // Forensic event written AFTER the cascade RPC.
+    const rpcIdx = mockSupa.calls.findIndex(c => c.operation === 'delete_user_account');
+    const auditInsertIdx = mockSupa.calls.findIndex(c => c.table === 'audit_events' && c.operation === 'insert');
+    expect(rpcIdx).toBeGreaterThanOrEqual(0);
+    expect(auditInsertIdx).toBeGreaterThan(rpcIdx);
   });
 });
 
 describe('POST /api/account/delete — Evolution disconnect is best-effort', () => {
-  test('returns 200 even when Evolution logout throws, with evolution_disconnected=false', async () => {
+  test('200 even when Evolution logout throws, with evolution_disconnected=false; DB cascade still ran', async () => {
     mockUserInstanceLookup();
-    fetchMock.setHandler('/instance/logout/', () => {
-      throw new Error('Evolution unreachable');
-    });
+    mockSupa.setStorageResponse('message-media:list', []);
+    mockSupa.setRpcResponse('delete_user_account', null);
+    fetchMock.setHandler('/instance/logout/', () => { throw new Error('Evolution unreachable'); });
 
     const res = await callDelete({ confirmation: USER_PHONE });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.status).toBe('ok');
     expect(body.evolution_disconnected).toBe(false);
-    // DB cascade still completes — user_instances delete was issued.
-    const userInstancesDelete = mockSupa.calls.find(c => c.table === 'user_instances' && c.operation === 'delete');
-    expect(userInstancesDelete).toBeDefined();
+    expect(mockSupa.calls.find(c => c.operation === 'delete_user_account')).toBeDefined();
   });
 });

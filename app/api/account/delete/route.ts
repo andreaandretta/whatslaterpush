@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
-import { logAuditEvent, hashContactRefSync, clientIpFromHeaders } from '../../../lib/audit';
+import { logAuditEvent, hashContactRefSync } from '../../../lib/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,20 +22,6 @@ async function getAuthedPhone(req: NextRequest): Promise<string | null> {
   const payload = await verifyCookie(raw);
   return payload?.phone ?? null;
 }
-
-// User-scoped tables whose ownership column is a phone string. Iterated in
-// the order below; ordering inside the list is not load-bearing (no FKs
-// across these) but audit_events MUST be pruned after this loop and
-// user_instances MUST be deleted last (see the explicit calls below).
-const USER_SCOPED_DELETES: ReadonlyArray<{ table: string; column: string }> = [
-  { table: 'scheduled_messages', column: 'instance_phone' },
-  { table: 'whatsapp_contacts', column: 'user_phone' },
-  { table: 'user_templates', column: 'user_phone' },
-  { table: 'contact_label_assignments', column: 'user_phone' },
-  { table: 'contact_labels', column: 'user_phone' },
-  { table: 'pending_contacts', column: 'owner_phone' },
-  { table: 'pending_auth_sessions', column: 'phone' },
-];
 
 export async function POST(req: NextRequest) {
   const phone = await getAuthedPhone(req);
@@ -62,48 +48,36 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
   const instanceName = (user as any).instance_name as string;
-  const userKey = 'user:' + phone;
-  const instKey = 'inst:' + instanceName;
-  const deletedTables: string[] = [];
 
-  for (const { table, column } of USER_SCOPED_DELETES) {
-    const { error } = await supabase.from(table).delete().eq(column, phone);
-    if (error) {
-      return NextResponse.json({
-        error: 'cascade_failed',
-        table,
-        message: error.message,
-      }, { status: 500 });
+  // #29: purge the user's media from Storage FIRST. Uploads live under the
+  // {phone}/ prefix (per the messages IDOR guard). Abort on ANY failure so we
+  // never half-delete — a retry re-purges (idempotent) then runs the cascade.
+  // (cap at 1000 files; >30d media is already removed by cleanup-media.)
+  let removedMedia = 0;
+  {
+    const { data: files, error: listErr } = await supabase.storage
+      .from('message-media')
+      .list(phone, { limit: 1000 });
+    if (listErr) {
+      return NextResponse.json({ error: 'storage_purge_failed', stage: 'list', message: listErr.message }, { status: 500 });
     }
-    deletedTables.push(table);
+    const paths = (files || []).map((f: { name: string }) => phone + '/' + f.name);
+    if (paths.length > 0) {
+      const { error: rmErr } = await supabase.storage.from('message-media').remove(paths);
+      if (rmErr) {
+        return NextResponse.json({ error: 'storage_purge_failed', stage: 'remove', message: rmErr.message }, { status: 500 });
+      }
+      removedMedia = paths.length;
+    }
   }
 
+  // #58 + #30: atomic DB cascade (all-or-nothing) via the transactional RPC,
+  // which also prunes the instance-keyed, IP-bearing audit_events.
   {
-    const { error } = await supabase.from('rate_limit_state').delete().in('key', [userKey, instKey]);
+    const { error } = await supabase.rpc('delete_user_account', { p_phone: phone, p_instance_name: instanceName });
     if (error) {
-      return NextResponse.json({ error: 'cascade_failed', table: 'rate_limit_state', message: error.message }, { status: 500 });
+      return NextResponse.json({ error: 'cascade_failed', message: error.message }, { status: 500 });
     }
-    deletedTables.push('rate_limit_state');
-  }
-
-  // audit_events prune BEFORE the final 'account_deleted' event, otherwise
-  // that event would also get wiped and we'd lose forensic trail.
-  {
-    const { error } = await supabase.from('audit_events').delete().eq('user_phone', phone);
-    if (error) {
-      return NextResponse.json({ error: 'cascade_failed', table: 'audit_events', message: error.message }, { status: 500 });
-    }
-    deletedTables.push('audit_events');
-  }
-
-  // user_instances LAST — keeps the auth gate evaluable for a manual retry
-  // if any earlier delete failed and short-circuited above.
-  {
-    const { error } = await supabase.from('user_instances').delete().eq('phone_number', phone);
-    if (error) {
-      return NextResponse.json({ error: 'cascade_failed', table: 'user_instances', message: error.message }, { status: 500 });
-    }
-    deletedTables.push('user_instances');
   }
 
   // Best-effort Evolution instance logout. Failure is non-fatal — the DB
@@ -122,24 +96,23 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Final audit event. userPhone:null because the row no longer exists; the
-  // one-way hash lets us correlate forensically without storing PII.
+  // Final audit event. userPhone:null + NO ipAddress — GDPR erasure keeps no
+  // identifying PII; the one-way phone hash is enough to confirm the deletion.
   const phoneHash = hashContactRefSync(phone);
   await logAuditEvent({
     userPhone: null,
     eventType: 'account_deleted',
     payload: {
       phone_hash: phoneHash,
-      deleted_tables: deletedTables,
+      removed_media: removedMedia,
       evolution_disconnected: evolutionDisconnected,
     },
-    ipAddress: clientIpFromHeaders(req.headers),
   });
 
   const response = NextResponse.json({
     status: 'ok',
     phone_hash: phoneHash,
-    deleted_tables: deletedTables,
+    removed_media: removedMedia,
     evolution_disconnected: evolutionDisconnected,
   });
   response.cookies.set({

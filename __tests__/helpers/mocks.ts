@@ -84,6 +84,13 @@ export function createMockSupabase() {
     rpcHandlerMap.set(name, handler);
   }
 
+  // Storage mock: storage.from(bucket).list(prefix) / .remove(paths). Keyed
+  // '<bucket>:list' / '<bucket>:remove'; calls tracked as table='storage:<bucket>'.
+  const storageResponseMap = new Map<string, { data: any; error: any }>();
+  function setStorageResponse(key: string, data: any, error: any = null) {
+    storageResponseMap.set(key, { data, error });
+  }
+
   const client = {
     from: (table: string) => ({
       select: (...args: any[]) => makeChain(table, 'select', args),
@@ -100,13 +107,25 @@ export function createMockSupabase() {
       const resp = rpcResponseMap.get(name) || { data: null, error: null };
       return Promise.resolve(resp);
     },
+    storage: {
+      from: (bucket: string) => ({
+        list: (...args: any[]) => {
+          calls.push({ table: 'storage:' + bucket, operation: 'list', args, chain: [] });
+          return Promise.resolve(storageResponseMap.get(bucket + ':list') || { data: [], error: null });
+        },
+        remove: (...args: any[]) => {
+          calls.push({ table: 'storage:' + bucket, operation: 'remove', args, chain: [] });
+          return Promise.resolve(storageResponseMap.get(bucket + ':remove') || { data: [], error: null });
+        },
+      }),
+    },
     channel: () => ({
       on: () => ({ subscribe: () => ({}) }),
     }),
     removeChannel: () => {},
   };
 
-  return { client, calls, setResponse, setRpcResponse, setRpcHandler };
+  return { client, calls, setResponse, setRpcResponse, setRpcHandler, setStorageResponse };
 }
 
 // Fetch mock helper
