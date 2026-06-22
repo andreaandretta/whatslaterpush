@@ -7,7 +7,8 @@
 // Not supported (intentionally): COUNT, UNTIL, INTERVAL>1, BYSETPOS, etc.
 // Keep the subset narrow until users actually ask for more.
 
-import { addDays, addMonths, getDay, setDate } from 'date-fns';
+// (date-fns dropped here: nextOccurrence now does Europe/Rome-wall-clock-preserving
+// math via Intl, so DAILY/WEEKLY/MONTHLY keep the user's local time across DST.)
 
 const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'] as const;
 type DayCode = typeof DAY_CODES[number];
@@ -57,24 +58,61 @@ export function isValidRule(rule: string): boolean {
   return parseRule(rule) !== null;
 }
 
-// Returns the next occurrence strictly AFTER `from`, preserving time-of-day.
-// Returns null if rule is invalid or no next occurrence exists in a sensible
-// horizon (12 months for MONTHLY day-overflow cases).
+// ── Europe/Rome wall-clock helpers (DST-correct) ──
+// The Rome wall-clock components of an instant.
+function romeParts(d: Date): { y: number; mo: number; dd: number; h: number; mi: number; s: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Rome', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(d);
+  const g = (t: string) => Number(parts.find(p => p.type === t)!.value);
+  return { y: g('year'), mo: g('month'), dd: g('day'), h: g('hour'), mi: g('minute'), s: g('second') };
+}
+
+// The UTC instant whose Europe/Rome wall-clock is exactly (y, mo, dd, h, mi, s)
+// with `ms` milliseconds. ms is threaded through both Date.UTC calls so it
+// cancels in the offset (Rome offsets are whole minutes) and survives to the
+// result — Intl only resolves to seconds, so we carry sub-second precision here.
+function romeWallClockToUtc(y: number, mo: number, dd: number, h: number, mi: number, s: number, ms = 0): Date {
+  const guess = Date.UTC(y, mo - 1, dd, h, mi, s, ms);
+  const p = romeParts(new Date(guess));
+  const romeAsUtc = Date.UTC(p.y, p.mo - 1, p.dd, p.h, p.mi, p.s, ms);
+  const offset = romeAsUtc - guess; // Rome UTC-offset at `guess`
+  return new Date(guess - offset);
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Returns the next occurrence strictly AFTER `from`, preserving the user's
+// Europe/Rome wall-clock time-of-day across DST (a 09:00 reminder stays 09:00,
+// CEST or CET). Returns null if rule is invalid or no next occurrence exists in a
+// sensible horizon (12 months for MONTHLY day-overflow cases).
+//
+// Day/week arithmetic runs on a "floating" date (the Rome wall-clock carried in
+// UTC fields — a DST-free surface), using UTC accessors so it is independent of
+// the runtime timezone; the result is then mapped back to a real instant.
 export function nextOccurrence(rule: string, from: Date): Date | null {
   const parsed = parseRule(rule);
   if (!parsed) return null;
 
+  const p = romeParts(from);
+  const ms = from.getUTCMilliseconds(); // Intl drops sub-second; carry it through.
+  const floating = new Date(Date.UTC(p.y, p.mo - 1, p.dd, p.h, p.mi, p.s));
+  const back = (f: Date) => romeWallClockToUtc(
+    f.getUTCFullYear(), f.getUTCMonth() + 1, f.getUTCDate(), f.getUTCHours(), f.getUTCMinutes(), f.getUTCSeconds(), ms,
+  );
+
   if (parsed.freq === 'DAILY') {
-    return addDays(from, 1);
+    return back(new Date(floating.getTime() + DAY_MS));
   }
 
   if (parsed.freq === 'WEEKLY') {
-    const targetDows = parsed.byDay!.map(d => DAY_CODES.indexOf(d));
-    const currentDow = getDay(from);
+    const targetDows = parsed.byDay!.map(dc => DAY_CODES.indexOf(dc));
+    const currentDow = floating.getUTCDay();
     for (let offset = 1; offset <= 7; offset++) {
-      const candidateDow = (currentDow + offset) % 7;
-      if (targetDows.includes(candidateDow)) {
-        return addDays(from, offset);
+      if (targetDows.includes((currentDow + offset) % 7)) {
+        return back(new Date(floating.getTime() + offset * DAY_MS));
       }
     }
     return null;
@@ -82,14 +120,15 @@ export function nextOccurrence(rule: string, from: Date): Date | null {
 
   if (parsed.freq === 'MONTHLY') {
     const targetDay = parsed.byMonthDay!;
-    // Walk forward month by month until we find one that has targetDay.
-    let candidate = addMonths(from, 1);
+    let y = p.y;
+    let mo = p.mo; // 1-based
     for (let tries = 0; tries < 12; tries++) {
-      const lastDayOfMonth = new Date(candidate.getFullYear(), candidate.getMonth() + 1, 0).getDate();
+      mo += 1;
+      if (mo > 12) { mo = 1; y += 1; }
+      const lastDayOfMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate(); // last day of month `mo`
       if (targetDay <= lastDayOfMonth) {
-        return setDate(candidate, targetDay);
+        return romeWallClockToUtc(y, mo, targetDay, p.h, p.mi, p.s, ms);
       }
-      candidate = addMonths(candidate, 1);
     }
     return null;
   }

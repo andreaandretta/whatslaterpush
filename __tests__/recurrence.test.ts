@@ -180,6 +180,36 @@ describe('nextOccurrence — MONTHLY', () => {
   });
 });
 
+// H7: Italy DST ends Sun 2026-10-25 (CEST->CET) and starts Sun 2026-03-29
+// (CET->CEST). A reminder must keep its Europe/Rome wall-clock across both.
+describe('nextOccurrence — DST (Europe/Rome) preserves wall-clock', () => {
+  test('DAILY across the autumn fall-back keeps 09:00 Rome (CEST 07:00Z -> CET 08:00Z)', () => {
+    const from = new Date('2026-10-24T07:00:00.000Z'); // 09:00 CEST
+    const next = nextOccurrence('FREQ=DAILY', from)!;
+    // 09:00 on Oct 25 is CET (UTC+1) -> 08:00Z. (Old UTC-math gave 07:00Z = 08:00 Rome.)
+    expect(next.toISOString()).toBe('2026-10-25T08:00:00.000Z');
+  });
+
+  test('DAILY across the spring forward keeps 09:00 Rome (CET 08:00Z -> CEST 07:00Z)', () => {
+    const from = new Date('2026-03-28T08:00:00.000Z'); // 09:00 CET
+    const next = nextOccurrence('FREQ=DAILY', from)!;
+    // 09:00 on Mar 29 is CEST (UTC+2) -> 07:00Z. (Old UTC-math gave 08:00Z = 10:00 Rome.)
+    expect(next.toISOString()).toBe('2026-03-29T07:00:00.000Z');
+  });
+
+  test('WEEKLY across the fall-back keeps the wall-clock (Sunday CEST -> next Sunday CET)', () => {
+    const from = new Date('2026-10-18T07:00:00.000Z'); // Sun 09:00 CEST
+    const next = nextOccurrence('FREQ=WEEKLY;BYDAY=SU', from)!;
+    expect(next.toISOString()).toBe('2026-10-25T08:00:00.000Z'); // Sun 09:00 CET
+  });
+
+  test('MONTHLY across the fall-back keeps the wall-clock', () => {
+    const from = new Date('2026-09-25T07:00:00.000Z'); // 09:00 CEST
+    const next = nextOccurrence('FREQ=MONTHLY;BYMONTHDAY=25', from)!;
+    expect(next.toISOString()).toBe('2026-10-25T08:00:00.000Z'); // 09:00 CET
+  });
+});
+
 describe('nextOccurrence — invalid rules', () => {
   test('returns null for invalid rule', () => {
     const from = new Date('2026-06-15T18:00:00.000Z');
