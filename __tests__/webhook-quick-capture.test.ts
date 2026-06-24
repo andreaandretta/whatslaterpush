@@ -236,6 +236,7 @@ describe('Auto-save contact', () => {
     mockSupa.setResponse('pending_auth_sessions:select', null, null);
     mockSupa.setResponse('pending_contacts:select', null, null);  // no existing contact, count=0
     mockSupa.setResponse('pending_contacts:insert', [{ id: 'c1' }], null);
+    mockSupa.setResponse('processed_webhook_events:upsert', [{ message_key: 'claimed' }]); // dedup: fresh
     fetchMock.setHandler('api.groq.com', () => ({
       ok: true, status: 200,
       json: async () => ({ choices: [{ message: { content: JSON.stringify({
@@ -256,6 +257,15 @@ describe('Auto-save contact', () => {
 
     const insertContact = mockSupa.calls.find(c => c.table === 'pending_contacts' && c.operation === 'insert');
     expect(insertContact).toBeTruthy();
+
+    // The auto-save cap counts ACTIVE contacts: its count query must be windowed
+    // on created_at (last 90 days), same rule as the dashboard enforcement.
+    const windowedCount = mockSupa.calls.find(c =>
+      c.table === 'pending_contacts' &&
+      c.operation === 'select' &&
+      c.chain.some((s: any) => s.method === 'gte' && s.args[0] === 'created_at')
+    );
+    expect(windowedCount).toBeTruthy();
   });
 
   test('does NOT overwrite existing contact with different number', async () => {

@@ -70,7 +70,7 @@ describe('getPlanLimits', () => {
   test('returns free limits', () => {
     const limits = getPlanLimits('free');
     expect(limits.dailyLimit).toBe(3);
-    expect(limits.maxContacts).toBe(5);
+    expect(limits.maxContacts).toBe(10);
     expect(limits.maxRetry).toBe(1);
     expect(limits.historyDays).toBe(7);
   });

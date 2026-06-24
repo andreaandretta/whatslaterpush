@@ -6,6 +6,7 @@ import { getPlanLimits } from '../../lib/plans';
 import { containsAmbiguousTimeKeyword, hasExplicitHHMM } from '../../lib/quick-capture-utils';
 import { scrubPiiForLog } from '../../lib/log-scrubber';
 import { claimWebhookEvent, releaseWebhookEvent } from '../../lib/webhook-dedup';
+import { contactActiveCutoffIso } from '../../lib/contact-window';
 export const dynamic = 'force-dynamic';
 
 const supabase = createClient(
@@ -252,11 +253,13 @@ async function autoSaveContact(
     return { saved: false, conflict: true, conflictNumber: existing.recipient_number };
   }
 
-  // Check plan limit
+  // Check plan limit — count only ACTIVE saved contacts (created within the
+  // 90-day window), same rule as the dashboard cap (app/lib/contact-window.ts).
   const limits = getPlanLimits(plan);
   const { count } = await supabase.from('pending_contacts')
     .select('id', { count: 'exact', head: true })
-    .eq('owner_phone', ownerPhone);
+    .eq('owner_phone', ownerPhone)
+    .gte('created_at', contactActiveCutoffIso());
   if ((count || 0) >= limits.maxContacts) {
     return { saved: false, conflict: false };
   }
@@ -1162,9 +1165,12 @@ export async function POST(req) {
         // Contact limit enforcement
         const userPlan = user.subscription_plan || 'free';
         const planLimits = getPlanLimits(userPlan);
+        // Count only ACTIVE saved contacts (created within the 90-day window),
+        // same rule as the dashboard cap — see app/lib/contact-window.ts.
         const { count: contactCount } = await supabase.from('pending_contacts')
           .select('id', { count: 'exact', head: true })
-          .eq('owner_phone', ownerPhone);
+          .eq('owner_phone', ownerPhone)
+          .gte('created_at', contactActiveCutoffIso());
 
         // Check if this is an existing contact (update) vs new contact
         const { data: existingContact } = await supabase.from('pending_contacts')

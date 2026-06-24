@@ -4,6 +4,7 @@ import { getPlanLimits } from '../../lib/plans';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { validatePhone } from '../../lib/phone';
 import { applyJitter } from '../../lib/cron-utils';
+import { contactActiveCutoffIso, isRecipientActive } from '../../lib/contact-window';
 import { isValidRule } from '../../lib/recurrence';
 import { logAuditEvent, clientIpFromHeaders, hashContactRef } from '../../lib/audit';
 
@@ -379,20 +380,32 @@ export async function POST(req: NextRequest) {
   const plan = user.subscription_plan || 'free';
   const limits = getPlanLimits(plan);
 
+  // The contact cap counts ACTIVE recipients, not lifetime ones: a recipient
+  // counts only if they have a non-cancelled message still in-flight, or
+  // sent/scheduled within the last 90 days (see app/lib/contact-window.ts).
+  // Without this window a Free user stays locked out forever by contacts they
+  // messaged once, months ago. pending_contacts (self-chat saved contacts) are
+  // windowed on created_at for the same reason — recently-used ones reappear
+  // here via scheduled_messages anyway.
+  const cutoffIso = contactActiveCutoffIso();
+
   const { data: pendingContacts } = await supabase
     .from('pending_contacts')
     .select('recipient_number')
-    .eq('owner_phone', phone);
+    .eq('owner_phone', phone)
+    .gte('created_at', cutoffIso);
 
   const { data: scheduledContacts } = await supabase
     .from('scheduled_messages')
-    .select('recipient_number')
+    .select('recipient_number, status, sent_at, scheduled_at')
     .eq('instance_phone', phone)
     .neq('status', 'cancelled');
 
   const knownSet = new Set<string>();
   for (const row of pendingContacts || []) if (row.recipient_number) knownSet.add(row.recipient_number);
-  for (const row of scheduledContacts || []) if (row.recipient_number) knownSet.add(row.recipient_number);
+  for (const row of scheduledContacts || []) {
+    if (row.recipient_number && isRecipientActive(row)) knownSet.add(row.recipient_number);
+  }
 
   if (!knownSet.has(normalized) && knownSet.size >= limits.maxContacts) {
     return NextResponse.json({

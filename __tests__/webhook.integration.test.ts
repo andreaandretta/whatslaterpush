@@ -317,15 +317,17 @@ describe('Webhook: contact limit enforcement', () => {
       },
     });
 
-    // findUserStrict — free plan (limit: 5 contacts)
+    // findUserStrict — free plan (limit: 10 contacts)
     mockSupa.setResponse('user_instances:select', {
       id: 'ui-1', phone_number: '393501234567',
       instance_name: 'SchedWhats-393501234567',
       subscription_plan: 'free',
       trial_ends_at: null,
     });
-    // Contact count query returns count: 5 (at limit) + existing contact check returns null
-    mockSupa.setResponse('pending_contacts:select', null, null, { count: 5 });
+    // Contact count query returns count: 10 (at limit) + existing contact check returns null
+    mockSupa.setResponse('pending_contacts:select', null, null, { count: 10 });
+    // Atomic dedup claim must succeed (fresh) so the handler reaches the vCard branch.
+    mockSupa.setResponse('processed_webhook_events:upsert', [{ message_key: 'claimed' }]);
     // webhook_logs
     mockSupa.setResponse('webhook_logs:insert', null);
     // Notification for limit reached
@@ -341,6 +343,15 @@ describe('Webhook: contact limit enforcement', () => {
     const notifBody = JSON.parse(evoCalls[0].options.body as string);
     expect(notifBody.text).toContain('limite');
     expect(notifBody.text).not.toContain('salvato');
+
+    // The cap counts ACTIVE contacts only: the count query must be windowed on
+    // created_at (last 90 days), same rule as the dashboard enforcement.
+    const countQuery = mockSupa.calls.find(c =>
+      c.table === 'pending_contacts' &&
+      c.operation === 'select' &&
+      c.chain.some((s: any) => s.method === 'gte' && s.args[0] === 'created_at')
+    );
+    expect(countQuery).toBeTruthy();
   });
 });
 

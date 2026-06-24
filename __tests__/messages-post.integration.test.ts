@@ -135,33 +135,66 @@ describe('POST /api/messages', () => {
     expect(inserted.caption).toBe('Ciao Anna');
   });
 
-  test('403 plan_contacts_limit_exceeded when new recipient pushes count over maxContacts', async () => {
-    mockUserInstance('free'); // free.maxContacts = 5
-    mockSupa.setResponse('pending_contacts:select', [
-      { recipient_number: '1' }, { recipient_number: '2' }, { recipient_number: '3' },
-    ]);
-    mockSupa.setResponse('scheduled_messages:select', [
-      { recipient_number: '4' }, { recipient_number: '5' },
-    ]);
+  // Helper: a recently-sent scheduled_messages row (active in the 90-day window).
+  const recentSent = (n: string) => ({
+    recipient_number: n,
+    status: 'sent',
+    sent_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    scheduled_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+  });
+  // Helper: a long-ago-sent row (outside the window → must NOT count).
+  const staleSent = (n: string) => ({
+    recipient_number: n,
+    status: 'sent',
+    sent_at: new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString(),
+    scheduled_at: new Date(Date.now() - 201 * 24 * 60 * 60 * 1000).toISOString(),
+  });
+
+  test('403 plan_contacts_limit_exceeded when a new recipient pushes ACTIVE count over maxContacts', async () => {
+    mockUserInstance('free'); // free.maxContacts = 10
+    mockSupa.setResponse('pending_contacts:select', []);
+    // 10 distinct recipients, all active within the 90-day window → at the cap.
+    mockSupa.setResponse('scheduled_messages:select',
+      Array.from({ length: 10 }, (_, i) => recentSent('r' + i)));
 
     const res = await callPost({
-      recipient_number: '393339998877', // new (#6)
+      recipient_number: '393339998877', // new (#11)
       message: 'hi',
       scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
     });
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toBe('plan_contacts_limit_exceeded');
-    expect(body.limit).toBe(5);
+    expect(body.limit).toBe(10);
+  });
+
+  test('200 — recipients last messaged over 90 days ago do NOT count toward the cap', async () => {
+    mockUserInstance('free'); // free.maxContacts = 10
+    mockSupa.setResponse('pending_contacts:select', []);
+    // 9 active + 1 stale (>90d). Lifetime = 10 (would block), active = 9 (allows #new).
+    mockSupa.setResponse('scheduled_messages:select', [
+      ...Array.from({ length: 9 }, (_, i) => recentSent('a' + i)),
+      staleSent('old1'),
+    ]);
+    mockSupa.setResponse('scheduled_messages:insert', { id: 'new-msg-uuid', scheduled_at: new Date(Date.now() + 3600_000).toISOString() });
+
+    const res = await callPost({
+      recipient_number: '393339998877', // new, would be #10 by active count
+      message: 'hi',
+      scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    expect(res.status).toBe(200);
   });
 
   test('200 when re-scheduling for an existing recipient even at the cap', async () => {
     mockUserInstance('free');
-    mockSupa.setResponse('pending_contacts:select', [
-      { recipient_number: '393339998877' },
-      { recipient_number: '2' }, { recipient_number: '3' }, { recipient_number: '4' }, { recipient_number: '5' },
+    mockSupa.setResponse('pending_contacts:select', []);
+    // 10 active recipients incl. the one we re-schedule for → at the cap, but
+    // re-scheduling an EXISTING recipient is always allowed.
+    mockSupa.setResponse('scheduled_messages:select', [
+      recentSent('393339998877'),
+      ...Array.from({ length: 9 }, (_, i) => recentSent('e' + i)),
     ]);
-    mockSupa.setResponse('scheduled_messages:select', []);
     mockSupa.setResponse('scheduled_messages:insert', { id: 'new-msg-uuid', scheduled_at: new Date(Date.now() + 3600_000).toISOString() });
 
     const res = await callPost({
