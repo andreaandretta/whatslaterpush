@@ -1,6 +1,21 @@
 # WhatsLater (SchedWhats) — Project Context
 
-## STATO ATTUALE (aggiornato 4 Giugno 2026)
+## STATO ATTUALE (aggiornato 22 Giugno 2026)
+
+### 🔧 SESSIONE 22 GIU 2026 — pairing fix + hardening Round 6 + bug post-test (tutto deployato)
+
+**A) PAIRING WHATSAPP RIPARATO.** Root cause del 401 pairing-code: bug in **Baileys 7.0.0-rc.9** — il companion `DeviceProps` inviava campi extra (`historySyncConfig` + `version` hardcoded `primary:10`) che 6.x non manda → il telefono rifiutava la registrazione. Fix: immagine Evolution patchata **`whatslater/evo-patched:v2.3.7-p2`** (rimuove quei 2 campi dal `generateRegistrationNode`), su Coolify/Hetzner. Verificato: 6.7.18 pair-success, 7.x stock errore, 7.x-p2 pair-success. In prod **226 e 408 accoppiati e `open` su Hetzner**. I numeri "bruciati" (393780311526/599) ancora bloccati = restrizione temporanea Meta sul NUMERO (#2298), non bug. Nodo attivo = **Hetzner 157.90.251.241** (DigitalOcean 161.35.212.68 = vecchio, da dismettere: verifica→spegni→cancella).
+
+**B) HARDENING Round 6 — 2 CRITICAL + 11 HIGH, tutti fixati e LIVE** (review avversariale: 6 reviewer paralleli + cross-check ultracode; artifact `/Users/andreaandretta/Documents/Claude/Projects/whatslater/ADVERSARIAL-REVIEW-round6.md`; implementati da ultracode uno alla volta TDD, ognuno rivisto+deployato):
+- **C1 — Free tier era ROTTO**: `shouldSendMessage` (cron-utils.ts) non tornava mai 'send' per `subscription_plan='free'` → ogni utente Free aveva i messaggi in PAUSA per sempre ("Trial scaduto"). Era ciò che bloccava i test 599/408/226. Fixato: free ora invia, capped 3/giorno. (⚠️ I messaggi GIÀ in pausa restano fermi finché non si lancia il backfill — vedi backlog.)
+- **C2 — watchdog quarantenava i proxy SANI** (`pairing_completed` senza egress_id → 503 onboarding). Fixato (backfill egress_id). `PAIRING_PROXY_ENABLED` ora sicuro ma ancora OFF.
+- **H1** perdita silenziosa (send_attempted_at non azzerato al requeue) · **H2** doppio invio (recordSend dopo lo status flip) · **H3** ricorrenze che morivano (reconciliation + indice unique, migration `20260621_recurrence_dedup_and_reconcile`) · **H4** Stripe lifecycle (subscription.updated + invoice.payment_failed + idempotenza event.id + gate payment_status; **DECISIONE: past_due = GRAZIA**, downgrade solo a canceled/unpaid; migration `20260621_stripe_event_idempotency`) · **H5** PII: stop nomi+numeri clienti verso Groq/OpenAI (solo nomi, numero risolto server-side) + mask instance-name admin · **H6** GDPR /account/delete: purge media Storage + audit con IP + cascade idempotente (RPC `delete_user_account`) · **H7** DST: ricorrenze in Europe/Rome · **H8** cleanup-media esclude media di catene ricorrenti vive (migration `20260622_cleanup_media_in_use`) · **H9** cap import CSV (tetto 5000, anti-bloat) · **H10** dedup webhook con rollback (no perdita comandi self-chat) · **H11** Business non più bloccato come spam (soglia 50→100 + reset a mezzanotte Roma) · **cluster watchdog 6b** (fail-closed, TTL, blackout aggregato, guardia 515) · **secrets** /api/ops/* (admin/tower→Bearer; query-string tenuta per Torre/cron GET-only).
+
+**C) BUG post-test (visti testando col 526, tutti fixati e LIVE):** doppio invio = il **cron sparava due volte** (gate atomico su send_attempted_at + rimborso quota + log + stagger self-cron a :30) · **lista contatti instabile** (cache sottile non oscura più la rubrica: ≥25→cache, sotto→cache+live seed-merge) · **stato "sincronizzazione in corso"** nel picker invece di errore · **avatar** = glifo persona neutro invece delle ultime 3 cifre.
+
+**CAP CONTATTI — DECISO + IMPLEMENTATO (commit `fd6c617`, deployato):** il cap ora conta i **contatti ATTIVI negli ultimi 90 giorni** (non più "a vita") e **Free 5→10** (allinea il codice alla PricingSection che già pubblicizzava "10 contatti"). Finestra condivisa `app/lib/contact-window.ts` applicata su tutti e **3 i siti di enforcement** (dashboard `POST /api/messages` + self-chat autoSave + vCard). Regola: in-flight = sempre attivo; sent/failed solo se `sent_at||scheduled_at` entro 90gg; `pending_contacts` su `created_at` entro 90gg. Import CSV resta col **tetto fisso 5000** (il cap per-tier morde al send, non all'import). Tier attuali: **Free 10 / Personal 50 / Professional 200 / Business illimitati / Trial 50** (contatti attivi). NB: nessuno sblocco retroattivo oggi (prodotto giovane → la finestra inizia a mordere ~set 2026); il valore immediato è l'allineamento codice↔pricing.
+
+**BACKLOG (non bloccante, tracciato in ultracode):** (1) harness test integration/e2e rotto+flaky, e CLAUDE.md "555+ verdi" è FALSO → correggere; (2) cap fallimenti ricorrenti consecutivi; (3) bound scan reconciliation / prune righe ricorrenti vecchie; (4) **backfill one-time messaggi Free in pausa** (lo lancia Andrea/Claude, decisione a/b sui passati); (5) mask numeri inline nel raw command self-chat; (6) migrare secret cron/egress fuori dalle query string; (7) contacts_synced_at flag / refresh background (Task #8); (8) decisione cap contatti (sopra).
 
 ### Prodotto
 - ICP **D primario** (allenatori, parroci, scout, istruttori, scuola guida) + **B secondario** (site manager, facility manager). Segmento A (parrucchieri/dentisti/estetiste) escluso dal lancio, DA-RIVEDERE post 50 utenti reali. Segmento C limitato a pipeline calda (follow-up clienti già in trattativa); cold lead generation esclusa per vincolo WhatsApp.
@@ -12,11 +27,11 @@
 - **Frontend**: Next.js 14.2.35 (App Router) + React 18.3.1 + TypeScript 5.5 + Tailwind CSS + PWA via `@ducanh2912/next-pwa` ^10.2 (dev-dep, registrato manualmente via `app/components/ServiceWorkerRegistrar.tsx`)
 - **Backend**: Next.js API routes + cron multilayer. `/api/cron/send-messages` ha 3 trigger (vedi sezione Monitoring sotto). `/api/cron/daily-report` Vercel cron 06:00 UTC (include prune `audit_events` >90gg dallo Sprint 4). `/api/cron/cleanup-media` Vercel cron domenica 03:00 UTC (Sprint 4).
 - **DB**: Supabase (Postgres) — source of truth è `supabase/migrations/`, `schema.sql` è snapshot v7 legacy
-- **WhatsApp**: Evolution API v2 self-hosted su DigitalOcean droplet (Baileys multi-istanza)
+- **WhatsApp**: Evolution API v2 self-hosted su **Hetzner `157.90.251.241`** (immagine patchata `whatslater/evo-patched:v2.3.7-p2` su Coolify, Baileys multi-istanza)
 - **LLM**: Groq (Llama) come parser primario nel webhook self-chat; OpenAI come secondario/fallback
 - **Payments**: Stripe SDK ^14.5 (sandbox mode — live SCARTATA, vedi Stato deploy)
 - **Test**: Jest 30 (unit/integration) + Playwright (e2e, suite separata da `npm test:e2e`)
-- **Deploy**: Vercel (serverless + crons schedulati in `vercel.json`); Evolution API su droplet separato DO
+- **Deploy**: Vercel (serverless + crons schedulati in `vercel.json`); Evolution API su nodo **Hetzner** separato (Coolify). Cutover da DigitalOcean completato (~2026-06-18). Vecchio droplet DO `161.35.212.68` **ancora ACCESO come backup/rollback**: decommission con **GO dato (5/5 verifiche PASS, indagine read-only 2026-06-23/24)** ma **destroy fisico ANCORA DA ESEGUIRE a mano da Andrea** — vedi `docs/2026-06-12-runbook-migrazione-hetzner.md`
 
 ### Tier system
 - **Trial** — 7 giorni dal connect (limiti = Personal)
