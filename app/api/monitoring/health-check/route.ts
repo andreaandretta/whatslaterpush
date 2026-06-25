@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { runAllChecks, shouldAlert, sendAlert, sendAlertWithChannel, sendRecovery } from '../../../lib/monitoring';
+import { runAllChecks, shouldAlert, shouldRecover, sendRecovery, logResolution, dispatchAlert, classifyTransition } from '../../../lib/monitoring';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +35,11 @@ export async function GET(req: NextRequest) {
   const supabase = getSupabase();
   const results = await runAllChecks();
 
+  // Pre-launch silence lever: when MONITORING_ALERTS_ENABLED=false the checks
+  // still run and record to monitoring_checks (the dashboard stays live), but no
+  // WhatsApp/email is ever dispatched. Defaults to enabled.
+  const alertsEnabled = process.env.MONITORING_ALERTS_ENABLED !== 'false';
+
   for (const check of results) {
     // Read previous status BEFORE upserting
     const { data: prev } = await supabase
@@ -56,39 +61,28 @@ export async function GET(req: NextRequest) {
       { onConflict: 'check_name' }
     );
 
-    // Alert logic
+    if (!alertsEnabled) continue;
+
+    // Classify the transition (onset / escalation / reminder / recovery / none)
+    // to decide WHAT to send. Repeat-spam is gated by shouldAlert: it fires once
+    // on onset/escalation, then at most once per reminder window while active.
+    const transition = classifyTransition(previousStatus, check.status);
+
     if (check.status !== 'ok') {
-      // Passing the current status enables escalation pass-through:
-      // warning->critical within the 1h dedup window is no longer silenced
-      // (Codex review F1c — see shouldAlert comment in monitoring.ts).
       const canAlert = await shouldAlert(check.name, check.status);
       if (canAlert) {
-        // Progressive channel escalation for RAM alerts
-        if (check.name === 'droplet_ram') {
-          const ramMatch = check.message.match(/(\d+)%/);
-          const ramPct = ramMatch ? parseInt(ramMatch[1]) : 0;
-          if (ramPct >= 80) {
-            await sendAlertWithChannel(check, ['whatsapp', 'email']);
-          } else if (ramPct >= 70) {
-            await sendAlertWithChannel(check, ['whatsapp']);
-          } else {
-            await sendAlertWithChannel(check, ['db']);
-          }
-        } else if (check.name === 'pairing_blackout') {
-          // Q2 + Codex F4a escalation policy: critical pages the operator on
-          // WhatsApp + email; warning stays silent in DB (false-positive
-          // protection for low-traffic onboarding windows).
-          if (check.status === 'critical') {
-            await sendAlertWithChannel(check, ['whatsapp', 'email']);
-          } else {
-            await sendAlertWithChannel(check, ['db']);
-          }
-        } else {
-          await sendAlert(check);
-        }
+        await dispatchAlert(check, transition === 'reminder');
       }
-    } else if (previousStatus && previousStatus !== 'ok') {
-      await sendRecovery(check);
+    } else if (transition === 'recovery' && await shouldRecover(check.name)) {
+      // shouldRecover dedups concurrent runs + later ticks (only one resolution
+      // per incident). Announce "Risolto" only for incidents that actually paged
+      // (criticals); warning→ok still records a silent 'ok' so the dedup treats a
+      // later recurrence as a fresh onset rather than a suppressed duplicate.
+      if (previousStatus === 'critical') {
+        await sendRecovery(check);
+      } else {
+        await logResolution(check);
+      }
     }
   }
 

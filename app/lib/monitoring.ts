@@ -1,6 +1,33 @@
 import { createClient } from '@supabase/supabase-js';
 import { fetchDropletMetrics } from './droplet';
 import { isEgressQuarantined, quarantineEgress, loadEgressFromEnv } from './egress-pool';
+import { isTestInstance } from './monitoring-filters';
+
+// --- Tunables (env-overridable so thresholds can be tuned without a deploy) ---
+
+// Send-cron is considered DOWN if its per-tick heartbeat (ops_heartbeat,
+// name='send-messages', stamped every 60s) is older than this. 5min ≈ 5 missed
+// ticks — long enough to ride out a single slow lambda, short enough to page
+// fast on a real outage.
+const CRON_STALE_SEC = Number(process.env.MONITORING_CRON_STALE_SEC) || 300;
+
+// A pending message is "in ritardo" (overdue) once it is this many minutes past
+// its scheduled_at. Above normal jitter + the disconnect smart-retry staircase.
+const MSG_OVERDUE_MIN = Number(process.env.MONITORING_MSG_OVERDUE_MIN) || 30;
+
+// webhook_inactive only considers an 'open' instance seen within this window
+// (last_connection_update). NOTE: that column is only refreshed by the
+// CONNECTION_UPDATE webhook / the connect route / the dashboard status poll —
+// NOT on every message send. So the window must be GENEROUS, or a quiet but
+// genuinely-active user (paired once, never reopens the dashboard) would be
+// wrongly excluded and a real broken webhook on their instance would go unseen.
+// Default 30 days: long enough to keep quiet real users in, short enough to drop
+// truly-abandoned months-old stubs. The test-instance filter (not this window)
+// is what removes pre-launch noise. Override with MONITORING_WEBHOOK_ACTIVE_HOURS;
+// set to 0 to disable the recency filter entirely (open + non-test only).
+const WEBHOOK_ACTIVE_HOURS = process.env.MONITORING_WEBHOOK_ACTIVE_HOURS !== undefined
+  ? Number(process.env.MONITORING_WEBHOOK_ACTIVE_HOURS)
+  : 720;
 
 // --- Types ---
 
@@ -9,6 +36,11 @@ export interface CheckResult {
   status: 'ok' | 'warning' | 'critical';
   message: string;
   checked_at: string;
+  // Optional per-result channel override. When set, dispatchAlert sends through
+  // exactly these channels instead of the per-check default. Lets a single check
+  // self-route by sub-reason (e.g. messages_stuck: page only when the operator
+  // can actually act, dashboard-only otherwise).
+  channels?: ('whatsapp' | 'email' | 'db')[];
 }
 
 // --- Supabase client ---
@@ -48,20 +80,113 @@ export async function checkEvolutionApi(): Promise<CheckResult> {
   }
 }
 
-export async function checkCronStalled(): Promise<CheckResult> {
+// REAL "cron down" signal. Reads the per-tick heartbeat the send-messages cron
+// stamps every 60s (ops_heartbeat name='send-messages'). A stale heartbeat means
+// the whole send pipeline has stopped — distinct from "a specific message is
+// stuck" (checkMessagesStuck). This is the urgent one. It is infra-global, so it
+// stays quiet pre-launch as long as the cron itself is running.
+export async function checkCronHeartbeat(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
     const supabase = getSupabase();
-    const { count, error } = await supabase
-      .from('scheduled_messages')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'pending')
-      .lt('scheduled_at', new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString());
-    if (error) return { name: 'cron_stalled', status: 'critical', message: `Query error: ${error.message}`, checked_at: now };
-    if ((count ?? 0) > 0) return { name: 'cron_stalled', status: 'critical', message: `${count} messaggi pending da >25h`, checked_at: now };
-    return { name: 'cron_stalled', status: 'ok', message: 'Nessun messaggio bloccato', checked_at: now };
+    const { data, error } = await supabase
+      .from('ops_heartbeat')
+      .select('ts')
+      .eq('name', 'send-messages')
+      .limit(1);
+    if (error) return { name: 'cron_heartbeat', status: 'critical', message: `Errore lettura heartbeat: ${error.message}`, checked_at: now };
+    const ts = data?.[0]?.ts;
+    if (!ts) {
+      // No beat yet (fresh deploy / table just created). Unknown ≠ incident.
+      return { name: 'cron_heartbeat', status: 'ok', message: 'In attesa del primo battito del cron', checked_at: now };
+    }
+    const ageSec = Math.round((Date.now() - new Date(ts).getTime()) / 1000);
+    if (ageSec > CRON_STALE_SEC) {
+      const mins = Math.max(1, Math.round(ageSec / 60));
+      return { name: 'cron_heartbeat', status: 'critical', message: `Nessun invio da ${mins} min (ultimo battito: ${formatItalianTime(ts)})`, checked_at: now };
+    }
+    return { name: 'cron_heartbeat', status: 'ok', message: `Cron attivo (ultimo battito ${ageSec}s fa)`, checked_at: now };
   } catch (err: any) {
-    return { name: 'cron_stalled', status: 'critical', message: err?.message || 'Errore', checked_at: now };
+    return { name: 'cron_heartbeat', status: 'critical', message: err?.message || 'Errore', checked_at: now };
+  }
+}
+
+// "Messages stuck" — separate from cron-down. Counts pending messages that are
+// overdue (past scheduled_at by > MSG_OVERDUE_MIN) and explains WHY, with the
+// dominant reason named in plain language. Test instances are excluded.
+//
+// A message stuck because ITS OWN instance is disconnected is NOT a cron failure
+// (the cron is smart-retrying it) → lower-urgency warning naming the instance,
+// so the operator knows the user must reconnect. Many overdue messages on
+// CONNECTED instances while the cron heartbeat is alive is a real send-pipeline
+// problem → critical.
+export async function checkMessagesStuck(): Promise<CheckResult> {
+  const now = new Date().toISOString();
+  try {
+    const supabase = getSupabase();
+    const cutoff = new Date(Date.now() - MSG_OVERDUE_MIN * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from('scheduled_messages')
+      .select('id, scheduled_at, user_instances!inner(instance_name, phone_number, connection_status)')
+      .eq('status', 'pending')
+      .lt('scheduled_at', cutoff)
+      .order('scheduled_at', { ascending: true })
+      .limit(1000);
+    if (error) return { name: 'messages_stuck', status: 'warning', message: `Errore query: ${error.message}`, channels: ['db'], checked_at: now };
+
+    const rows = (data || []).filter((r: any) => {
+      const ui = r.user_instances;
+      return ui && !isTestInstance(ui.instance_name, ui.phone_number);
+    });
+    if (rows.length === 0) {
+      return { name: 'messages_stuck', status: 'ok', message: 'Nessun messaggio in ritardo', checked_at: now };
+    }
+
+    // Two independent reasons, counted separately so neither masks the other:
+    //  - disconnected instance: the user's phone is offline. The cron is smart-
+    //    retrying; the USER must reconnect. Non-actionable for the operator →
+    //    dashboard only (no page).
+    //  - connected instance but still overdue: a possible send/quota problem the
+    //    operator can investigate → page. (The reliable "everything stopped"
+    //    critical is checkCronHeartbeat; this stays a warning.)
+    let disconnectedMsgs = 0;
+    let connectedMsgs = 0;
+    const disconnectedBy = new Map<string, number>(); // phone/instance -> overdue count
+    for (const r of rows as any[]) {
+      const ui = r.user_instances;
+      if ((ui.connection_status || '') !== 'open') {
+        disconnectedMsgs++;
+        const key = ui.phone_number || ui.instance_name || 'sconosciuta';
+        disconnectedBy.set(key, (disconnectedBy.get(key) || 0) + 1);
+      } else {
+        connectedMsgs++;
+      }
+    }
+    const total = rows.length;
+
+    const parts: string[] = [];
+    if (disconnectedMsgs > 0) {
+      const sorted = Array.from(disconnectedBy.entries()).sort((a, b) => b[1] - a[1]);
+      const who = maskNumber(sorted[0][0]);
+      const others = disconnectedBy.size - 1;
+      const extra = others > 0 ? (others === 1 ? ' e un altro numero' : ` e altri ${others} numeri`) : '';
+      parts.push(`${disconnectedMsgs} fermi perché l'istanza ${who}${extra} è disconnessa (l'utente deve riconnettere)`);
+    }
+    if (connectedMsgs > 0) {
+      parts.push(`${connectedMsgs} con istanza connessa che non partono (possibile errore di invio o quota/cooldown)`);
+    }
+
+    return {
+      name: 'messages_stuck',
+      status: 'warning',
+      message: `${total} messaggi in ritardo: ${parts.join('; ')}.`,
+      // Page only when there is something the operator can act on (connected
+      // instances). Pure disconnected backlog is dashboard-only.
+      channels: connectedMsgs > 0 ? undefined : ['db'],
+      checked_at: now,
+    };
+  } catch (err: any) {
+    return { name: 'messages_stuck', status: 'critical', message: err?.message || 'Errore', checked_at: now };
   }
 }
 
@@ -69,14 +194,26 @@ export async function checkWebhookInactive(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
     const supabase = getSupabase();
-    // Step 1: any active instances?
-    const { data: activeInstances, error: e1 } = await supabase
+    // Step 1: instances that SHOULD be active = connection_status 'open' AND seen
+    // recently. We pull phone_number + last_connection_update so we can drop test
+    // instances and long-abandoned 'open' stubs (never-really-active) before
+    // probing/paging — only genuine, recently-active users count.
+    const { data: openInstances, error: e1 } = await supabase
       .from('user_instances')
-      .select('instance_name')
+      .select('instance_name, phone_number, last_connection_update')
       .eq('connection_status', 'open');
-    if (e1) return { name: 'webhook_inactive', status: 'critical', message: `Query error: ${e1.message}`, checked_at: now };
-    if (!activeInstances || activeInstances.length === 0) {
-      return { name: 'webhook_inactive', status: 'ok', message: 'Nessuna istanza attiva', checked_at: now };
+    if (e1) return { name: 'webhook_inactive', status: 'critical', message: `Errore query: ${e1.message}`, checked_at: now };
+
+    const recencyEnabled = WEBHOOK_ACTIVE_HOURS > 0;
+    const recentCutoff = Date.now() - WEBHOOK_ACTIVE_HOURS * 60 * 60 * 1000;
+    const activeInstances = (openInstances || []).filter((inst: any) => {
+      if (isTestInstance(inst.instance_name, inst.phone_number)) return false;
+      if (!recencyEnabled) return true; // recency filter disabled → open + non-test is enough
+      const seen = inst.last_connection_update ? new Date(inst.last_connection_update).getTime() : 0;
+      return seen >= recentCutoff; // drop truly-abandoned months-old 'open' stubs
+    });
+    if (activeInstances.length === 0) {
+      return { name: 'webhook_inactive', status: 'ok', message: 'Nessuna istanza realmente attiva da controllare', checked_at: now };
     }
 
     // Step 2: verify webhook is configured on each active instance via Evolution API
@@ -112,12 +249,13 @@ export async function checkWebhookInactive(): Promise<CheckResult> {
     }
 
     if (unconfigured.length === activeInstances.length) {
-      return { name: 'webhook_inactive', status: 'critical', message: `Webhook non configurato su ${unconfigured.length}/${activeInstances.length} istanze attive`, checked_at: now };
+      return { name: 'webhook_inactive', status: 'critical', message: `Webhook mancante su tutte le ${activeInstances.length} istanze attive — nessuna risposta WhatsApp in arrivo viene ricevuta.`, checked_at: now };
     }
     if (unconfigured.length > 0) {
-      return { name: 'webhook_inactive', status: 'warning', message: `Webhook mancante su ${unconfigured.length}/${activeInstances.length}: ${unconfigured.join(', ')}`, checked_at: now };
+      const masked = unconfigured.map((n) => maskNumber(n)).join(', ');
+      return { name: 'webhook_inactive', status: 'warning', message: `Webhook mancante su ${unconfigured.length}/${activeInstances.length} istanze (${masked}).`, checked_at: now };
     }
-    return { name: 'webhook_inactive', status: 'ok', message: `Webhook configurato su ${activeInstances.length} istanze`, checked_at: now };
+    return { name: 'webhook_inactive', status: 'ok', message: `Webhook configurato su tutte le ${activeInstances.length} istanze attive`, checked_at: now };
   } catch (err: any) {
     return { name: 'webhook_inactive', status: 'critical', message: err?.message || 'Errore', checked_at: now };
   }
@@ -128,25 +266,33 @@ export async function checkSupabaseDown(): Promise<CheckResult> {
   try {
     const supabase = getSupabase();
     const { error } = await supabase.from('user_instances').select('id').limit(1);
-    if (error) return { name: 'supabase_down', status: 'critical', message: `DB error: ${error.message}`, checked_at: now };
+    if (error) return { name: 'supabase_down', status: 'critical', message: `Errore database: ${error.message}`, checked_at: now };
     return { name: 'supabase_down', status: 'ok', message: 'Database raggiungibile', checked_at: now };
   } catch (err: any) {
     return { name: 'supabase_down', status: 'critical', message: err?.message || 'Errore', checked_at: now };
   }
 }
 
+// Messages stuck half-way through sending ('processing' > 10min). The send-cron
+// auto-recovers 'processing' rows after 2min, so anything still stuck at 10min
+// means that recovery itself is failing. Test instances excluded.
 export async function checkMessagesStalled(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
     const supabase = getSupabase();
-    const { count, error } = await supabase
+    const { data, error } = await supabase
       .from('scheduled_messages')
-      .select('id', { count: 'exact', head: true })
+      .select('id, user_instances!inner(instance_name, phone_number)')
       .eq('status', 'processing')
-      .lt('updated_at', new Date(Date.now() - 10 * 60 * 1000).toISOString());
-    if (error) return { name: 'messages_stalled', status: 'critical', message: `Query error: ${error.message}`, checked_at: now };
-    if ((count ?? 0) > 0) return { name: 'messages_stalled', status: 'critical', message: `${count} messaggi bloccati in 'processing'`, checked_at: now };
-    return { name: 'messages_stalled', status: 'ok', message: 'Nessun messaggio bloccato', checked_at: now };
+      .lt('updated_at', new Date(Date.now() - 10 * 60 * 1000).toISOString())
+      .limit(500);
+    if (error) return { name: 'messages_stalled', status: 'critical', message: `Errore query: ${error.message}`, checked_at: now };
+    const stuck = (data || []).filter((r: any) => {
+      const ui = r.user_instances;
+      return ui && !isTestInstance(ui.instance_name, ui.phone_number);
+    });
+    if (stuck.length > 0) return { name: 'messages_stalled', status: 'critical', message: `${stuck.length} messaggi bloccati a metà invio (stato "processing") da oltre 10 min — il recupero automatico non li ha sbloccati.`, checked_at: now };
+    return { name: 'messages_stalled', status: 'ok', message: 'Nessun messaggio bloccato a metà invio', checked_at: now };
   } catch (err: any) {
     return { name: 'messages_stalled', status: 'critical', message: err?.message || 'Errore', checked_at: now };
   }
@@ -156,16 +302,20 @@ export async function checkFailedSpike(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
     const supabase = getSupabase();
-    const { count, error } = await supabase
+    const { data, error } = await supabase
       .from('scheduled_messages')
-      .select('id', { count: 'exact', head: true })
+      .select('id, user_instances!inner(instance_name, phone_number)')
       .eq('status', 'failed')
-      .gt('updated_at', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString());
-    if (error) return { name: 'failed_spike', status: 'critical', message: `Query error: ${error.message}`, checked_at: now };
-    const c = count ?? 0;
-    if (c > 10) return { name: 'failed_spike', status: 'critical', message: `${c} messaggi falliti nelle ultime 2h`, checked_at: now };
-    if (c > 5) return { name: 'failed_spike', status: 'warning', message: `${c} messaggi falliti nelle ultime 2h`, checked_at: now };
-    return { name: 'failed_spike', status: 'ok', message: `${c} falliti nelle ultime 2h`, checked_at: now };
+      .gt('updated_at', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString())
+      .limit(500);
+    if (error) return { name: 'failed_spike', status: 'critical', message: `Errore query: ${error.message}`, checked_at: now };
+    const c = (data || []).filter((r: any) => {
+      const ui = r.user_instances;
+      return ui && !isTestInstance(ui.instance_name, ui.phone_number);
+    }).length;
+    if (c > 10) return { name: 'failed_spike', status: 'critical', message: `${c} messaggi falliti nelle ultime 2h — possibili numeri non validi, contenuti bloccati o ban.`, checked_at: now };
+    if (c > 5) return { name: 'failed_spike', status: 'warning', message: `${c} messaggi falliti nelle ultime 2h.`, checked_at: now };
+    return { name: 'failed_spike', status: 'ok', message: `${c} messaggi falliti nelle ultime 2h`, checked_at: now };
   } catch (err: any) {
     return { name: 'failed_spike', status: 'critical', message: err?.message || 'Errore', checked_at: now };
   }
@@ -185,14 +335,16 @@ export async function checkDropletRam(): Promise<CheckResult> {
 
     const ram = metrics.ram_percent;
 
+    // Channel routing (WhatsApp/email/dashboard) is decided by dispatchAlert from
+    // the RAM %, so the message stays a plain status — no routing jargon here.
     if (ram >= 80) {
-      return { name: 'droplet_ram', status: 'critical', message: `RAM al ${ram}% — alert WhatsApp + Email`, checked_at: now };
+      return { name: 'droplet_ram', status: 'critical', message: `RAM del server all'${ram}% — quasi piena.`, checked_at: now };
     }
     if (ram >= 70) {
-      return { name: 'droplet_ram', status: 'warning', message: `RAM al ${ram}% — alert WhatsApp`, checked_at: now };
+      return { name: 'droplet_ram', status: 'warning', message: `RAM del server al ${ram}%.`, checked_at: now };
     }
     if (ram >= 50) {
-      return { name: 'droplet_ram', status: 'warning', message: `RAM al ${ram}% — solo dashboard`, checked_at: now };
+      return { name: 'droplet_ram', status: 'warning', message: `RAM del server al ${ram}%.`, checked_at: now };
     }
     return { name: 'droplet_ram', status: 'ok', message: `RAM al ${ram}%`, checked_at: now };
   } catch (err: any) {
@@ -210,12 +362,13 @@ export async function checkInstanceFlapping(): Promise<CheckResult> {
       .select('payload')
       .eq('event_type', 'instance_disconnect')
       .gte('created_at', windowStart);
-    if (error) return { name: 'instance_flapping', status: 'critical', message: `Query error: ${error.message}`, checked_at: now };
+    if (error) return { name: 'instance_flapping', status: 'critical', message: `Errore query: ${error.message}`, checked_at: now };
 
     const agg: Record<string, { n: number; codes: Set<number> }> = {};
     for (const row of data || []) {
       const pl: any = (row as any)?.payload || {};
       const inst = typeof pl.instance === 'string' ? pl.instance : 'unknown';
+      if (isTestInstance(inst)) continue; // test instances flap during pairing tests — not a real ban signal
       if (!agg[inst]) agg[inst] = { n: 0, codes: new Set() };
       agg[inst].n++;
       if (typeof pl.code === 'number') agg[inst].codes.add(pl.code);
@@ -234,9 +387,9 @@ export async function checkInstanceFlapping(): Promise<CheckResult> {
     const has403 = worst.codes.includes(403);
     const codesStr = worst.codes.length ? ` [codici ${worst.codes.join(',')}]` : '';
     if (has403 || worst.n >= 8) {
-      return { name: 'instance_flapping', status: 'critical', message: `${worst.inst}: ${worst.n} disconnessioni in 3h${codesStr} — rischio ban/blocco`, checked_at: now };
+      return { name: 'instance_flapping', status: 'critical', message: `Il numero ${maskNumber(worst.inst)} si è disconnesso ${worst.n} volte in 3h${codesStr} — rischio ban/blocco WhatsApp.`, checked_at: now };
     }
-    return { name: 'instance_flapping', status: 'warning', message: `${worst.inst}: ${worst.n} disconnessioni in 3h${codesStr}`, checked_at: now };
+    return { name: 'instance_flapping', status: 'warning', message: `Il numero ${maskNumber(worst.inst)} si è disconnesso ${worst.n} volte in 3h${codesStr}.`, checked_at: now };
   } catch (err: any) {
     return { name: 'instance_flapping', status: 'critical', message: err?.message || 'Errore', checked_at: now };
   }
@@ -266,9 +419,12 @@ export async function checkPairingBlackout(): Promise<CheckResult> {
       .select('event_type,payload')
       .in('event_type', ['pairing_started', 'pairing_completed'])
       .gte('created_at', windowStart);
-    if (error) return { name: 'pairing_blackout', status: 'critical', message: `Query error: ${error.message}`, checked_at: now };
+    if (error) return { name: 'pairing_blackout', status: 'critical', message: `Errore query: ${error.message}`, checked_at: now };
 
-    const rows = (data || []) as Array<{ event_type: string; payload: any }>;
+    // Exclude operator pairing tests (burned/test numbers) — otherwise repeated
+    // test pairings on a Meta-blocked number trip a false "pairing rotto".
+    const rows = ((data || []) as Array<{ event_type: string; payload: any }>)
+      .filter((r) => !isTestInstance(r.payload?.instance_name));
     const proxyEnabled = process.env.PAIRING_PROXY_ENABLED === 'true';
 
     // === (a) Per-egress check (proxy mode only) ===
@@ -293,7 +449,7 @@ export async function checkPairingBlackout(): Promise<CheckResult> {
         return {
           name: 'pairing_blackout',
           status: 'critical',
-          message: `Egress quarantined: ${quarantined.join(', ')}`,
+          message: `Pairing congelato: ${quarantined.length} proxy messi in pausa perché nessun numero riusciva a connettersi.`,
           checked_at: now,
         };
       }
@@ -331,7 +487,7 @@ export async function checkAllEgressDown(): Promise<CheckResult> {
   try {
     const pool = loadEgressFromEnv();
     if (pool.length === 0) {
-      return { name: 'all_egress_down', status: 'ok', message: 'No egress pool configured', checked_at: now };
+      return { name: 'all_egress_down', status: 'ok', message: 'Nessun pool di proxy configurato', checked_at: now };
     }
     const states = await Promise.all(pool.map(e => isEgressQuarantined(e.id)));
     const quarantinedCount = states.filter(Boolean).length;
@@ -344,14 +500,14 @@ export async function checkAllEgressDown(): Promise<CheckResult> {
       return {
         name: 'all_egress_down',
         status: 'critical',
-        message: `All ${pool.length} egress quarantined. Pairing frozen.`,
+        message: `Tutti i ${pool.length} proxy sono in quarantena: nessun nuovo numero può connettersi.`,
         checked_at: now,
       };
     }
     return {
       name: 'all_egress_down',
       status: 'ok',
-      message: `${pool.length - quarantinedCount}/${pool.length} egress available`,
+      message: `${pool.length - quarantinedCount}/${pool.length} proxy disponibili`,
       checked_at: now,
     };
   } catch (err: any) {
@@ -364,7 +520,8 @@ export async function checkAllEgressDown(): Promise<CheckResult> {
 export async function runAllChecks(): Promise<CheckResult[]> {
   const checks = [
     checkEvolutionApi,
-    checkCronStalled,
+    checkCronHeartbeat,
+    checkMessagesStuck,
     checkWebhookInactive,
     checkSupabaseDown,
     checkMessagesStalled,
@@ -390,26 +547,64 @@ export async function runAllChecks(): Promise<CheckResult[]> {
   return results;
 }
 
-// --- Anti-spam ---
+// --- Anti-spam / dedup ---
 
-// Higher rank = more severe. Used by shouldAlert escalation pass-through:
-// a warning->critical transition within the 1h dedup window MUST not be
-// silenced (Codex review F1c — original dedup keyed on check_name only,
-// so escalation to a worse status was getting eaten for up to 1h).
+// Higher rank = more severe. Used by classifyTransition + shouldAlert escalation
+// pass-through: a warning->critical transition MUST not be silenced by the dedup
+// window (Codex review F1c).
 const STATUS_RANK: Record<string, number> = { ok: 0, warning: 1, critical: 2 };
 
+// How long an ACTIVE incident stays quiet between re-notifications. The first
+// alert fires immediately (onset); after that the same ongoing problem is
+// re-sent at most once per this window (a "promemoria"), instead of every
+// 15-min monitor tick. Default 6h; override with MONITORING_REMINDER_HOURS.
+export function reminderMs(): number {
+  const h = Number(process.env.MONITORING_REMINDER_HOURS);
+  return (Number.isFinite(h) && h > 0 ? h : 6) * 60 * 60 * 1000;
+}
+
+export type AlertTransition = 'onset' | 'escalation' | 'reminder' | 'recovery' | 'none';
+
+// Pure classification of a check's status transition, comparing the previously
+// recorded status (monitoring_checks) with the current one. The health-check
+// route uses this to decide WHAT kind of notification (if any) to send and how
+// to label it. Dedup of repeated reminders is still gated by shouldAlert.
+//   ok            -> non-ok : onset      (first alert, fire now)
+//   weaker        -> worse  : escalation (e.g. warning->critical, fire now)
+//   non-ok        -> same/milder non-ok : reminder (only every reminder window)
+//   non-ok        -> ok     : recovery   ("Risolto")
+//   ok/null       -> ok     : none
+export function classifyTransition(previousStatus: string | null | undefined, currentStatus: string): AlertTransition {
+  const prev = STATUS_RANK[previousStatus ?? 'ok'] ?? 0;
+  const cur = STATUS_RANK[currentStatus] ?? 0;
+  if (cur === 0) return prev > 0 ? 'recovery' : 'none';
+  if (prev === 0) return 'onset';
+  if (cur > prev) return 'escalation';
+  return 'reminder';
+}
+
+// Mask a phone/instance identifier to its last 4 digits for operator-facing
+// alerts (no full customer numbers in the alert text — PII hygiene, H5).
+export function maskNumber(value: string | null | undefined): string {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return 'n/d'; // gender-neutral so it reads fine after "il numero" / "l'istanza"
+  return '…' + digits.slice(-4);
+}
+
+// Dedup gate keyed on monitoring_alerts. Returns true if we should (re)send now:
+// no alert logged within the reminder window, OR a strict escalation vs the last
+// logged status (escalation bypasses the window). Same/milder status within the
+// window is suppressed — that is what stops the every-tick re-spam.
 export async function shouldAlert(checkName: string, currentStatus?: string): Promise<boolean> {
   try {
     const supabase = getSupabase();
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    // Check if we already alerted (any channel) within the last hour.
-    // We also pull `status` so we can let escalations (warning->critical)
-    // bypass the dedup window — see comment on STATUS_RANK above.
+    const windowMs = reminderMs();
+    const windowStart = new Date(Date.now() - windowMs).toISOString();
     const { data, error } = await supabase
       .from('monitoring_alerts')
       .select('created_at, status')
       .eq('check_name', checkName)
-      .gte('created_at', oneHourAgo)
+      .gte('created_at', windowStart)
       .order('created_at', { ascending: false })
       .limit(1);
     if (error) {
@@ -417,13 +612,11 @@ export async function shouldAlert(checkName: string, currentStatus?: string): Pr
       return true;
     }
     if (!data || data.length === 0) return true;
-    // Double-check: verify the alert is actually within the last hour (belt-and-suspenders)
+    // Belt-and-suspenders: confirm the last alert is within the window.
     const lastAlert = new Date(data[0].created_at).getTime();
-    if (Date.now() - lastAlert > 60 * 60 * 1000) return true;
-    // Escalation pass-through: if the new status is strictly worse than the
-    // last-alerted status, allow the alert through despite being within the
-    // dedup window. Regressions to a milder status remain suppressed (we
-    // already alerted, no need to re-page for a partial recovery).
+    if (Date.now() - lastAlert > windowMs) return true;
+    // Escalation pass-through: a strictly worse status than the last-alerted one
+    // bypasses the window. Regressions to a milder status stay suppressed.
     if (currentStatus !== undefined) {
       const prevRank = STATUS_RANK[(data[0] as any).status] ?? 0;
       const curRank = STATUS_RANK[currentStatus] ?? 0;
@@ -432,6 +625,27 @@ export async function shouldAlert(checkName: string, currentStatus?: string): Pr
     return false;
   } catch {
     return true; // if we can't check, better to alert
+  }
+}
+
+// Recovery dedup: only announce/record a resolution if the most recent logged
+// alert for this check is still non-ok (i.e. the incident hasn't already been
+// resolved). Prevents a second concurrent health-check run — and every
+// subsequent tick — from re-sending "Risolto" for the same recovery.
+export async function shouldRecover(checkName: string): Promise<boolean> {
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+      .from('monitoring_alerts')
+      .select('status')
+      .eq('check_name', checkName)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (error) return false; // can't confirm an open incident → don't emit a stray recovery
+    if (!data || data.length === 0) return false; // never alerted → nothing to resolve
+    return (data[0] as any).status !== 'ok';
+  } catch {
+    return false;
   }
 }
 
@@ -453,28 +667,63 @@ function operatorEmail(): string {
   return v;
 }
 
+// Plain-language "what is happening" — no jargon, no internal field names.
 const CHECK_DESCRIPTIONS: Record<string, string> = {
-  evolution_api: 'Evolution API non raggiungibile',
-  cron_stalled: 'Cron bloccato — messaggi pending da >25h',
-  webhook_inactive: 'Webhook inattivo — nessun messaggio recente',
-  supabase_down: 'Database Supabase non raggiungibile',
-  messages_stalled: 'Messaggi bloccati in stato "processing"',
-  failed_spike: 'Picco di messaggi falliti',
-  droplet_ram: 'RAM droplet elevata',
-  instance_flapping: 'Istanza instabile (disconnessioni ripetute / rischio ban)',
-  pairing_blackout: 'Pairing non funziona — nessun completamento in 24h',
+  evolution_api: 'Il server WhatsApp (Evolution) non risponde',
+  cron_heartbeat: 'Gli invii sono fermi — il cron che manda i messaggi non gira',
+  messages_stuck: 'Alcuni messaggi programmati non stanno partendo',
+  webhook_inactive: 'Webhook non configurato — le risposte WhatsApp in arrivo non vengono ricevute',
+  supabase_down: 'Il database non risponde',
+  messages_stalled: 'Messaggi bloccati a metà invio',
+  failed_spike: 'Troppi messaggi falliti',
+  droplet_ram: 'Memoria del server quasi piena',
+  instance_flapping: 'Un numero si disconnette in continuazione — rischio ban WhatsApp',
+  pairing_blackout: 'Le connessioni di nuovi numeri non vanno a buon fine',
+  all_egress_down: 'Tutti i proxy di connessione sono bloccati — pairing congelato',
 };
 
-function formatItalianTime(): string {
-  return new Date().toLocaleString('it-IT', { timeZone: 'Europe/Rome' });
+// "What to do" — the single most useful next action for the operator.
+const CHECK_ACTIONS: Record<string, string> = {
+  evolution_api: 'Controlla il container Evolution su Coolify (Hetzner) e riavvialo se serve.',
+  cron_heartbeat: 'Controlla cron-job.org e il Vercel Cron di /api/cron/send-messages; riattiva il pinger.',
+  messages_stuck: "Se è un'istanza disconnessa, l'utente deve riconnettere su /connect. Se sono molti numeri diversi, controlla il nodo Evolution.",
+  webhook_inactive: "Ri-registra il webhook dell'istanza da Evolution Manager (URL /api/webhook).",
+  supabase_down: 'Controlla lo stato del progetto su Supabase.',
+  messages_stalled: 'Controlla i log del cron send-messages: il recupero automatico dei "processing" potrebbe essere bloccato.',
+  failed_spike: 'Apri /admin e verifica numeri/contenuti che falliscono (numeri non validi o possibile ban).',
+  droplet_ram: 'Spegni istanze/app orfane su Coolify o aumenta la RAM del nodo.',
+  instance_flapping: 'Sospendi gli invii su quel numero e verifica un possibile ban Meta prima di ripristinare.',
+  pairing_blackout: "Verifica l'immagine Evolution patchata e la reputazione del numero/egress usato.",
+  all_egress_down: 'Sblocca manualmente un egress o attendi la scadenza della quarantena.',
+};
+
+const SEVERITY_EMOJI: Record<string, string> = { critical: '🔴', warning: '🟠', ok: '✅' };
+
+function formatItalianTime(date?: string | Date): string {
+  const d = date ? new Date(date) : new Date();
+  return d.toLocaleString('it-IT', { timeZone: 'Europe/Rome' });
 }
 
-function buildAlertText(check: CheckResult): string {
-  return `⚠️ WhatsLater Alert\n━━━━━━━━━━━━━━━━\nProblema: ${CHECK_DESCRIPTIONS[check.name] || check.name}\nDettaglio: ${check.message}\nOra: ${formatItalianTime()}\n━━━━━━━━━━━━━━━━\nhttps://whatslaterpush.vercel.app/admin`;
+function buildAlertText(check: CheckResult, isReminder = false): string {
+  const head = isReminder
+    ? '🔁 WhatsLater — Promemoria (problema ancora attivo)'
+    : `${SEVERITY_EMOJI[check.status] || '⚠️'} WhatsLater — ${check.status === 'critical' ? 'Allarme' : 'Avviso'}`;
+  const action = CHECK_ACTIONS[check.name];
+  const lines = [
+    head,
+    '━━━━━━━━━━━━━━━━',
+    `Cosa succede: ${CHECK_DESCRIPTIONS[check.name] || check.name}`,
+    `Dettaglio: ${check.message}`,
+    action ? `Cosa fare: ${action}` : null,
+    `Ora: ${formatItalianTime()}`,
+    '━━━━━━━━━━━━━━━━',
+    'Dashboard: https://whatslaterpush.vercel.app/admin',
+  ].filter(Boolean) as string[];
+  return lines.join('\n');
 }
 
 function buildRecoveryText(check: CheckResult): string {
-  return `✅ WhatsLater Risolto\n━━━━━━━━━━━━━━━━\nRisolto: ${CHECK_DESCRIPTIONS[check.name] || check.name}\nOra: ${formatItalianTime()}`;
+  return `✅ WhatsLater — Risolto\n━━━━━━━━━━━━━━━━\n${CHECK_DESCRIPTIONS[check.name] || check.name}\nIl problema è rientrato.\nOra: ${formatItalianTime()}`;
 }
 
 async function getAlertInstance(): Promise<string | null> {
@@ -554,8 +803,17 @@ async function logAlert(check: CheckResult, channel: string): Promise<void> {
   }
 }
 
-export async function sendAlertWithChannel(check: CheckResult, channels: ('whatsapp' | 'email' | 'db')[]): Promise<void> {
-  const text = buildAlertText(check);
+// Record a resolution WITHOUT notifying. Used for warning-level incidents that
+// resolve: we don't page a "Risolto" (silent-by-default), but we must log an 'ok'
+// row so the dedup sees the incident as closed — otherwise the next recurrence
+// of the same warning within the reminder window would be suppressed as a
+// duplicate instead of treated as a fresh onset.
+export async function logResolution(check: CheckResult): Promise<void> {
+  await logAlert({ ...check, status: 'ok' }, 'db_only');
+}
+
+export async function sendAlertWithChannel(check: CheckResult, channels: ('whatsapp' | 'email' | 'db')[], isReminder = false): Promise<void> {
+  const text = buildAlertText(check, isReminder);
 
   if (channels.includes('whatsapp')) {
     if (await sendWhatsApp(text)) {
@@ -572,8 +830,8 @@ export async function sendAlertWithChannel(check: CheckResult, channels: ('whats
   await logAlert(check, 'db_only');
 }
 
-export async function sendAlert(check: CheckResult): Promise<void> {
-  const text = buildAlertText(check);
+export async function sendAlert(check: CheckResult, isReminder = false): Promise<void> {
+  const text = buildAlertText(check, isReminder);
 
   // Cascade: WhatsApp → Email → DB only
   if (await sendWhatsApp(text)) {
@@ -585,6 +843,32 @@ export async function sendAlert(check: CheckResult): Promise<void> {
     return;
   }
   await logAlert(check, 'db_only');
+}
+
+// Single place that routes a check to the right channels by severity/type, and
+// carries the reminder flag so a re-notification is labelled "Promemoria".
+// Used by the health-check route for both first alerts and reminders.
+export async function dispatchAlert(check: CheckResult, isReminder = false): Promise<void> {
+  // Per-check self-routing wins (e.g. messages_stuck dashboard-only when the
+  // backlog is purely user-disconnect, which the operator can't act on).
+  if (check.channels) {
+    return sendAlertWithChannel(check, check.channels, isReminder);
+  }
+  if (check.name === 'droplet_ram') {
+    // Progressive channel escalation by RAM %.
+    const ramPct = parseInt(check.message.match(/(\d+)%/)?.[1] || '0', 10);
+    if (ramPct >= 80) return sendAlertWithChannel(check, ['whatsapp', 'email'], isReminder);
+    if (ramPct >= 70) return sendAlertWithChannel(check, ['whatsapp'], isReminder);
+    return sendAlertWithChannel(check, ['db'], isReminder);
+  }
+  if (check.name === 'pairing_blackout' || check.name === 'all_egress_down') {
+    // Critical pages WhatsApp+email; warning stays in the DB (false-positive
+    // protection for low-traffic onboarding windows). all_egress_down is always
+    // critical, so its db-only branch is intentionally inert.
+    if (check.status === 'critical') return sendAlertWithChannel(check, ['whatsapp', 'email'], isReminder);
+    return sendAlertWithChannel(check, ['db'], isReminder);
+  }
+  return sendAlert(check, isReminder);
 }
 
 export async function sendRecovery(check: CheckResult): Promise<void> {

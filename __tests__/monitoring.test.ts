@@ -40,7 +40,8 @@ afterAll(() => {
 
 import {
   checkEvolutionApi,
-  checkCronStalled,
+  checkCronHeartbeat,
+  checkMessagesStuck,
   checkWebhookInactive,
   checkSupabaseDown,
   checkMessagesStalled,
@@ -79,37 +80,123 @@ describe('checkEvolutionApi', () => {
   });
 });
 
-// --- Check 2: Cron Stalled ---
+// --- Check 2a: Cron Heartbeat (real "cron down") ---
 
-describe('checkCronStalled', () => {
-  test('returns ok when no stalled messages', async () => {
-    mockSupa.setResponse('scheduled_messages:select', null, null, { count: 0 });
-    const result = await checkCronStalled();
+describe('checkCronHeartbeat', () => {
+  test('returns ok when heartbeat is fresh', async () => {
+    mockSupa.setResponse('ops_heartbeat:select', [
+      { ts: new Date(Date.now() - 30 * 1000).toISOString() },
+    ]);
+    const result = await checkCronHeartbeat();
+    expect(result.name).toBe('cron_heartbeat');
     expect(result.status).toBe('ok');
   });
 
-  test('returns critical when stalled messages exist', async () => {
-    mockSupa.setResponse('scheduled_messages:select', null, null, { count: 3 });
-    const result = await checkCronStalled();
+  test('returns critical when heartbeat is stale (>5 min)', async () => {
+    mockSupa.setResponse('ops_heartbeat:select', [
+      { ts: new Date(Date.now() - 12 * 60 * 1000).toISOString() },
+    ]);
+    const result = await checkCronHeartbeat();
     expect(result.status).toBe('critical');
-    expect(result.message).toContain('3');
+    expect(result.message).toContain('Nessun invio');
+  });
+
+  test('returns ok (unknown) when no heartbeat row yet', async () => {
+    mockSupa.setResponse('ops_heartbeat:select', []);
+    const result = await checkCronHeartbeat();
+    expect(result.status).toBe('ok');
+    expect(result.message).toContain('primo battito');
+  });
+});
+
+// --- Check 2b: Messages Stuck (overdue pending, reason-aware) ---
+
+describe('checkMessagesStuck', () => {
+  test('returns ok when nothing overdue', async () => {
+    mockSupa.setResponse('scheduled_messages:select', []);
+    const result = await checkMessagesStuck();
+    expect(result.name).toBe('messages_stuck');
+    expect(result.status).toBe('ok');
+  });
+
+  test('warns, names the disconnected instance, and routes to dashboard-only (not "cron blocked")', async () => {
+    mockSupa.setResponse('scheduled_messages:select', [
+      { id: '1', scheduled_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(), user_instances: { instance_name: 'SchedWhats-393331112233', phone_number: '393331112233', connection_status: 'close' } },
+      { id: '2', scheduled_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(), user_instances: { instance_name: 'SchedWhats-393331112233', phone_number: '393331112233', connection_status: 'close' } },
+    ]);
+    const result = await checkMessagesStuck();
+    expect(result.status).toBe('warning');
+    expect(result.message).toContain('disconnessa');
+    expect(result.message).toContain('…2233'); // masked, not full number
+    expect(result.message).not.toContain('cron');
+    expect(result.channels).toEqual(['db']); // operator can't act → dashboard-only, no page
+  });
+
+  test('excludes test instances entirely (pre-launch silence)', async () => {
+    process.env.MONITORING_TEST_NUMBERS = '393331112233';
+    mockSupa.setResponse('scheduled_messages:select', [
+      { id: '1', scheduled_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(), user_instances: { instance_name: 'SchedWhats-393331112233', phone_number: '393331112233', connection_status: 'close' } },
+    ]);
+    const result = await checkMessagesStuck();
+    expect(result.status).toBe('ok');
+    delete process.env.MONITORING_TEST_NUMBERS;
+  });
+
+  test('connected-instance overdue pages (warning, not dashboard-only) and is never masked by disconnected backlog', async () => {
+    const rows = [
+      // 10 disconnected (would have masked the connected ones under the old logic)
+      ...Array.from({ length: 10 }, (_, i) => ({
+        id: 'd' + i, scheduled_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        user_instances: { instance_name: `SchedWhats-39333000${String(i).padStart(4, '0')}`, phone_number: `39333000${String(i).padStart(4, '0')}`, connection_status: 'close' },
+      })),
+      // 3 on connected instances — must still be surfaced
+      ...Array.from({ length: 3 }, (_, i) => ({
+        id: 'c' + i, scheduled_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        user_instances: { instance_name: `SchedWhats-39344000${String(i).padStart(4, '0')}`, phone_number: `39344000${String(i).padStart(4, '0')}`, connection_status: 'open' },
+      })),
+    ];
+    mockSupa.setResponse('scheduled_messages:select', rows);
+    const result = await checkMessagesStuck();
+    expect(result.status).toBe('warning');
+    expect(result.message).toContain('istanza connessa'); // connected signal not hidden
+    expect(result.message).toContain('disconnessa');       // both reasons reported
+    expect(result.channels).toBeUndefined();               // there is a connected reason → page
   });
 });
 
 // --- Check 3: Webhook Inactive ---
 
+const RECENT = () => new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 1h ago, well within 72h
+const openRow = (name: string, phone: string) => ({ instance_name: name, phone_number: phone, last_connection_update: RECENT(), connection_status: 'open' });
+
 describe('checkWebhookInactive', () => {
-  test('returns ok when no active instances', async () => {
+  test('returns ok when no genuinely-active instances', async () => {
     mockSupa.setResponse('user_instances:select', []);
     const result = await checkWebhookInactive();
     expect(result.status).toBe('ok');
-    expect(result.message).toContain('Nessuna istanza attiva');
+    expect(result.message).toContain('Nessuna istanza realmente attiva');
   });
 
-  test('returns ok when all instances have webhooks configured', async () => {
+  test('ignores stale "open" stubs not seen within the active window (default 30d)', async () => {
     mockSupa.setResponse('user_instances:select', [
-      { instance_name: 'SchedWhats-39350' },
-      { instance_name: 'SchedWhats-39340' },
+      { instance_name: 'SchedWhats-39350', phone_number: '3935000000', last_connection_update: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString(), connection_status: 'open' },
+    ]);
+    const result = await checkWebhookInactive();
+    expect(result.status).toBe('ok');
+    expect(result.message).toContain('Nessuna istanza realmente attiva');
+  });
+
+  test('ignores wltest* test instances', async () => {
+    mockSupa.setResponse('user_instances:select', [openRow('wltest-1', '393331110001')]);
+    const result = await checkWebhookInactive();
+    expect(result.status).toBe('ok');
+    expect(result.message).toContain('Nessuna istanza realmente attiva');
+  });
+
+  test('returns ok when all active instances have webhooks configured', async () => {
+    mockSupa.setResponse('user_instances:select', [
+      openRow('SchedWhats-39350', '3935000000'),
+      openRow('SchedWhats-39340', '3934000000'),
     ]);
     fetchMock.setJsonResponse('/webhook/find/SchedWhats-39350', { url: 'https://whatslaterpush.vercel.app/api/webhook' });
     fetchMock.setJsonResponse('/webhook/find/SchedWhats-39340', { url: 'https://whatslaterpush.vercel.app/api/webhook' });
@@ -120,8 +207,8 @@ describe('checkWebhookInactive', () => {
 
   test('returns warning when some instances miss webhook', async () => {
     mockSupa.setResponse('user_instances:select', [
-      { instance_name: 'SchedWhats-39350' },
-      { instance_name: 'SchedWhats-39340' },
+      openRow('SchedWhats-39350', '3935000000'),
+      openRow('SchedWhats-39340', '3934000000'),
     ]);
     fetchMock.setJsonResponse('/webhook/find/SchedWhats-39350', { url: 'https://whatslaterpush.vercel.app/api/webhook' });
     fetchMock.setJsonResponse('/webhook/find/SchedWhats-39340', { url: '' });
@@ -130,10 +217,8 @@ describe('checkWebhookInactive', () => {
     expect(result.message).toContain('1/2');
   });
 
-  test('returns critical when all instances miss webhook', async () => {
-    mockSupa.setResponse('user_instances:select', [
-      { instance_name: 'SchedWhats-39350' },
-    ]);
+  test('returns critical when all active instances miss webhook', async () => {
+    mockSupa.setResponse('user_instances:select', [openRow('SchedWhats-39350', '3935000000')]);
     fetchMock.setJsonResponse('/webhook/find/SchedWhats-39350', {}, 500);
     const result = await checkWebhookInactive();
     expect(result.status).toBe('critical');
@@ -159,37 +244,53 @@ describe('checkSupabaseDown', () => {
 
 // --- Check 5: Messages Stalled ---
 
+const procRow = (i: number, phone = `3935000000${i}`) => ({ id: String(i), user_instances: { instance_name: `SchedWhats-${phone}`, phone_number: phone } });
+
 describe('checkMessagesStalled', () => {
   test('returns ok when no stalled messages', async () => {
-    mockSupa.setResponse('scheduled_messages:select', null, null, { count: 0 });
+    mockSupa.setResponse('scheduled_messages:select', []);
     const result = await checkMessagesStalled();
     expect(result.status).toBe('ok');
   });
 
   test('returns critical when messages stuck in processing', async () => {
-    mockSupa.setResponse('scheduled_messages:select', null, null, { count: 2 });
+    mockSupa.setResponse('scheduled_messages:select', [procRow(1), procRow(2)]);
     const result = await checkMessagesStalled();
     expect(result.status).toBe('critical');
+    expect(result.message).toContain('2');
+  });
+
+  test('excludes test instances', async () => {
+    process.env.MONITORING_TEST_NUMBERS = '39350000001,39350000002';
+    mockSupa.setResponse('scheduled_messages:select', [procRow(1, '39350000001'), procRow(2, '39350000002')]);
+    const result = await checkMessagesStalled();
+    expect(result.status).toBe('ok');
+    delete process.env.MONITORING_TEST_NUMBERS;
   });
 });
 
 // --- Check 6: Failed Spike ---
 
+const failedRows = (n: number) => Array.from({ length: n }, (_, i) => ({
+  id: String(i),
+  user_instances: { instance_name: `SchedWhats-3934000${String(i).padStart(4, '0')}`, phone_number: `3934000${String(i).padStart(4, '0')}` },
+}));
+
 describe('checkFailedSpike', () => {
   test('returns ok when count <= 5', async () => {
-    mockSupa.setResponse('scheduled_messages:select', null, null, { count: 3 });
+    mockSupa.setResponse('scheduled_messages:select', failedRows(3));
     const result = await checkFailedSpike();
     expect(result.status).toBe('ok');
   });
 
   test('returns warning when count 6-10', async () => {
-    mockSupa.setResponse('scheduled_messages:select', null, null, { count: 8 });
+    mockSupa.setResponse('scheduled_messages:select', failedRows(8));
     const result = await checkFailedSpike();
     expect(result.status).toBe('warning');
   });
 
   test('returns critical when count > 10', async () => {
-    mockSupa.setResponse('scheduled_messages:select', null, null, { count: 15 });
+    mockSupa.setResponse('scheduled_messages:select', failedRows(15));
     const result = await checkFailedSpike();
     expect(result.status).toBe('critical');
   });
@@ -198,7 +299,7 @@ describe('checkFailedSpike', () => {
 // --- runAllChecks ---
 
 describe('runAllChecks', () => {
-  test('returns 10 results (9 pre-existing + all_egress_down)', async () => {
+  test('returns 11 results (cron split into heartbeat + messages_stuck)', async () => {
     fetchMock.setJsonResponse('/instance/fetchInstances', [{ id: 1 }], 200);
     mockSupa.setResponse('scheduled_messages:select', null, null, { count: 0 });
     mockSupa.setResponse('user_instances:select', [{ id: '1' }], null, { count: 0 });
@@ -221,11 +322,13 @@ describe('runAllChecks', () => {
       data: { result: [{ values: [['1712200000', '26843545600']] }] }
     });
     const results = await runAllChecks();
-    expect(results).toHaveLength(10);
+    expect(results).toHaveLength(11);
     results.forEach((r) => {
       expect(['ok', 'warning', 'critical']).toContain(r.status);
       expect(r.name).toBeTruthy();
     });
+    expect(results.map(r => r.name)).toContain('cron_heartbeat');
+    expect(results.map(r => r.name)).toContain('messages_stuck');
     expect(results.map(r => r.name)).toContain('pairing_blackout');
     expect(results.map(r => r.name)).toContain('all_egress_down');
   });
@@ -248,9 +351,9 @@ describe('shouldAlert', () => {
     expect(result).toBe(false);
   });
 
-  test('returns true when last alert was >1h ago', async () => {
+  test('returns true when last alert is older than the reminder window (>6h)', async () => {
     mockSupa.setResponse('monitoring_alerts:select', [
-      { created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() },
+      { created_at: new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString() },
     ]);
     const result = await shouldAlert('evolution_api');
     expect(result).toBe(true);

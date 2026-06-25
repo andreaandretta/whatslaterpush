@@ -85,8 +85,16 @@ describe('checkPairingBlackout', () => {
     mockSupa.setResponse('audit_events:select', null, { message: 'connection refused' });
     const result = await checkPairingBlackout();
     expect(result.status).toBe('critical');
-    expect(result.message).toContain('Query error');
+    expect(result.message).toContain('Errore query');
     expect(result.message).toContain('connection refused');
+  });
+
+  test('excludes operator test pairings (wltest*) so test numbers do not trip a false blackout', async () => {
+    const out = Array.from({ length: 6 }, () => ({ event_type: 'pairing_started', payload: { instance_name: 'wltest-1' } }));
+    mockSupa.setResponse('audit_events:select', out);
+    const result = await checkPairingBlackout();
+    expect(result.status).toBe('ok'); // would be 'critical (pairing rotto)' without the test filter
+    expect(result.message).toContain('Nessun tentativo');
   });
 });
 
