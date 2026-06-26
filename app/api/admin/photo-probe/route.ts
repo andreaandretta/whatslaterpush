@@ -22,9 +22,7 @@ export const dynamic = 'force-dynamic';
 //   POST /api/admin/photo-probe?phone=393780858599&limit=3&offset=3   (next page)
 //   POST /api/admin/photo-probe?phone=393780858599&numbers=39...,39... (Probe 0)
 
-// TEMP (2026-06-26): 393442582226 abilitato per UN micro-probe rappresentativo
-// autorizzato da Andrea. RIMUOVERE subito dopo la misura (ripristino hard-deny).
-const PROBE_ALLOWED = new Set(['393509898408', '393780858599', '393442582226']);
+const PROBE_ALLOWED = new Set(['393509898408', '393780858599']);
 
 const MAX_LIMIT = 3;   // <=3 live calls/invocation to stay under Vercel Hobby 10s
 const GAP_MS = 1200;   // gentle spacing between live calls (ban-safe pacing)
