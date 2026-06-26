@@ -314,6 +314,30 @@ class EvolutionClient {
   }
 
   /**
+   * Fetch a SINGLE contact's profile picture URL via a LIVE Baileys query
+   * (query.profilePicture). Unlike findContacts/findChats (which only read
+   * Evolution's persisted store), this actively materialises the avatar — the
+   * only way to recover a photo that was never demand-fetched (e.g. contacts
+   * delivered photo-less by the bulk CONTACTS_UPSERT sync). Use THIS, not
+   * fetchProfile, whose picture field regressed to null since v2.0.7-rc (#734).
+   * Returns { profilePictureUrl: null } (or throws) when the contact has no
+   * photo OR the photo privacy excludes this instance — the two are NOT
+   * distinguishable from the response. 8s hard timeout so a hung call can never
+   * tie up the Baileys socket.
+   */
+  async fetchProfilePictureUrl(
+    instanceName: string,
+    number: string
+  ): Promise<{ wuid?: string; profilePictureUrl?: string | null }> {
+    const clean = number.replace(/\D/g, '')
+    return this.request(`/chat/fetchProfilePictureUrl/${instanceName}`, {
+      method: 'POST',
+      body: JSON.stringify({ number: clean }),
+      signal: AbortSignal.timeout(8000),
+    })
+  }
+
+  /**
    * Fetch all groups the instance participates in. When `getParticipants` is
    * true the response includes a `participants` array per group, which is a
    * useful supplementary source of personal contacts (Baileys' Contact table
