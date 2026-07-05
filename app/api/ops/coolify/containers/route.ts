@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { denyUnlessOpsAuthorized } from '../../../../lib/ops-auth';
+import { getCoolifyBase, COOLIFY_NOT_CONFIGURED } from '../../../../lib/coolify-base';
 
 export const dynamic = 'force-dynamic';
 
 const COOLIFY_TIMEOUT_MS = 8000;
-// Coolify v4 REST API base. Defaults to the known droplet; override via env.
-const COOLIFY_BASE = process.env.COOLIFY_API_URL || 'http://161.35.212.68:8000';
 
-async function coolifyGet(path: string, token: string, signal: AbortSignal) {
-  return fetch(`${COOLIFY_BASE}/api/v1${path}`, {
+async function coolifyGet(base: string, path: string, token: string, signal: AbortSignal) {
+  return fetch(`${base}/api/v1${path}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
     cache: 'no-store',
     signal,
@@ -46,14 +45,18 @@ export async function GET(req: NextRequest) {
   if (!token) {
     return NextResponse.json({ error: 'COOLIFY_API_TOKEN not configured' }, { status: 500 });
   }
+  const base = getCoolifyBase();
+  if (!base) {
+    return NextResponse.json({ error: COOLIFY_NOT_CONFIGURED }, { status: 500 });
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), COOLIFY_TIMEOUT_MS);
   try {
     const [appsRes, svcRes, dbRes] = await Promise.all([
-      coolifyGet('/applications', token, controller.signal),
-      coolifyGet('/services', token, controller.signal),
-      coolifyGet('/databases', token, controller.signal),
+      coolifyGet(base, '/applications', token, controller.signal),
+      coolifyGet(base, '/services', token, controller.signal),
+      coolifyGet(base, '/databases', token, controller.signal),
     ]);
 
     if (appsRes.status === 401 || appsRes.status === 403) {

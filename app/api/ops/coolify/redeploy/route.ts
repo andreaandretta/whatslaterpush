@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { denyUnlessOpsAuthorized } from '../../../../lib/ops-auth';
+import { getCoolifyBase, COOLIFY_NOT_CONFIGURED } from '../../../../lib/coolify-base';
 import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 
 const COOLIFY_TIMEOUT_MS = 15000;
-const COOLIFY_BASE = process.env.COOLIFY_API_URL || 'http://161.35.212.68:8000';
 
 async function auditOp(uuid: string, status: number, force: boolean) {
   try {
@@ -32,6 +32,8 @@ async function handle(req: NextRequest) {
 
   const token = process.env.COOLIFY_API_TOKEN;
   if (!token) return NextResponse.json({ error: 'COOLIFY_API_TOKEN not configured' }, { status: 500 });
+  const base = getCoolifyBase();
+  if (!base) return NextResponse.json({ error: COOLIFY_NOT_CONFIGURED }, { status: 500 });
 
   const url = new URL(req.url);
   let uuid = (url.searchParams.get('uuid') || '').trim();
@@ -50,7 +52,7 @@ async function handle(req: NextRequest) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), COOLIFY_TIMEOUT_MS);
   try {
-    const res = await fetch(`${COOLIFY_BASE}/api/v1/deploy?uuid=${encodeURIComponent(uuid)}&force=${force}`, {
+    const res = await fetch(`${base}/api/v1/deploy?uuid=${encodeURIComponent(uuid)}&force=${force}`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
       cache: 'no-store',

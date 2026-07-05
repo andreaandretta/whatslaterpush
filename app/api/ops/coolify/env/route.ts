@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { denyUnlessOpsAuthorized } from '../../../../lib/ops-auth';
+import { getCoolifyBase, COOLIFY_NOT_CONFIGURED } from '../../../../lib/coolify-base';
 import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 
 const COOLIFY_TIMEOUT_MS = 12000;
-const COOLIFY_BASE = process.env.COOLIFY_API_URL || 'http://161.35.212.68:8000';
 
 // Mask values for keys that look like secrets so the list response never leaks
 // the droplet's DB password / API keys into logs or context.
@@ -35,8 +35,8 @@ async function auditOp(action: string, kind: string, uuid: string, key: string, 
   } catch { /* best-effort */ }
 }
 
-function coolify(path: string, token: string, init: RequestInit) {
-  return fetch(`${COOLIFY_BASE}/api/v1${path}`, {
+function coolify(base: string, path: string, token: string, init: RequestInit) {
+  return fetch(`${base}/api/v1${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -59,6 +59,8 @@ async function handle(req: NextRequest) {
 
   const token = process.env.COOLIFY_API_TOKEN;
   if (!token) return NextResponse.json({ error: 'COOLIFY_API_TOKEN not configured' }, { status: 500 });
+  const base = getCoolifyBase();
+  if (!base) return NextResponse.json({ error: COOLIFY_NOT_CONFIGURED }, { status: 500 });
 
   const url = new URL(req.url);
   let uuid = (url.searchParams.get('uuid') || '').trim();
@@ -84,7 +86,7 @@ async function handle(req: NextRequest) {
   try {
     // ── LIST MODE ──────────────────────────────────────────────────────────
     if (!key) {
-      const res = await coolify(`/${kind}/${uuid}/envs`, token, { method: 'GET', signal: controller.signal });
+      const res = await coolify(base, `/${kind}/${uuid}/envs`, token, { method: 'GET', signal: controller.signal });
       const body = await res.json().catch(() => null);
       const arr = Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : [];
       return NextResponse.json(
@@ -105,11 +107,11 @@ async function handle(req: NextRequest) {
     // ── UPSERT MODE ────────────────────────────────────────────────────────
     // Try PATCH (update existing key); fall back to POST (create) if it fails.
     const payload = JSON.stringify({ key, value: value ?? '', is_preview: false });
-    let res = await coolify(`/${kind}/${uuid}/envs`, token, { method: 'PATCH', body: payload, signal: controller.signal });
+    let res = await coolify(base, `/${kind}/${uuid}/envs`, token, { method: 'PATCH', body: payload, signal: controller.signal });
     let method = 'PATCH';
     let body = await res.json().catch(() => null);
     if (!res.ok) {
-      res = await coolify(`/${kind}/${uuid}/envs`, token, { method: 'POST', body: payload, signal: controller.signal });
+      res = await coolify(base, `/${kind}/${uuid}/envs`, token, { method: 'POST', body: payload, signal: controller.signal });
       method = 'POST(after PATCH ' + (body ? '' : '') + 'failed)';
       body = await res.json().catch(() => null);
     }

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { getCoolifyBase, COOLIFY_NOT_CONFIGURED } from '../../../lib/coolify-base';
 
 export const dynamic = 'force-dynamic';
 
 const EVOLUTION_TIMEOUT_MS = 8000;
-const COOLIFY_BASE = process.env.COOLIFY_API_URL || 'http://161.35.212.68:8000';
 const BATCH = 10;
 
 function supa() {
@@ -51,8 +51,13 @@ async function runCommand(
     }
     case 'coolify_restart': {
       if (!target) return { ok: false, error: 'missing target uuid' };
+      // Fail loud, never fall back: the command lands in ops_commands as
+      // `failed` with a clear error instead of posting the Bearer token to a
+      // recycled DigitalOcean IP (runbook §8.1).
+      const coolifyBase = getCoolifyBase();
+      if (!coolifyBase) return { ok: false, error: COOLIFY_NOT_CONFIGURED };
       const type = params?.type === 'service' ? 'services' : 'applications';
-      const r = await fetch(`${COOLIFY_BASE}/api/v1/${type}/${target}/restart`, {
+      const r = await fetch(`${coolifyBase}/api/v1/${type}/${target}/restart`, {
         headers: { Authorization: `Bearer ${process.env.COOLIFY_API_TOKEN}`, Accept: 'application/json' },
         cache: 'no-store',
         signal,
