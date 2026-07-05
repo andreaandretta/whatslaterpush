@@ -1,9 +1,13 @@
 # Runbook: migrazione DigitalOcean → Hetzner
 
+> **STATO (2026-07-05): ✅ ESEGUITO — migrazione completata, DigitalOcean DISMESSO.**
+> 2026-07-05: verifica live pre-destroy RIPETUTA, 3/3 PASS (Coolify=Hetzner `hopixj64…` via `/api/ops/coolify/containers`; `EVOLUTION_API_URL`=Hetzner provata via `manager` URL in `/api/ops/evolution/version`; 4 istanze `open` su Hetzner: 226/599/739/526). **Env `DO_API_TOKEN`/`DO_DROPLET_ID` RIMOSSE da Vercel + redeploy production ✅** (Claude). **Fase 6 eseguita da Andrea in pari data (guidato via Chrome): droplet `ubuntu-s-1vcpu-2gb-70gb-intel-fra1-01` (161.35.212.68) DISTRUTTO; Volumes/Snapshots/Backups/Reserved IP/Load Balancer verificati VUOTI; token `whatslaterpush-monitoring` REVOCATO; billing $0.00.** Dump finale Postgres saltato di proposito (rollback non più significativo: sessioni ri-pairate su Hetzner, dati su Supabase). ⚠️ Da questo momento è ATTIVO il buco monitoring RAM di §8.2 (fix: push host-metrics, pre-lancio). Resta aperta la pulizia §8.1 (fallback `161.35.212.68` nei 6 file Coolify).
+>
+> Storico:
 > **STATO (2026-06-24): VERIFICA / GO COMPLETATI — Fase 6 (power-off → destroy → cleanup env DO) ANCORA DA ESEGUIRE a mano da Andrea.**
 > Cutover su Hetzner fatto e verificato live. Indagine read-only 2026-06-23/24 (4 lenti avversariali) → **GO al decommission con 5/5 verifiche PASS**: `EVOLUTION_API_URL`=Hetzner (nessun fallback DO in codice), `COOLIFY_API_URL`=Hetzner confermata live via `/api/ops/coolify/containers` (uuid `hopixj64…`, non DO `pkso00o0…`), 4 istanze `open` su Hetzner, nessun cron/webhook/config→DO (solo 6 file Coolify col fallback `|| 161.35.212.68`, dormiente: `ops_commands` vuota), dati tutti su Supabase + Storage.
 > **Il droplet DO `161.35.212.68` resta ACCESO come nodo backup/rollback finché Andrea non lo distrugge davvero.** Il power-off→destroy→cleanup (Fase 6) NON è ancora avvenuto.
-> **Quando il destroy sarà fatto** → marcare questo runbook "eseguito", rimuovere `DO_API_TOKEN`/`DO_DROPLET_ID` da Vercel, e togliere i riferimenti DO residui (sezione stack CLAUDE.md, ecc.).
+> **Quando il destroy sarà fatto** → marcare questo runbook "eseguito" e togliere i riferimenti DO residui. (Env `DO_API_TOKEN`/`DO_DROPLET_ID` già rimosse da Vercel + redeploy, e CLAUDE.md già aggiornato, il 2026-07-05.)
 
 Data: 2026-06-12 · Deadline esterna: crediti DO scadono **31 luglio 2026** (poi standard billing $12/mese).
 Decisione: Hetzner diventa il **nodo primario del lancio**. DO resta acceso come rollback (gratis, coperto dai crediti) e si distrugge solo a migrazione verificata.
@@ -142,7 +146,7 @@ Supabase, Stripe, Resend, Sentry, cron-job.org (pinga Vercel, non il droplet), d
 ## §8 — Lavori di codice collegati (li fa Claude, su richiesta)
 
 1. **Fallback hardcoded IP DO in 6 file** (`ops-worker`, `coolify/{containers,redeploy,manage,logs,env}`): `process.env.COOLIFY_API_URL || 'http://161.35.212.68:8000'`. Pre-cutover: assicurarsi che `COOLIFY_API_URL` esista su Vercel. Post-cutover: centralizzare in un modulo unico e **togliere il fallback** (fail-loud se manca).
-2. **Buco monitoring RAM post-DO**: `app/lib/droplet.ts` + `checkDropletRam` + `/api/ops/droplet/metrics` + `stress-index` + `admin/droplet` + `daily-report` usano l'API DigitalOcean. Senza `DO_*` degradano in silenzio → **si perde l'alert RAM 50/70/80%**. L'API Hetzner NON espone la memoria (solo cpu/disk/network), quindi la soluzione provider-agnostic è un **push**: cron sul server (cloud-init) che ogni 60s manda `free`/`df`/loadavg a un nuovo `POST /api/ops/host-metrics` (OPS_SECRET) → ultima riga letta da `fetchDropletMetrics` quando `HOST_METRICS_SOURCE=push`. ~30 righe + test. Mai più sposati a un'API di provider.
+2. **Buco monitoring RAM post-DO** (⚠️ ATTIVO dal 2026-07-05, env `DO_*` rimosse): `app/lib/droplet.ts` + `checkDropletRam` + `/api/ops/droplet/metrics` + `stress-index` + `admin/droplet` + `daily-report` usano l'API DigitalOcean. Senza `DO_*` degradano in silenzio → **si perde l'alert RAM 50/70/80%**. L'API Hetzner NON espone la memoria (solo cpu/disk/network), quindi la soluzione provider-agnostic è un **push**: cron sul server (cloud-init) che ogni 60s manda `free`/`df`/loadavg a un nuovo `POST /api/ops/host-metrics` (OPS_SECRET) → ultima riga letta da `fetchDropletMetrics` quando `HOST_METRICS_SOURCE=push`. ~30 righe + test. Mai più sposati a un'API di provider.
 3. **Docs**: aggiornare CLAUDE.md (IP droplet, sezione stack) e marcare questo runbook come eseguito.
 
 ---

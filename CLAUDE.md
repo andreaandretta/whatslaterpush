@@ -1,6 +1,17 @@
 # WhatsLater (SchedWhats) — Project Context
 
-## STATO ATTUALE (aggiornato 22 Giugno 2026)
+## STATO ATTUALE (aggiornato 5 Luglio 2026)
+
+### 🔧 SESSIONE 5 LUG 2026 — decommission DigitalOcean (Fase 6 runbook)
+
+**Verifica live pre-destroy 3/3 PASS** (2026-07-05 14:52 UTC): `/api/ops/coolify/containers` risponde dal Coolify **Hetzner** (uuid `hopixj64…`, `running:healthy`); `EVOLUTION_API_URL` = **Hetzner** (provato via `manager` URL in `/api/ops/evolution/version`); i 4 numeri **tutti `open` su Hetzner** (226=Andrea 7173 msg, 599=Mercyztrendyz 6328, 739=Giuseppe 5243, 526=Lol 372). → **GO destroy confermato.**
+
+**Eseguito da Claude (2026-07-05):** env `DO_API_TOKEN` + `DO_DROPLET_ID` **rimosse da Vercel** + redeploy production per applicarle. **Lato Andrea (in pari data, guidato passo-passo via Chrome):** ✅ ESEGUITO — droplet `161.35.212.68` (`ubuntu-s-1vcpu-2gb-70gb-intel-fra1-01`) distrutto; Volumes/Snapshots/Backups/Reserved IP/Load Balancer verificati vuoti (nulla da pulire); token API `whatslaterpush-monitoring` revocato; billing DO $0.00.
+
+**⚠️ Conseguenze note post-DO:**
+- **Buco monitoring RAM host** (runbook §8.2, ora ATTIVO): `checkDropletRam`/`fetchDropletMetrics`/`/api/ops/droplet/metrics`/`stress-index` (sezione droplet) degradano in silenzio senza `DO_*` — il watchdog orario è cieco su RAM/disk del server Hetzner. Fix pianificato: push host-metrics da cron sul server → `POST /api/ops/host-metrics` (~30 righe), backlog PRIORITARIO pre-lancio.
+- **6 file con fallback morto** `process.env.COOLIFY_API_URL || 'http://161.35.212.68:8000'` (`ops-worker`, `coolify/{containers,redeploy,manage,logs,env}`): dormienti (env presente), ma l'IP DO verrà riassegnato da DigitalOcean a terzi → se l'env sparisse, le richieste manderebbero il Bearer `COOLIFY_API_TOKEN` a un host sconosciuto. Da pulire: centralizzare in modulo unico, fail-loud senza fallback (runbook §8.1).
+- Su Coolify Hetzner c'è un secondo servizio `service-yxunkey65smkvvcutobpp3og` in `degraded:unhealthy` — da investigare (non c'entra con DO).
 
 ### 🔧 SESSIONE 22 GIU 2026 — pairing fix + hardening Round 6 + bug post-test (tutto deployato)
 
@@ -31,7 +42,7 @@
 - **LLM**: Groq (Llama) come parser primario nel webhook self-chat; OpenAI come secondario/fallback
 - **Payments**: Stripe SDK ^14.5 (sandbox mode — live SCARTATA, vedi Stato deploy)
 - **Test**: Jest 30 (unit/integration) + Playwright (e2e, suite separata da `npm test:e2e`)
-- **Deploy**: Vercel (serverless + crons schedulati in `vercel.json`); Evolution API su nodo **Hetzner** separato (Coolify). Cutover da DigitalOcean completato (~2026-06-18). Vecchio droplet DO `161.35.212.68` **ancora ACCESO come backup/rollback**: decommission con **GO dato (5/5 verifiche PASS, indagine read-only 2026-06-23/24)** ma **destroy fisico ANCORA DA ESEGUIRE a mano da Andrea** — vedi `docs/2026-06-12-runbook-migrazione-hetzner.md`
+- **Deploy**: Vercel (serverless + crons schedulati in `vercel.json`); Evolution API su nodo **Hetzner** separato (Coolify). Cutover da DigitalOcean completato (~2026-06-18); **decommission DO COMPLETATO il 2026-07-05** (Fase 6 runbook ESEGUITA: droplet `161.35.212.68` distrutto, nessun orfano, token revocato, env `DO_*` rimosse da Vercel). DigitalOcean fuori dallo stack.
 
 ### Tier system
 - **Trial** — 7 giorni dal connect (limiti = Personal)
