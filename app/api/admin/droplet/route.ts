@@ -3,6 +3,8 @@ import { fetchDropletMetrics, fetchDropletHistory24h } from '../../../lib/drople
 import { requireAdmin } from '../../../lib/admin-auth';
 
 export const dynamic = 'force-dynamic';
+// Niente Next Data Cache sulle GET REST del push host-metrics (vedi lib/droplet).
+export const fetchCache = 'force-no-store';
 
 export async function GET(req: NextRequest) {
   const admin = await requireAdmin(req);

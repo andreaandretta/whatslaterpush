@@ -30,7 +30,15 @@ function getSupabase() {
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
-  return createClient(url, key);
+  // fetch no-store esplicita: la Next Data Cache congela le GET REST di
+  // supabase-js dentro i route handler (stesso bug già visto e documentato in
+  // stress-index col RPC "frozen") → il monitoring leggerebbe per sempre il
+  // primo risultato. Qui i dati cambiano ogni 60s: mai cachare.
+  return createClient(url, key, {
+    global: {
+      fetch: (input: any, init?: any) => fetch(input, { ...(init || {}), cache: 'no-store' }),
+    },
+  });
 }
 
 async function fetchPushedMetrics(): Promise<DropletMetrics | null> {

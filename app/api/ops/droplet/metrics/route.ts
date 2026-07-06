@@ -4,6 +4,9 @@ import { fetchDropletMetrics, fetchDropletHistory24h, hostMetricsPushMode } from
 import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
+// Le GET REST di supabase-js (via lib/droplet push mode) NON vanno mai nella
+// Next Data Cache: metriche fresche ogni 60s (stesso fix di stress-index).
+export const fetchCache = 'force-no-store';
 
 // TEMP probe diagnostica (da rimuovere): replica fetchPushedMetrics passo-passo
 // e riporta dove muore, senza swallow.
