@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { denyUnlessOpsAuthorized } from '../../../../lib/ops-auth';
-import { fetchDropletMetrics, fetchDropletHistory24h } from '../../../../lib/droplet';
+import { fetchDropletMetrics, fetchDropletHistory24h, hostMetricsPushMode } from '../../../../lib/droplet';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,8 +15,18 @@ export async function GET(req: NextRequest) {
 
   const metrics = await fetchDropletMetrics();
   if (!metrics) {
+    const pushMode = hostMetricsPushMode();
     return NextResponse.json(
-      { ok: false, error: 'DO metrics unavailable (check DO_API_TOKEN / DO_DROPLET_ID / do-agent on droplet)' },
+      {
+        ok: false,
+        error: pushMode
+          ? 'host metrics unavailable (push feed assente o stantio >5min — cron sul server fermo?)'
+          : 'DO metrics unavailable (check DO_API_TOKEN / DO_DROPLET_ID / do-agent on droplet)',
+        // TEMP debug (route secret-guarded): cosa vede il runtime. Da rimuovere
+        // a diagnosi chiusa.
+        debug_push_mode: pushMode,
+        debug_source_typeof: typeof process.env.HOST_METRICS_SOURCE,
+      },
       { status: 502 },
     );
   }
