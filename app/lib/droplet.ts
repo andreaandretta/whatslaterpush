@@ -1,3 +1,5 @@
+import { createClient } from '@supabase/supabase-js';
+
 export interface DropletMetrics {
   ram_percent: number;
   cpu_percent: number;
@@ -11,6 +13,68 @@ export interface RamDataPoint {
 }
 
 const DO_API = 'https://api.digitalocean.com';
+
+// ── Push mode (runbook §8.2) ────────────────────────────────────────────────
+// HOST_METRICS_SOURCE=push → le metriche arrivano dal cron sul server Hetzner
+// via POST /api/ops/host-metrics (tabella host_metrics) invece che dall'API
+// DigitalOcean (droplet distrutto 2026-07-05). Una riga più vecchia di
+// PUSH_STALE_MS = feed fermo → null, così checkDropletRam segnala il buco
+// invece di mostrare dati vecchi come buoni.
+const PUSH_STALE_MS = 5 * 60 * 1000;
+
+export function hostMetricsPushMode(): boolean {
+  return (process.env.HOST_METRICS_SOURCE || '').trim().toLowerCase() === 'push';
+}
+
+function getSupabase() {
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key);
+}
+
+async function fetchPushedMetrics(): Promise<DropletMetrics | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from('host_metrics')
+      .select('ram_percent, cpu_percent, disk_percent, uptime_seconds, created_at')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    if (Date.now() - new Date(data.created_at).getTime() > PUSH_STALE_MS) return null;
+    return {
+      ram_percent: data.ram_percent ?? 0,
+      cpu_percent: data.cpu_percent ?? 0,
+      disk_percent: data.disk_percent ?? 0,
+      uptime_seconds: data.uptime_seconds ?? 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchPushedHistory24h(): Promise<RamDataPoint[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase
+      .from('host_metrics')
+      .select('ram_percent, created_at')
+      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .order('created_at', { ascending: true })
+      .limit(2000); // 1 riga/min = 1440/24h, margine incluso
+    if (error || !data) return [];
+    return data.map((r: any) => ({
+      time: new Date(r.created_at).toISOString(),
+      percent: Math.max(0, Math.min(100, r.ram_percent ?? 0)),
+    }));
+  } catch {
+    return [];
+  }
+}
 
 async function doFetch(metricPath: string, start: string, end: string): Promise<any> {
   const token = process.env.DO_API_TOKEN;
@@ -32,6 +96,7 @@ function getLastValue(result: any): number | null {
 }
 
 export async function fetchDropletMetrics(): Promise<DropletMetrics | null> {
+  if (hostMetricsPushMode()) return fetchPushedMetrics();
   if (!process.env.DO_API_TOKEN || !process.env.DO_DROPLET_ID) return null;
 
   const now = Math.floor(Date.now() / 1000);
@@ -104,6 +169,7 @@ export async function fetchDropletMetrics(): Promise<DropletMetrics | null> {
 }
 
 export async function fetchDropletHistory24h(): Promise<RamDataPoint[]> {
+  if (hostMetricsPushMode()) return fetchPushedHistory24h();
   if (!process.env.DO_API_TOKEN || !process.env.DO_DROPLET_ID) return [];
 
   const now = Math.floor(Date.now() / 1000);

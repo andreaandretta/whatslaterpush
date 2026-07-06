@@ -323,14 +323,24 @@ export async function checkFailedSpike(): Promise<CheckResult> {
 
 export async function checkDropletRam(): Promise<CheckResult> {
   const now = new Date().toISOString();
-  if (!process.env.DO_API_TOKEN || !process.env.DO_DROPLET_ID) {
-    return { name: 'droplet_ram', status: 'ok', message: 'Monitoring DO non configurato', checked_at: now };
+  // Push mode (runbook §8.2): metriche dal cron Hetzner via host_metrics.
+  // Legacy: API DigitalOcean (droplet distrutto 2026-07-05, DO_* rimosse).
+  const pushMode = (process.env.HOST_METRICS_SOURCE || '').trim().toLowerCase() === 'push';
+  if (!pushMode && (!process.env.DO_API_TOKEN || !process.env.DO_DROPLET_ID)) {
+    return { name: 'droplet_ram', status: 'ok', message: 'Monitoring host non configurato (HOST_METRICS_SOURCE=push o DO_*)', checked_at: now };
   }
 
   try {
     const metrics = await fetchDropletMetrics();
     if (!metrics) {
-      return { name: 'droplet_ram', status: 'warning', message: 'Impossibile leggere metriche DO', checked_at: now };
+      return {
+        name: 'droplet_ram',
+        status: 'warning',
+        message: pushMode
+          ? 'Metriche host assenti o stantie (>5 min) — cron push sul server fermo?'
+          : 'Impossibile leggere metriche DO',
+        checked_at: now,
+      };
     }
 
     const ram = metrics.ram_percent;
