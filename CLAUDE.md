@@ -1,6 +1,6 @@
 # WhatsLater (SchedWhats) — Project Context
 
-## STATO ATTUALE (aggiornato 5 Luglio 2026)
+## STATO ATTUALE (aggiornato 6 Luglio 2026)
 
 ### 🔧 SESSIONE 5 LUG 2026 — decommission DigitalOcean (Fase 6 runbook)
 
@@ -8,9 +8,10 @@
 
 **Eseguito da Claude (2026-07-05):** env `DO_API_TOKEN` + `DO_DROPLET_ID` **rimosse da Vercel** + redeploy production per applicarle. **Lato Andrea (in pari data, guidato passo-passo via Chrome):** ✅ ESEGUITO — droplet `161.35.212.68` (`ubuntu-s-1vcpu-2gb-70gb-intel-fra1-01`) distrutto; Volumes/Snapshots/Backups/Reserved IP/Load Balancer verificati vuoti (nulla da pulire); token API `whatslaterpush-monitoring` revocato; billing DO $0.00.
 
-**⚠️ Conseguenze note post-DO:**
-- **Buco monitoring RAM host** (runbook §8.2, ora ATTIVO): `checkDropletRam`/`fetchDropletMetrics`/`/api/ops/droplet/metrics`/`stress-index` (sezione droplet) degradano in silenzio senza `DO_*` — il watchdog orario è cieco su RAM/disk del server Hetzner. Fix pianificato: push host-metrics da cron sul server → `POST /api/ops/host-metrics` (~30 righe), backlog PRIORITARIO pre-lancio.
-- **6 file con fallback morto** `process.env.COOLIFY_API_URL || 'http://161.35.212.68:8000'` (`ops-worker`, `coolify/{containers,redeploy,manage,logs,env}`): dormienti (env presente), ma l'IP DO verrà riassegnato da DigitalOcean a terzi → se l'env sparisse, le richieste manderebbero il Bearer `COOLIFY_API_TOKEN` a un host sconosciuto. Da pulire: centralizzare in modulo unico, fail-loud senza fallback (runbook §8.1).
+**Conseguenze post-DO — entrambe CHIUSE:**
+- **§8.1 fallback IP DO nei 6 file: PULITO (2026-07-05, commit `a330b3e`)** — modulo unico `app/lib/coolify-base.ts`, fail-loud senza fallback (env mancante → 500 chiaro / comando `failed`, MAI il Bearer verso l'IP riciclato). Bonus 7° residuo trovato fuori runbook: `DEFAULT_EVOLUTION_UUID` hardcoded del vecchio Coolify DO in `coolify/logs` → ora env `COOLIFY_EVOLUTION_UUID` (=`hopixj64…` su Vercel). 9 test nuovi (`coolify-base.test.ts`).
+- **§8.2 buco monitoring RAM host: CHIUSO (2026-07-06, commit `395a528`+`95c896f`)** — push host-metrics LIVE e verificato E2E: cron 60s sul server Hetzner (`/etc/cron.d/whatslater-metrics`, install via terminal Coolify — richiede porta 6002 aperta nel firewall) → `POST /api/ops/host-metrics` (Bearer `OPS_SECRET`) → tabella `host_metrics` (migration `20260706_host_metrics`, RLS on senza policy, prune 48h on-write) → `fetchDropletMetrics`/`fetchDropletHistory24h` in push mode (`HOST_METRICS_SOURCE=push` su Vercel, stale >5min → null fail-loud) → guariti in un colpo watchdog `droplet_ram`, stress-index, `/api/ops/droplet/metrics`, `/admin/droplet` (grafico 24h incluso) e daily-report. Verifica: `ok:true` RAM 44% disk 24%, 32 punti/32 min senza buchi. 12 test nuovi (`host-metrics.test.ts`). Install doc (secret placeholder, repo PUBBLICO): `docs/2026-07-06-host-metrics-server-install.md`. **⚠️ Gotcha da ricordare: la Next Data Cache congelava le GET REST di supabase-js nei route handler** (stessa classe del bug storico stress-index) → fix definitivo client-level `fetch cache:'no-store'` in `lib/droplet.ts` + `fetchCache='force-no-store'` sulle route consumer.
+- ⚠️ **OPS_SECRET da RUOTARE** (esposto in chat/log di sessione + file sul server): giro completo = nuovo valore → Vercel env + redeploy → `/etc/whatslater-metrics.env` sul server → URL nei task schedulati Torre (watchdog). Pianificato, non ancora fatto.
 - Su Coolify Hetzner c'è un secondo servizio `service-yxunkey65smkvvcutobpp3og` in `degraded:unhealthy` — da investigare (non c'entra con DO).
 
 ### 🔧 SESSIONE 22 GIU 2026 — pairing fix + hardening Round 6 + bug post-test (tutto deployato)
