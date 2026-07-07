@@ -2,11 +2,11 @@ import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { normalizeItalianPhone } from '../../../lib/phone';
-import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt } from '../../../lib/cron-utils';
+import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt } from '../../../lib/cron-utils';
 import { isBillingEnabled, getEffectivePlan } from '../../../lib/billing';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
-import { reconcileRecurringChain } from '../../../lib/recurrence';
+import { reconcileRecurringChain, nextRomeMidnight } from '../../../lib/recurrence';
 import { computeTypingDelay, sendTypingPresence } from '../../../lib/typing-presence';
 import { logAuditEvent, hashContactRef } from '../../../lib/audit';
 
@@ -133,7 +133,13 @@ export async function GET(req: NextRequest) {
         .from('user_instances')
         .select('phone_number, instance_name')
         .eq('subscription_plan', 'trial')
-        .lt('trial_ends_at', new Date().toISOString());
+        .lt('trial_ends_at', new Date().toISOString())
+        // Bounded (runbook §2): at billing reactivation MONTHS of beta trials
+        // expire at once — unbounded, this loop (one CAS + one notify fetch
+        // per user, sequential, BEFORE the send loop) would blow the 10s
+        // lambda budget every run and starve delivery for everyone. 20 per
+        // tick converges in a few minutes via the CAS below.
+        .limit(20);
 
       for (const trial of (expiredTrials || [])) {
         // CAS: only the first concurrent cron trigger flips trial->free (others
@@ -146,14 +152,25 @@ export async function GET(req: NextRequest) {
           .select('phone_number');
         if (!downgraded || downgraded.length === 0) continue;
         try {
-          await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + trial.instance_name, {
-            method: 'POST',
-            headers: { apikey: process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              number: trial.phone_number,
-              text: `⏰ Il tuo trial WhatsLater è scaduto.\n\nHai 3 messaggi gratuiti al giorno. Per 20/giorno, passa a Personal a €4,99/mese:\n${process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app'}/dashboard`
-            }),
-          });
+          // 3s timeout: this fetch runs sequentially per downgraded user and,
+          // unlike sendEvolutionText, used to have NO abort — one slow
+          // Evolution response per user was enough to eat the whole lambda
+          // budget during a backlog (runbook §2).
+          const notifyCtrl = new AbortController();
+          const notifyTimeout = setTimeout(() => notifyCtrl.abort(), 3000);
+          try {
+            await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + trial.instance_name, {
+              method: 'POST',
+              headers: { apikey: process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                number: trial.phone_number,
+                text: `⏰ Il tuo trial WhatsLater è scaduto.\n\nHai 3 messaggi gratuiti al giorno. Per 20/giorno, passa a Personal a €4,99/mese:\n${process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app'}/dashboard`
+              }),
+              signal: notifyCtrl.signal,
+            });
+          } finally {
+            clearTimeout(notifyTimeout);
+          }
         } catch (e) {}
         console.log('CRON: Trial expired → free for ' + trial.phone_number);
       }
@@ -413,6 +430,16 @@ export async function GET(req: NextRequest) {
         const sentToday = msg.user_instances.messages_sent_today || 0;
         if (sentToday >= planLimits.dailyLimit) {
           console.log('CRON: DAILY LIMIT reached for ' + ownerPhone + ' (' + sentToday + '/' + planLimits.dailyLimit + ' plan=' + plan + ')');
+          // Head-of-line fix (runbook §2): left at its old scheduled_at the row
+          // re-enters the limit(25) oldest-first window on every tick until
+          // midnight — a couple of over-quota users starve everyone else's
+          // delivery. Move it past the Rome-midnight quota reset (+ jitter so
+          // a backlog doesn't burst at 00:00 sharp); it could not have sent
+          // before the reset anyway, so delivery timing is unchanged.
+          await supabase.from('scheduled_messages').update({
+            scheduled_at: applyJitter(nextRomeMidnight(new Date()).toISOString(), 30 * 60_000),
+            error_message: 'Limite giornaliero raggiunto (' + sentToday + '/' + planLimits.dailyLimit + ') — riprogrammato dopo il reset di mezzanotte',
+          }).eq('id', msg.id);
           return 'rate_limited' as const;
         }
 
@@ -478,7 +505,12 @@ export async function GET(req: NextRequest) {
         if (quotaErr || claimedQuota == null) {
           // Requeue: clear send_attempted_at so the released row does not carry a
           // stale timestamp into its next attempt (see buildQuotaRequeueUpdate).
-          await supabase.from('scheduled_messages').update(buildQuotaRequeueUpdate()).eq('id', msg.id);
+          // Genuine quota exhaustion (claim returned NULL) → also move past the
+          // Rome-midnight reset (head-of-line, runbook §2). A transient RPC
+          // error is NOT a quota verdict: plain requeue, retried next tick.
+          await supabase.from('scheduled_messages').update(buildQuotaRequeueUpdate(
+            quotaErr ? undefined : applyJitter(nextRomeMidnight(new Date()).toISOString(), 30 * 60_000)
+          )).eq('id', msg.id);
           console.log('CRON: quota exhausted (atomic) for ' + ownerPhone + ' plan=' + plan + (quotaErr ? ' err=' + quotaErr.message : ''));
           return 'rate_limited' as const;
         }

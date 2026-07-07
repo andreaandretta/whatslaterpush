@@ -144,9 +144,18 @@ export interface RequeueUpdate {
 /**
  * Update payload to release a message locked to 'processing' back to 'pending'
  * when the atomic quota claim fails. Clears send_attempted_at (see RequeueUpdate).
+ * With `rescheduleTo` (genuine quota exhaustion) the row also moves past the
+ * Rome-midnight quota reset: left due-now it would re-enter the cron's
+ * limit(25) oldest-first window every tick until midnight, starving other
+ * users' delivery (head-of-line; runbook §2).
  */
-export function buildQuotaRequeueUpdate(): RequeueUpdate {
-  return { status: 'pending', send_attempted_at: null };
+export function buildQuotaRequeueUpdate(rescheduleTo?: string): RequeueUpdate {
+  const update: RequeueUpdate = { status: 'pending', send_attempted_at: null };
+  if (rescheduleTo) {
+    update.scheduled_at = rescheduleTo;
+    update.error_message = 'Limite giornaliero raggiunto — riprogrammato dopo il reset di mezzanotte';
+  }
+  return update;
 }
 
 /**

@@ -84,6 +84,16 @@ function romeWallClockToUtc(y: number, mo: number, dd: number, h: number, mi: nu
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// The next Europe/Rome midnight strictly after `from` — the instant the daily
+// quota resets (reset_daily_counters and claim_daily_quota are both keyed to
+// the Rome calendar date). DST-safe: 00:00 always exists in Rome (transitions
+// happen at 02:00/03:00), and Date.UTC inside romeWallClockToUtc normalizes
+// the dd+1 overflow across month/year ends.
+export function nextRomeMidnight(from: Date): Date {
+  const p = romeParts(from);
+  return romeWallClockToUtc(p.y, p.mo, p.dd + 1, 0, 0, 0);
+}
+
 // Returns the next occurrence strictly AFTER `from`, preserving the user's
 // Europe/Rome wall-clock time-of-day across DST (a 09:00 reminder stays 09:00,
 // CEST or CET). Returns null if rule is invalid or no next occurrence exists in a
@@ -167,12 +177,25 @@ export function reconcileRecurringChain(chain: {
   latestStatus: string;
   latestScheduledAt: string;
   rule: string;
-}): ReconcileDecision {
+}, nowMs: number = Date.now()): ReconcileDecision {
   if (chain.hasLiveRow) return { insert: false };
   // Only revive a chain whose latest row ended terminally as sent/failed. A
   // 'cancelled' latest means the user stopped the chain — never revive it.
   if (chain.latestStatus !== 'sent' && chain.latestStatus !== 'failed') return { insert: false };
-  const next = nextOccurrence(chain.rule, new Date(chain.latestScheduledAt));
+  let next = nextOccurrence(chain.rule, new Date(chain.latestScheduledAt));
   if (!next) return { insert: false };
+  // Fast-forward clamp: a chain that stalled (quota starvation, long
+  // disconnect, post-beta backlog) must SKIP its missed occurrences, not
+  // deliver them late — recreating a weeks-old "next" makes it instantly due,
+  // so the chain would "catch up" by firing stale reminders back-to-back and
+  // burning the daily quota on wrong-date content. Bounded so a chain dead
+  // for years cannot spin the sweep; past the cap we drop it (insert: false)
+  // rather than guess.
+  for (let skipped = 0; next.getTime() <= nowMs; skipped++) {
+    if (skipped >= 500) return { insert: false };
+    const candidate = nextOccurrence(chain.rule, next);
+    if (!candidate) return { insert: false };
+    next = candidate;
+  }
   return { insert: true, scheduledAt: next.toISOString() };
 }

@@ -169,6 +169,18 @@ describe('buildQuotaRequeueUpdate', () => {
   test('returns status pending and CLEARS send_attempted_at', () => {
     expect(buildQuotaRequeueUpdate()).toEqual({ status: 'pending', send_attempted_at: null });
   });
+
+  // Head-of-line fix (runbook §2): on genuine quota exhaustion the row must
+  // also move past the Rome-midnight reset, or it re-enters the cron's
+  // limit(25) oldest-first window every tick until midnight and starves other
+  // users' delivery.
+  test('with a reschedule target: moves scheduled_at past the quota reset with an explanatory error_message', () => {
+    const r = buildQuotaRequeueUpdate('2026-07-07T22:10:00.000Z');
+    expect(r.status).toBe('pending');
+    expect(r.send_attempted_at).toBeNull();
+    expect(r.scheduled_at).toBe('2026-07-07T22:10:00.000Z');
+    expect(r.error_message).toMatch(/[Ll]imite giornaliero/);
+  });
 });
 
 describe('buildFailureRequeueUpdate', () => {

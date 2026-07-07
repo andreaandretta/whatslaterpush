@@ -1,4 +1,4 @@
-import { parseRule, isValidRule, nextOccurrence, nextOccurrences, reconcileRecurringChain } from '../app/lib/recurrence';
+import { parseRule, isValidRule, nextOccurrence, nextOccurrences, reconcileRecurringChain, nextRomeMidnight } from '../app/lib/recurrence';
 
 // FIX 3: the cron's reconciliation sweep is the single place that guarantees a
 // recurring chain's next occurrence exists, regardless of how the previous one
@@ -23,13 +23,16 @@ describe('reconcileRecurringChain', () => {
       .toEqual({ insert: false });
   });
 
+  // Healthy chains anchor `nowMs` just after the latest send: the next
+  // occurrence is in the future, so the fast-forward clamp is a no-op and the
+  // pre-clamp expectations hold unchanged.
   test('inserts next DAILY occurrence when chain is dead and latest was sent', () => {
-    expect(reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'sent', latestScheduledAt: '2026-06-15T09:00:00.000Z', rule: DAILY }))
+    expect(reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'sent', latestScheduledAt: '2026-06-15T09:00:00.000Z', rule: DAILY }, Date.parse('2026-06-15T10:00:00.000Z')))
       .toEqual({ insert: true, scheduledAt: '2026-06-16T09:00:00.000Z' });
   });
 
   test('inserts next occurrence when latest was FAILED (failed must not kill the chain)', () => {
-    const r = reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'failed', latestScheduledAt: '2026-06-15T09:00:00.000Z', rule: 'FREQ=WEEKLY;BYDAY=MO' });
+    const r = reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'failed', latestScheduledAt: '2026-06-15T09:00:00.000Z', rule: 'FREQ=WEEKLY;BYDAY=MO' }, Date.parse('2026-06-15T10:00:00.000Z'));
     expect(r.insert).toBe(true);
   });
 
@@ -39,8 +42,68 @@ describe('reconcileRecurringChain', () => {
   });
 
   test('next occurrence is deterministic (no jitter), preserving time-of-day', () => {
-    expect(reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'sent', latestScheduledAt: '2026-06-15T18:30:45.123Z', rule: DAILY }))
+    expect(reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'sent', latestScheduledAt: '2026-06-15T18:30:45.123Z', rule: DAILY }, Date.parse('2026-06-15T19:00:00.000Z')))
       .toEqual({ insert: true, scheduledAt: '2026-06-16T18:30:45.123Z' });
+  });
+
+  // Fast-forward clamp (runbook §2, reactivation prerequisite): a chain that
+  // stalled for weeks (quota starvation, long disconnect, post-beta backlog)
+  // must SKIP its missed occurrences, not deliver them late — recreating a
+  // weeks-old "next" makes it instantly due, so the chain would "catch up" by
+  // firing stale reminders back-to-back and burning the daily quota.
+  test('stalled DAILY chain: missed occurrences are skipped, next is strictly in the future', () => {
+    const now = Date.parse('2026-07-07T10:00:00.000Z');
+    expect(reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'sent', latestScheduledAt: '2026-06-15T09:00:00.000Z', rule: DAILY }, now))
+      .toEqual({ insert: true, scheduledAt: '2026-07-08T09:00:00.000Z' });
+  });
+
+  test('stalled WEEKLY chain: lands on the next future target weekday, not a past one', () => {
+    // Mondays 09:00 CEST (07:00Z); latest sent Mon 2026-06-01, now Tue Jul 7:
+    // Mon Jul 6 is already past → next is Mon Jul 13.
+    const now = Date.parse('2026-07-07T10:00:00.000Z');
+    expect(reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'sent', latestScheduledAt: '2026-06-01T07:00:00.000Z', rule: 'FREQ=WEEKLY;BYDAY=MO' }, now))
+      .toEqual({ insert: true, scheduledAt: '2026-07-13T07:00:00.000Z' });
+  });
+
+  test('occurrence exactly at now is NOT used (strictly-future contract)', () => {
+    const now = Date.parse('2026-07-07T09:00:00.000Z');
+    expect(reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'sent', latestScheduledAt: '2026-07-06T09:00:00.000Z', rule: DAILY }, now))
+      .toEqual({ insert: true, scheduledAt: '2026-07-08T09:00:00.000Z' });
+  });
+
+  test('chain dead for years: fast-forward cap trips -> drop instead of spinning', () => {
+    const now = Date.parse('2026-07-07T10:00:00.000Z');
+    expect(reconcileRecurringChain({ hasLiveRow: false, latestStatus: 'sent', latestScheduledAt: '2024-01-01T09:00:00.000Z', rule: DAILY }, now))
+      .toEqual({ insert: false });
+  });
+});
+
+describe('nextRomeMidnight', () => {
+  // The instant the daily quota resets: reset_daily_counters and
+  // claim_daily_quota are keyed to the Europe/Rome calendar date.
+  test('CEST (summer, UTC+2)', () => {
+    expect(nextRomeMidnight(new Date('2026-07-07T10:00:00.000Z')).toISOString()).toBe('2026-07-07T22:00:00.000Z');
+  });
+
+  test('CET (winter, UTC+1)', () => {
+    expect(nextRomeMidnight(new Date('2026-01-15T10:00:00.000Z')).toISOString()).toBe('2026-01-15T23:00:00.000Z');
+  });
+
+  test('after Rome midnight but before UTC midnight -> the NEXT Rome midnight, not today\'s', () => {
+    // 22:30Z on Jul 7 is already Jul 8, 00:30 in Rome.
+    expect(nextRomeMidnight(new Date('2026-07-07T22:30:00.000Z')).toISOString()).toBe('2026-07-08T22:00:00.000Z');
+  });
+
+  test('DST fall-back eve (2026-10-25 transition): midnight is still CEST', () => {
+    expect(nextRomeMidnight(new Date('2026-10-24T12:00:00.000Z')).toISOString()).toBe('2026-10-24T22:00:00.000Z');
+  });
+
+  test('DST spring-forward eve (2026-03-29 transition): midnight is still CET', () => {
+    expect(nextRomeMidnight(new Date('2026-03-28T12:00:00.000Z')).toISOString()).toBe('2026-03-28T23:00:00.000Z');
+  });
+
+  test('month rollover (Jul 31 -> Aug 1)', () => {
+    expect(nextRomeMidnight(new Date('2026-07-31T10:00:00.000Z')).toISOString()).toBe('2026-07-31T22:00:00.000Z');
   });
 });
 
