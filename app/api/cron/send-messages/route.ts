@@ -94,19 +94,24 @@ export async function GET(req: NextRequest) {
     } catch (e) {}
 
     // Daily reset (Europe/Rome): once per calendar day, not every cron tick.
-    // The date guard (last_daily_reset_at) is what makes the tier limits real —
-    // before this the counter was being zeroed every 60s.
-    const romeToday = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
-    const { data: resetResult } = await supabase
-      .from('user_instances')
-      .update({ messages_sent_today: 0, upsell_sent_today: false, last_daily_reset_at: romeToday })
-      // NULL-guard: also reset rows whose date was never stamped (defense;
-      // claim_daily_quota normally stamps it, backfill cleared existing NULLs).
-      .or(`last_daily_reset_at.is.null,last_daily_reset_at.lt.${romeToday}`)
-      .gt('messages_sent_today', 0)
-      .select('id');
-    if (resetResult?.length) {
-      console.log('CRON: Reset daily counters for ' + resetResult.length + ' users');
+    // The date guard (last_daily_reset_at) is what makes the tier limits real.
+    // BUG STORICO (scoperto 2026-07-07): la versione via PATCH REST falliva con
+    // 400 ad OGNI tick dal giorno del deploy e l'errore veniva scartato in
+    // silenzio → i contatori non si azzeravano MAI e il cap giornaliero era di
+    // fatto A VITA (ogni Free si fermava dopo 3 messaggi totali, "in coda per
+    // sempre"). Ora: RPC SQL (migration 20260707_reset_daily_counters_rpc,
+    // stesso pattern di claim_daily_quota che non ha mai fallito — le colonne
+    // le risolve Postgres nel corpo, fuori dallo strato REST) e l'errore è
+    // FAIL-LOUD: log + Sentry, mai più rotto in silenzio per settimane.
+    const { data: resetCount, error: resetErr } = await supabase.rpc('reset_daily_counters');
+    if (resetErr) {
+      console.error('CRON: daily counter reset FAILED: ' + resetErr.message);
+      Sentry.captureMessage('daily_counter_reset_failed', {
+        level: 'error',
+        extra: { message: resetErr.message, code: (resetErr as any).code ?? null },
+      });
+    } else if (typeof resetCount === 'number' && resetCount > 0) {
+      console.log('CRON: Reset daily counters for ' + resetCount + ' users');
     }
 
     // Trial → Free downgrade
