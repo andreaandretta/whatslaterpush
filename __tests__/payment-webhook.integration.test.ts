@@ -264,6 +264,61 @@ describe('POST /api/payment/webhook — FIX 4: invoice.payment_failed (tier-neut
   });
 });
 
+describe('POST /api/payment/webhook — unpause filtrato (runbook §2)', () => {
+  // An unfiltered unpause resurrects months-old paused rows at the exact
+  // moment of highest trust (first payment) and floods the user's real
+  // clients with stale content. Only trial-paused rows inside the recency
+  // window may come back; manually-paused rows keep the user's choice.
+  test('unpause targets ONLY trial-paused rows within the recency window', async () => {
+    mockSupa.setResponse('user_instances:select', { instance_name: INSTANCE, stripe_customer_id: 'cus_test' });
+    await callWebhook(makeCheckoutCompleted('personal'));
+    const unpauseCall = mockSupa.calls.find(
+      (c) => c.table === 'scheduled_messages' && c.operation === 'update'
+    );
+    expect(unpauseCall).toBeDefined();
+    expect(unpauseCall!.args[0]).toMatchObject({ status: 'pending', error_message: null, send_attempted_at: null });
+    const like = unpauseCall!.chain.find((s) => s.method === 'like');
+    expect(like).toBeDefined();
+    expect(like!.args).toEqual(['error_message', 'Trial scaduto%']);
+    const gte = unpauseCall!.chain.find((s) => s.method === 'gte');
+    expect(gte).toBeDefined();
+    expect(gte!.args[0]).toBe('scheduled_at');
+  });
+});
+
+describe('POST /api/payment/webhook — notify gate sotto beta (BILLING_ENABLED=false)', () => {
+  // The webhook stays ON during the beta (DB must keep mirroring Stripe for a
+  // clean reactivation), but its WhatsApp texts are billing copy — pricing,
+  // "3 messaggi/giorno", "aggiorna il metodo di pagamento" — pointing at a UI
+  // the beta does not render. State sync yes, messaging no.
+  beforeEach(() => {
+    process.env.BILLING_ENABLED = 'false';
+  });
+
+  test('checkout completed: DB sync happens, WhatsApp notify does NOT', async () => {
+    mockSupa.setResponse('user_instances:select', { instance_name: INSTANCE, stripe_customer_id: 'cus_test' });
+    await callWebhook(makeCheckoutCompleted('personal'));
+    const updateCall = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update');
+    expect(updateCall).toBeDefined();
+    expect(fetchMock.calls.find((c) => c.url.includes('/message/sendText/'))).toBeUndefined();
+  });
+
+  test('subscription deleted: plan→free sync happens, notify does NOT', async () => {
+    mockSupa.setResponse('user_instances:select', { phone_number: USER_PHONE, instance_name: INSTANCE });
+    await callWebhook({ id: 'evt_del', type: 'customer.subscription.deleted', data: { object: { customer: 'cus_test' } } });
+    const updateCall = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update');
+    expect(updateCall).toBeDefined();
+    expect(updateCall!.args[0]).toMatchObject({ subscription_plan: 'free' });
+    expect(fetchMock.calls.find((c) => c.url.includes('/message/sendText/'))).toBeUndefined();
+  });
+
+  test('invoice payment_failed: no card nudge under beta', async () => {
+    mockSupa.setResponse('user_instances:select', { phone_number: USER_PHONE, instance_name: INSTANCE, subscription_plan: 'business' });
+    await callWebhook(makeInvoicePaymentFailed());
+    expect(fetchMock.calls.find((c) => c.url.includes('/message/sendText/'))).toBeUndefined();
+  });
+});
+
 describe('POST /api/payment/webhook — FIX 4: idempotency', () => {
   test('skips an event already in processed_stripe_events (no side effects)', async () => {
     mockSupa.setResponse('processed_stripe_events:select', { event_id: 'evt_sub_upd' });

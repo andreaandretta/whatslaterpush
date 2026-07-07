@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getPlanName, getPlanLimits, resolveSubscriptionPlan } from '../../../lib/plans';
+import { isBillingEnabled } from '../../../lib/billing';
 import { logAuditEvent } from '../../../lib/audit';
 
 export const dynamic = 'force-dynamic';
@@ -116,14 +117,24 @@ export async function POST(req: Request) {
         });
       }
 
-      // Unpause any paused messages
+      // Unpause ONLY rows paused by the trial gate, and only recent ones
+      // (runbook §2): an unfiltered unpause resurrected months-old paused
+      // messages at the exact moment of highest trust (first payment) and
+      // delivered stale content to the user's real clients. Manually-paused
+      // rows (dashboard pause) keep the user's choice. error_message and
+      // send_attempted_at cleared for requeue hygiene (see RequeueUpdate).
       await supabase
         .from('scheduled_messages')
-        .update({ status: 'pending' })
+        .update({ status: 'pending', error_message: null, send_attempted_at: null })
         .eq('instance_phone', phone)
-        .eq('status', 'paused');
+        .eq('status', 'paused')
+        .like('error_message', 'Trial scaduto%')
+        .gte('scheduled_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
 
-      if (user?.instance_name) {
+      // Billing messaging is gated during the free beta (the DB sync above is
+      // NOT): these texts carry pricing/limits copy pointing at UI surfaces
+      // the beta does not render.
+      if (user?.instance_name && isBillingEnabled()) {
         const dailyLimit = getPlanLimits(plan).dailyLimit;
         await notifyUser(user.instance_name, phone,
           `✅ Piano ${getPlanName(plan)} attivato! Ora hai ${dailyLimit} messaggi al giorno.\n\nGrazie per aver scelto WhatsLater!`
@@ -161,7 +172,7 @@ export async function POST(req: Request) {
         payload: { to_plan: 'free', trigger: 'subscription_deleted' },
       });
 
-      if (user.instance_name) {
+      if (user.instance_name && isBillingEnabled()) {
         await notifyUser(user.instance_name, user.phone_number,
           '📋 Il tuo abbonamento è stato cancellato. Sei passato al piano Free (3 messaggi/giorno).\n\nI messaggi oltre il limite saranno messi in pausa. Puoi riattivare quando vuoi dalla dashboard.'
         );
@@ -219,7 +230,7 @@ export async function POST(req: Request) {
         eventType: 'payment_event',
         payload: { stripe_event: event.type },
       });
-      if (user.instance_name) {
+      if (user.instance_name && isBillingEnabled()) {
         await notifyUser(user.instance_name, user.phone_number,
           '⚠️ Il pagamento del tuo abbonamento WhatsLater non è andato a buon fine. Aggiorna il metodo di pagamento dalla dashboard per non perdere il piano.'
         );

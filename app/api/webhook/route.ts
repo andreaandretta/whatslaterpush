@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { extractInlineRecipient, extractInlineMessage, extractInlinePhoneAndName, parseAIDatetime, getRomeOffsetMs, nowRome, romeToUtc, formatContactListForLLM } from '../../lib/webhook-utils';
 import { getPlanLimits } from '../../lib/plans';
+import { isBillingEnabled, getEffectivePlan } from '../../lib/billing';
 import { containsAmbiguousTimeKeyword, hasExplicitHHMM } from '../../lib/quick-capture-utils';
 import { scrubPiiForLog } from '../../lib/log-scrubber';
 import { claimWebhookEvent, releaseWebhookEvent } from '../../lib/webhook-dedup';
@@ -1162,8 +1163,8 @@ export async function POST(req) {
       }
       console.log('WEBHOOK: vCard received:', name, num, 'owner:', ownerPhone);
       if (num) {
-        // Contact limit enforcement
-        const userPlan = user.subscription_plan || 'free';
+        // Contact limit enforcement — on the effective plan (beta: 300).
+        const userPlan = getEffectivePlan(user.subscription_plan);
         const planLimits = getPlanLimits(userPlan);
         // Count only ACTIVE saved contacts (created within the 90-day window),
         // same rule as the dashboard cap — see app/lib/contact-window.ts.
@@ -1178,10 +1179,15 @@ export async function POST(req) {
 
         if (!existingContact && (contactCount || 0) >= planLimits.maxContacts) {
           console.log('WEBHOOK: Contact limit reached for', ownerPhone, 'plan=' + userPlan, 'count=' + contactCount, 'limit=' + planLimits.maxContacts);
+          // Billing off → neutral copy: no plan name, no upsell, no #prezzi
+          // anchor (the pricing section is unmounted during the beta, the
+          // link would scroll nowhere).
           const upgradeLink = 'https://whatslaterpush.vercel.app/dashboard#prezzi';
-          await notifyOwner(instanceName, ownerPhone,
-            '⚠️ Hai raggiunto il limite di ' + planLimits.maxContacts + ' contatti del piano ' + userPlan.charAt(0).toUpperCase() + userPlan.slice(1) + '.\n\n' +
-            'Per aggiungere altri contatti, passa al piano superiore:\n' + upgradeLink);
+          const limitMsg = isBillingEnabled()
+            ? '⚠️ Hai raggiunto il limite di ' + planLimits.maxContacts + ' contatti del piano ' + userPlan.charAt(0).toUpperCase() + userPlan.slice(1) + '.\n\n' +
+              'Per aggiungere altri contatti, passa al piano superiore:\n' + upgradeLink
+            : '⚠️ Hai raggiunto il limite beta di ' + planLimits.maxContacts + ' contatti attivi.\n\nScrivici se ti serve più spazio durante la beta.';
+          await notifyOwner(instanceName, ownerPhone, limitMsg);
           return NextResponse.json({ ok: true });
         }
 
@@ -1660,7 +1666,7 @@ export async function POST(req) {
             ownerPhone,
             recName,
             aiResult.recipient_number,
-            user.subscription_plan || 'free'
+            getEffectivePlan(user.subscription_plan)
           );
         }
 

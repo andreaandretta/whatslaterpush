@@ -126,6 +126,18 @@ describe('POST /api/labels', () => {
     expect((await res.json()).error).toBe('duplicate_name');
   });
 
+  test('BILLING_ENABLED=false: a Free user CAN create labels (beta unlock via effective plan)', async () => {
+    process.env.BILLING_ENABLED = 'false';
+    mockPlan('free');
+    mockSupa.setResponse('contact_labels:insert', {
+      id: 'L-beta', name: 'Beta', color: '#0F9D58', display_order: 0, created_at: '',
+    });
+    const req = await authedReq({ name: 'Beta', color: '#0F9D58' });
+    const { POST } = await import('../app/api/labels/route');
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+  });
+
   test('403 plan_label_locked when user is on Free', async () => {
     mockPlan('free');
     const req = await authedReq({ name: 'U12', color: '#0F9D58' });

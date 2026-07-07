@@ -26,7 +26,7 @@ export function createMockSupabase() {
     const defaultResponse = { data: null, error: null };
 
     const chain: any = {};
-    const chainMethods = ['select', 'eq', 'neq', 'in', 'not', 'ilike', 'lt', 'lte', 'gte', 'gt', 'order', 'limit', 'filter', 'is'];
+    const chainMethods = ['select', 'eq', 'neq', 'in', 'not', 'ilike', 'like', 'or', 'lt', 'lte', 'gte', 'gt', 'order', 'limit', 'filter', 'is'];
 
     const originalResponse = () => {
       const key = `${table}:${operation}`;

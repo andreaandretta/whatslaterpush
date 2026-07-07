@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { denyUnlessOpsAuthorized } from '../../../lib/ops-auth';
 import { fetchDropletMetrics } from '../../../lib/droplet';
 import { getPlanLimits } from '../../../lib/plans';
+import { getEffectivePlan } from '../../../lib/billing';
 import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
@@ -70,7 +71,9 @@ export async function GET(req: NextRequest) {
 
   // D. Residual capacity
   const openInstances: Array<{ plan: string; sent: number }> = Array.isArray(db.open_instances) ? db.open_instances : [];
-  const dailyMessagesRemaining = openInstances.reduce((sum, i) => sum + Math.max(0, getPlanLimits(i.plan || 'free').dailyLimit - (i.sent || 0)), 0);
+  // Effective plan: under the free beta the raw DB plans (free/trial) would
+  // understate real capacity ~16x and the Tower would plan on wrong numbers.
+  const dailyMessagesRemaining = openInstances.reduce((sum, i) => sum + Math.max(0, getPlanLimits(getEffectivePlan(i.plan)).dailyLimit - (i.sent || 0)), 0);
 
   // E. Pairing success rate (24h). Mirrors checkPairingBlackout in monitoring.ts:
   // thresholds intentionally duplicated (small, divergent JSON shape) rather than

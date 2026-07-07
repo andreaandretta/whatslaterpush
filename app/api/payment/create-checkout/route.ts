@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
+import { isBillingEnabled } from '../../../lib/billing';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,6 +18,14 @@ export async function POST(req: NextRequest) {
     const auth = await verifyCookie(cookieRaw);
     if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const phone = auth.phone;
+
+    // Beta kill-switch: no new Stripe customers/subscriptions while billing
+    // is off. The UI hides the upgrade buttons, but this endpoint stays
+    // directly callable — the belt is server-side. The portal route has NO
+    // such gate on purpose: existing subscribers keep self-service cancel.
+    if (!isBillingEnabled()) {
+      return NextResponse.json({ error: 'billing_disabled_beta' }, { status: 403 });
+    }
 
     const { plan } = await req.json();
     if (!plan) return NextResponse.json({ error: 'plan required' }, { status: 400 });

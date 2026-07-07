@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getPlanLimits } from '../../lib/plans';
+import { isBillingEnabled, getEffectivePlan } from '../../lib/billing';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { validatePhone } from '../../lib/phone';
 import { applyJitter } from '../../lib/cron-utils';
@@ -42,14 +43,18 @@ export async function GET(req: NextRequest) {
 
   if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
-  const planLimits = getPlanLimits(user.subscription_plan || 'free');
+  const planLimits = getPlanLimits(getEffectivePlan(user.subscription_plan));
   const historyStart = new Date(Date.now() - planLimits.historyDays * 24 * 60 * 60 * 1000).toISOString();
 
+  // The history window bounds TERMINAL rows only: pending/paused/awaiting are
+  // the user's queue (future), not history. Hiding them past historyDays made
+  // old-but-live rows invisible — and thus uneditable/unresumable — in the
+  // dashboard while the cron kept processing them (runbook §2).
   const { data, error } = await supabase
     .from('scheduled_messages')
     .select('*')
     .eq('instance_phone', phone)
-    .gte('created_at', historyStart)
+    .or(`created_at.gte.${historyStart},status.in.(pending,paused,processing,awaiting_time,awaiting_recipient,awaiting_confirm)`)
     .order('scheduled_at', { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -87,9 +92,17 @@ export async function GET(req: NextRequest) {
     .select('id', { count: 'exact', head: true })
     .eq('instance_phone', phone);
 
+  // Client contract: subscription_plan is the plan whose limits/UI apply —
+  // the dashboard gates ALL plan UI on it (pricing, trial banner, counter,
+  // upsell copy). raw_plan mirrors the stored one: the Stripe portal button
+  // keys on it, so a paying user keeps portal access while the beta overrides
+  // limits. With billing on the two coincide (raw 'unknown' kept as-is).
+  const rawPlan = user?.subscription_plan || 'unknown';
   return NextResponse.json({
     messages,
-    subscription_plan: user?.subscription_plan || 'unknown',
+    subscription_plan: isBillingEnabled() ? rawPlan : getEffectivePlan(rawPlan),
+    raw_plan: rawPlan,
+    billing_enabled: isBillingEnabled(),
     trial_ends_at: user?.trial_ends_at || null,
     connection_status: user?.connection_status || null,
     total_scheduled_lifetime: lifetimeCount ?? 0,
@@ -377,7 +390,9 @@ export async function POST(req: NextRequest) {
 
   if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
-  const plan = user.subscription_plan || 'free';
+  // Effective plan: contact cap and MAX_PENDING follow it (beta: 300/350).
+  // With billing on this is the raw plan with the same || 'free' fallback.
+  const plan = getEffectivePlan(user.subscription_plan);
   const limits = getPlanLimits(plan);
 
   // The contact cap counts ACTIVE recipients, not lifetime ones: a recipient

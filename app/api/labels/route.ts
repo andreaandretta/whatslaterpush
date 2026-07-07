@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { isValidLabelColor } from '../../lib/labels';
 import { getPlanLimits } from '../../lib/plans';
+import { getEffectivePlan } from '../../lib/billing';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,7 +78,8 @@ export async function POST(req: NextRequest) {
     .select('subscription_plan')
     .eq('phone_number', phone)
     .single();
-  const plan = user?.subscription_plan || 'free';
+  // Effective plan (beta: customLabels true → gate never trips with billing off).
+  const plan = getEffectivePlan(user?.subscription_plan);
   if (!getPlanLimits(plan).customLabels) {
     return NextResponse.json({ error: 'plan_label_locked', plan }, { status: 403 });
   }
