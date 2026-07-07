@@ -225,7 +225,11 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
 
       const body = await res.json().catch(() => ({}));
       if (res.status === 403 && body.error === 'plan_contacts_limit_exceeded') {
-        setError(`Hai raggiunto il limite di ${body.limit} contatti del piano ${body.plan}.`);
+        // plan 'beta' = free beta: no plan name (nothing purchasable) and the
+        // copy must not match the 'Aggiorna piano' link gate below.
+        setError(body.plan === 'beta'
+          ? `Hai raggiunto il limite beta di ${body.limit} contatti attivi.`
+          : `Hai raggiunto il limite di ${body.limit} contatti del piano ${body.plan}.`);
       } else if (body.error) {
         setError(translateError(body.error));
       } else {
@@ -411,7 +415,9 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           {error && (
             <div className="mx-4 mt-3 p-3 rounded-xl bg-red-900/40 text-red-200 text-sm">
               {error}
-              {error.includes('limite') && (
+              {/* No upgrade CTA on the beta-limit copy: nothing to buy, and
+                  the #prezzi anchor points at the unmounted pricing grid. */}
+              {error.includes('limite') && !error.includes('limite beta') && (
                 <a href="#prezzi" className="underline ml-2">Aggiorna piano</a>
               )}
             </div>

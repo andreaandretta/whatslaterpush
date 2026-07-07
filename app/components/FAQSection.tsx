@@ -5,6 +5,7 @@ import { cn } from '../lib/cn';
 
 interface FAQSectionProps {
   theme?: 'light' | 'dark';
+  billingEnabled?: boolean;
 }
 
 const faqs = [
@@ -42,7 +43,18 @@ const faqs = [
   },
 ];
 
-export default function FAQSection({ theme = 'light' }: FAQSectionProps) {
+export default function FAQSection({ theme = 'light', billingEnabled = true }: FAQSectionProps) {
+  // During the free beta there are no per-plan retention tiers: everyone is
+  // on the beta plan's 90-day history (app/lib/plans.ts).
+  const items = billingEnabled
+    ? faqs
+    : faqs.map((f) => ({
+        ...f,
+        a: f.a.replace(
+          'dopo il periodo di storico previsto dal piano (7/30/60/90 giorni)',
+          'dopo il periodo di storico della beta (90 giorni)'
+        ),
+      }));
   const [openIndex, setOpenIndex] = useState<number | null>(0);
   const dark = theme === 'dark';
 
@@ -66,7 +78,7 @@ export default function FAQSection({ theme = 'light' }: FAQSectionProps) {
           Le risposte che servono prima di provarlo.
         </p>
         <div className="space-y-4">
-          {faqs.map((faq, i) => (
+          {items.map((faq, i) => (
             <div
               key={i}
               className={`rounded-2xl shadow-sm border overflow-hidden ${cardBg} ${cardBorder}`}

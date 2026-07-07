@@ -103,6 +103,9 @@ export async function GET(req: NextRequest) {
     subscription_plan: isBillingEnabled() ? rawPlan : getEffectivePlan(rawPlan),
     raw_plan: rawPlan,
     billing_enabled: isBillingEnabled(),
+    // T-14 lever (runbook §3): set BETA_END_DATE on Vercel to surface the
+    // end-of-beta banner in the dashboard. Meaningful only in beta mode.
+    beta_end_date: isBillingEnabled() ? null : (process.env.BETA_END_DATE || null),
     trial_ends_at: user?.trial_ends_at || null,
     connection_status: user?.connection_status || null,
     total_scheduled_lifetime: lifetimeCount ?? 0,

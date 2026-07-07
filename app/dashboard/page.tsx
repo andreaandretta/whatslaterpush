@@ -20,9 +20,18 @@ import Logo from '@/components/Logo';
 
 
 interface SubscriptionState {
+  // Effective plan from GET /api/messages: the whole plan UI keys on it
+  // (pricing, trial banner, counter, upgrade copy). Under the free beta the
+  // server resolves it to 'beta'.
   plan: string;
   trial_ends_at: string | null;
   expired: boolean;
+  // Stored plan: ONLY for the Stripe portal button — a paying user must keep
+  // portal access (self-service cancel) while the beta overrides limits.
+  rawPlan: string;
+  billingEnabled: boolean;
+  // Set via BETA_END_DATE env at T-14 (runbook §3) → end-of-beta banner.
+  betaEndDate: string | null;
 }
 
 interface ScheduledMessage {
@@ -48,7 +57,7 @@ export default function DashboardPage() {
   const [userPhone, setUserPhone]       = useState('');
   const [messages, setMessages]         = useState<ScheduledMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(true);
-  const [subscription, setSubscription] = useState<SubscriptionState>({ plan: 'unknown', trial_ends_at: null, expired: false });
+  const [subscription, setSubscription] = useState<SubscriptionState>({ plan: 'unknown', trial_ends_at: null, expired: false, rawPlan: 'unknown', billingEnabled: true, betaEndDate: null });
   const [connected, setConnected] = useState(true); // Evolution link state from /api/messages
   const [sessionValidated, setSessionValidated] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
@@ -97,7 +106,7 @@ export default function DashboardPage() {
       const res = await fetch('/api/messages');
       if (res.status === 403) {
         const err = await res.json();
-        setSubscription({ plan: err.subscription_plan || 'expired', trial_ends_at: err.trial_ends_at, expired: true });
+        setSubscription({ plan: err.subscription_plan || 'expired', trial_ends_at: err.trial_ends_at, expired: true, rawPlan: err.raw_plan || err.subscription_plan || 'expired', billingEnabled: err.billing_enabled !== false, betaEndDate: null });
         setMessages([]);
         return;
       }
@@ -105,7 +114,7 @@ export default function DashboardPage() {
         const d = await res.json();
         if (d.messages) {
           setMessages(Array.isArray(d.messages) ? d.messages : []);
-          setSubscription({ plan: d.subscription_plan || 'free', trial_ends_at: d.trial_ends_at, expired: false });
+          setSubscription({ plan: d.subscription_plan || 'free', trial_ends_at: d.trial_ends_at, expired: false, rawPlan: d.raw_plan || d.subscription_plan || 'free', billingEnabled: d.billing_enabled !== false, betaEndDate: d.beta_end_date || null });
           setConnected(d.connection_status === 'open');
           if (typeof d.total_scheduled_lifetime === 'number') {
             const next = d.total_scheduled_lifetime;
@@ -319,7 +328,9 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#111B21] text-white font-sans">
-      <DashboardNavbar userPhone={userPhone} plan={subscription.plan} onLogout={handleLogout} />
+      {/* rawPlan, not plan: the portal button must stay visible for real
+          subscribers even while the beta resolves everyone's plan to 'beta'. */}
+      <DashboardNavbar userPhone={userPhone} plan={subscription.rawPlan} onLogout={handleLogout} />
 
       {/* Status strip — fuses connected + plan + daily counter + contextual upgrade */}
       <StatusStrip
@@ -479,7 +490,8 @@ function StatusStrip({ userPhone, subscription, messages, connected }: {
   const planKnown = subscription.plan !== 'unknown';
   const planLabel = getPlanName(subscription.plan);
   const limits = getPlanLimits(subscription.plan);
-  const showCounter = planKnown && (subscription.plan === 'free' || subscription.plan === 'personal' || subscription.plan === 'professional');
+  // 'beta' included: transparency on the beta cap (50/day) beats hiding it.
+  const showCounter = planKnown && (subscription.plan === 'free' || subscription.plan === 'personal' || subscription.plan === 'professional' || subscription.plan === 'beta');
 
   // Count messages scheduled or sent today (matches legacy DailyCapBadge logic)
   const today = new Date();
@@ -535,6 +547,16 @@ function StatusStrip({ userPhone, subscription, messages, connected }: {
   })();
   const showTrialBanner = planKnown && subscription.plan === 'trial';
 
+  // End-of-beta notice (runbook §3): appears only when BETA_END_DATE is set
+  // on Vercel at T-14 — the one advance-warning surface before billing
+  // reactivation. Lifecycle exception to the silent principle.
+  const betaEndLabel = ((): string | null => {
+    if (subscription.billingEnabled || !subscription.betaEndDate) return null;
+    const d = new Date(subscription.betaEndDate);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleDateString('it-IT', { day: 'numeric', month: 'long' });
+  })();
+
   return (
     <div className="max-w-4xl mx-auto px-4 pt-20 pb-3 border-b border-[#2A3942] text-sm">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between sm:flex-wrap gap-1 sm:gap-2">
@@ -557,12 +579,17 @@ function StatusStrip({ userPhone, subscription, messages, connected }: {
           )}
         </div>
         {/* Riga 2 mobile / parte destra desktop: counter + upgrade */}
-        {(showCounter || upgradeCopy || showTrialBanner) && (
+        {(showCounter || upgradeCopy || showTrialBanner || betaEndLabel) && (
           <div className="flex items-center justify-between gap-2 flex-wrap sm:justify-end sm:gap-3">
             {showCounter && (
               <span className="text-white font-medium">
                 Hai schedulato {countToday} messagg{countToday === 1 ? 'io' : 'i'} oggi ✓
                 <span className="text-gray-500 text-xs ml-1">(limite {limits.dailyLimit})</span>
+              </span>
+            )}
+            {betaEndLabel && (
+              <span className="bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2.5 py-1 rounded-full text-xs font-semibold shrink-0">
+                La beta gratuita termina il {betaEndLabel}
               </span>
             )}
             {showTrialBanner && <TrialBanner daysLeft={trialDays} />}

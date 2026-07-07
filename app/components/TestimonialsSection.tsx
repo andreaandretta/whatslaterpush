@@ -29,7 +29,7 @@ const testimonials = [
   },
 ];
 
-export default function TestimonialsSection() {
+export default function TestimonialsSection({ billingEnabled = true }: { billingEnabled?: boolean }) {
   return (
     <section id="testimonial" className="py-20 sm:py-24 bg-[#ECE5DD] wa-pattern">
       <div className="max-w-5xl mx-auto px-6">
@@ -52,7 +52,9 @@ export default function TestimonialsSection() {
               </div>
 
               <blockquote className="text-[15px] leading-relaxed text-text-primary flex-1">
-                {t.quote}
+                {/* During the beta no price is visible anywhere — a quote citing
+                    "i 5€" would reference a plan the visitor cannot see. */}
+                {billingEnabled ? t.quote : t.quote.replace(' Vale i 5€.', '')}
               </blockquote>
 
               <figcaption className="flex items-center gap-3 mt-5 pt-5 border-t border-[#075E54]/10">

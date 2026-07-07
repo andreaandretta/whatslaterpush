@@ -4,7 +4,7 @@ import Link from 'next/link';
 // Final CTA — case-study mint band. Replaces the previous dark-green section.
 // Mint background with subtle WA doodle, primary CTA, "echo" of the
 // introduction mint band so the landing bookends symmetrically.
-export default function FinalCTA() {
+export default function FinalCTA({ billingEnabled = true }: { billingEnabled?: boolean }) {
   return (
     <section className="relative bg-[#A8E6CF] wa-doodle overflow-hidden py-20 sm:py-24">
       <div className="relative max-w-3xl mx-auto px-6 text-center">
@@ -29,7 +29,8 @@ export default function FinalCTA() {
         </div>
 
         <p className="mt-4 text-sm text-[#075E54]/70 font-semibold">
-          3 messaggi/giorno gratis, sempre.
+          {/* The free-tier claim is wrong during the beta (everything is free). */}
+          {billingEnabled ? '3 messaggi/giorno gratis, sempre.' : 'Tutto gratis durante la beta.'}
         </p>
       </div>
     </section>

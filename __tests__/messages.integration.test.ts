@@ -94,6 +94,20 @@ describe('GET /api/messages', () => {
     expect(body.billing_enabled).toBe(false);
   });
 
+  test('billing OFF + BETA_END_DATE set: payload carries beta_end_date (T-14 banner lever)', async () => {
+    jest.resetModules();
+    jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+    process.env.BILLING_ENABLED = 'false';
+    process.env.BETA_END_DATE = '2026-10-01';
+    mockSupa.setResponse('user_instances:select', { id: 'u1', subscription_plan: 'free', trial_ends_at: null, connection_status: 'open' }, null);
+    mockSupa.setResponse('scheduled_messages:select', [], null);
+    const cookie = await signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });
+    const { GET } = await import('../app/api/messages/route');
+    const res = await GET(reqWithCookie('GET', 'http://localhost/api/messages', cookie) as any);
+    const body = await res.json();
+    expect(body.beta_end_date).toBe('2026-10-01');
+  });
+
   // History-window fix (runbook §2): pending/paused/awaiting rows are the
   // user's queue, not history — they must stay visible (and thus editable/
   // resumable) past historyDays, or the cron keeps sending rows the user can
