@@ -10,6 +10,12 @@ import { computeTypingDelay, sendTypingPresence } from '../../../lib/typing-pres
 import { logAuditEvent, hashContactRef } from '../../../lib/audit';
 
 export const dynamic = 'force-dynamic';
+// Niente Next Data Cache su NESSUNA fetch di questo cron: il POST costante
+// dell'RPC reset_daily_counters veniva congelato dopo la prima esecuzione
+// (stesso bug documentato in stress-index e in lib/droplet) → il reset girava
+// una volta per deployment e mai più. force-dynamic NON basta: copre la Full
+// Route Cache, non la Data Cache delle fetch.
+export const fetchCache = 'force-no-store';
 
 async function checkFailures(supabase: ReturnType<typeof createClient>, userPhone: string) {
   const { count } = await supabase.from('scheduled_messages').select('id', { count: 'exact', head: true }).eq('instance_phone', userPhone).eq('status', 'failed').gte('created_at', new Date(Date.now() - 86400000).toISOString());
