@@ -1,4 +1,4 @@
-import { shouldSendMessage, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, PendingMessage, UserInstance } from '../app/lib/cron-utils';
+import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, PendingMessage, UserInstance } from '../app/lib/cron-utils';
 import { createMockSupabase } from './helpers/mocks';
 
 function makeMessage(overrides: { user_instances?: Partial<UserInstance> | null } & Partial<Omit<PendingMessage, 'user_instances'>> = {}): PendingMessage {
@@ -196,6 +196,38 @@ describe('buildFailureRequeueUpdate', () => {
     expect(u.send_attempted_at).toBeNull();
     expect(u.scheduled_at).toBe('2026-06-15T17:00:00.000Z'); // original — no reschedule on terminal
     expect(u.retry_count).toBe(3);
+  });
+});
+
+describe('shouldSendUpsell', () => {
+  const base = { billingEnabled: true, plan: 'free', newSentToday: 2, dailyLimit: 3, upsellSentToday: false };
+
+  test('fires at exactly 80% of the daily limit, once per day', () => {
+    expect(shouldSendUpsell(base)).toBe(true); // floor(3*0.8) = 2
+    expect(shouldSendUpsell({ ...base, plan: 'personal', newSentToday: 16, dailyLimit: 20 })).toBe(true);
+  });
+
+  test('does not fire off-threshold or when already sent today', () => {
+    expect(shouldSendUpsell({ ...base, newSentToday: 1 })).toBe(false);
+    expect(shouldSendUpsell({ ...base, newSentToday: 3 })).toBe(false);
+    expect(shouldSendUpsell({ ...base, upsellSentToday: true })).toBe(false);
+  });
+
+  test('business has no higher tier -> never', () => {
+    expect(shouldSendUpsell({ ...base, plan: 'business', newSentToday: 40, dailyLimit: 50 })).toBe(false);
+  });
+
+  // The beta kill-switch: with billing off NO pricing copy may leave the
+  // system. Without this gate the synthetic 'beta' plan (≠ 'business') would
+  // sail through the old condition and WhatsApp "Passa a Business €19,99"
+  // at the 40th message of the free beta.
+  test('billing OFF -> never, regardless of plan/threshold', () => {
+    expect(shouldSendUpsell({ ...base, billingEnabled: false })).toBe(false);
+    expect(shouldSendUpsell({ ...base, billingEnabled: false, plan: 'beta', newSentToday: 40, dailyLimit: 50 })).toBe(false);
+  });
+
+  test("double belt: plan 'beta' -> never, even with billing ON", () => {
+    expect(shouldSendUpsell({ ...base, plan: 'beta', newSentToday: 40, dailyLimit: 50 })).toBe(false);
   });
 });
 

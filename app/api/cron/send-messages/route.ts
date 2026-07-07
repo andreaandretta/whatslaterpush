@@ -2,7 +2,8 @@ import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { normalizeItalianPhone } from '../../../lib/phone';
-import { shouldSendMessage, rescheduleTomorrow, rescheduleSoon, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt } from '../../../lib/cron-utils';
+import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt } from '../../../lib/cron-utils';
+import { isBillingEnabled, getEffectivePlan } from '../../../lib/billing';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
 import { reconcileRecurringChain } from '../../../lib/recurrence';
@@ -120,34 +121,42 @@ export async function GET(req: NextRequest) {
       console.log('CRON: Reset daily counters for ' + resetCount + ' users');
     }
 
-    // Trial → Free downgrade
-    const { data: expiredTrials } = await supabase
-      .from('user_instances')
-      .select('phone_number, instance_name')
-      .eq('subscription_plan', 'trial')
-      .lt('trial_ends_at', new Date().toISOString());
-
-    for (const trial of (expiredTrials || [])) {
-      // CAS: only the first concurrent cron trigger flips trial->free (others
-      // see plan already 'free' and get 0 rows back) => exactly one "trial
-      // scaduto" WhatsApp instead of up to 3 from the 3 concurrent triggers.
-      const { data: downgraded } = await supabase.from('user_instances')
-        .update({ subscription_plan: 'free' })
-        .eq('phone_number', trial.phone_number)
+    // Trial → Free downgrade — the ONLY systematic billing mutation in the
+    // codebase, gated on the kill-switch: during the free beta the trial
+    // state must stay frozen in the DB (the reactivation runbook,
+    // docs/RUNBOOK-riattivazione-billing.md, depends on it) and no pricing
+    // WhatsApp may go out. On reactivation this block resumes on its own and
+    // works through the backlog (the runbook's grandfather backfill empties
+    // that backlog BEFORE the flip).
+    if (isBillingEnabled()) {
+      const { data: expiredTrials } = await supabase
+        .from('user_instances')
+        .select('phone_number, instance_name')
         .eq('subscription_plan', 'trial')
-        .select('phone_number');
-      if (!downgraded || downgraded.length === 0) continue;
-      try {
-        await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + trial.instance_name, {
-          method: 'POST',
-          headers: { apikey: process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            number: trial.phone_number,
-            text: `⏰ Il tuo trial WhatsLater è scaduto.\n\nHai 3 messaggi gratuiti al giorno. Per 20/giorno, passa a Personal a €4,99/mese:\n${process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app'}/dashboard`
-          }),
-        });
-      } catch (e) {}
-      console.log('CRON: Trial expired → free for ' + trial.phone_number);
+        .lt('trial_ends_at', new Date().toISOString());
+
+      for (const trial of (expiredTrials || [])) {
+        // CAS: only the first concurrent cron trigger flips trial->free (others
+        // see plan already 'free' and get 0 rows back) => exactly one "trial
+        // scaduto" WhatsApp instead of up to 3 from the 3 concurrent triggers.
+        const { data: downgraded } = await supabase.from('user_instances')
+          .update({ subscription_plan: 'free' })
+          .eq('phone_number', trial.phone_number)
+          .eq('subscription_plan', 'trial')
+          .select('phone_number');
+        if (!downgraded || downgraded.length === 0) continue;
+        try {
+          await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + trial.instance_name, {
+            method: 'POST',
+            headers: { apikey: process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              number: trial.phone_number,
+              text: `⏰ Il tuo trial WhatsLater è scaduto.\n\nHai 3 messaggi gratuiti al giorno. Per 20/giorno, passa a Personal a €4,99/mese:\n${process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app'}/dashboard`
+            }),
+          });
+        } catch (e) {}
+        console.log('CRON: Trial expired → free for ' + trial.phone_number);
+      }
     }
 
     // P0 FIX: Single JOIN query - each row carries its own instance_name
@@ -293,8 +302,15 @@ export async function GET(req: NextRequest) {
 
       const batch = messages.slice(i, i + 5);
       const results = await Promise.allSettled(batch.map(async (msg) => {
-        // Use shouldSendMessage from cron-utils (tested by 19 unit tests)
-        const decision = shouldSendMessage(msg);
+        // Resolve the billing-effective plan BEFORE any gate: with billing off
+        // the raw row still says 'trial' (expired months ago) and would fall
+        // into the trial_expired branch, pausing every beta message. The copy
+        // is decision-local — msg.user_instances stays raw, and 'beta' must
+        // never be written back to the DB (the CHECK constraint rejects it).
+        const effectivePlan = getEffectivePlan(msg.user_instances?.subscription_plan);
+        const decision = shouldSendMessage(msg.user_instances
+          ? { ...msg, user_instances: { ...msg.user_instances, subscription_plan: effectivePlan } }
+          : msg);
 
         if (decision === 'no_instance') {
           console.error('CRON: Message ' + msg.id + ' has no linked user_instance. Skipping.');
@@ -389,8 +405,10 @@ export async function GET(req: NextRequest) {
 
         // decision === 'send' — proceed with tier limits, cool-down, rate limiting
 
-        // Tier daily limit check
-        const plan = msg.user_instances.subscription_plan || 'free';
+        // Tier daily limit check — on the EFFECTIVE plan: quota, MAX cap and
+        // upsell all follow it (beta: 50/day). With billing on this is the raw
+        // plan with the same || 'free' fallback as before.
+        const plan = effectivePlan;
         const planLimits = getPlanLimits(plan);
         const sentToday = msg.user_instances.messages_sent_today || 0;
         if (sentToday >= planLimits.dailyLimit) {
@@ -619,9 +637,17 @@ export async function GET(req: NextRequest) {
         // Daily counter was already incremented atomically at the pre-send
         // quota claim (claim_daily_quota); newSentToday captured there.
 
-        // Upsell at 80% of daily limit (once per day)
-        const upsellThreshold = Math.floor(planLimits.dailyLimit * 0.8);
-        if (newSentToday === upsellThreshold && !(msg.user_instances.upsell_sent_today) && plan !== 'business') {
+        // Upsell at 80% of daily limit (once per day). Gate extracted to
+        // cron-utils.shouldSendUpsell: with billing off it NEVER fires (no
+        // pricing copy during the free beta), and 'beta' is excluded as a
+        // second belt on top of the flag.
+        if (shouldSendUpsell({
+          billingEnabled: isBillingEnabled(),
+          plan,
+          newSentToday,
+          dailyLimit: planLimits.dailyLimit,
+          upsellSentToday: !!msg.user_instances.upsell_sent_today,
+        })) {
           const nextPlan = (plan === 'free' || plan === 'trial') ? 'Personal' : 'Business';
           const nextLimit = (plan === 'free' || plan === 'trial') ? 20 : 50;
           const nextPrice = (plan === 'free' || plan === 'trial') ? '€4,99' : '€19,99';

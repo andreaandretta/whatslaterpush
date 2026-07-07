@@ -70,6 +70,28 @@ export function shouldSendMessage(msg: PendingMessage): SkipReason {
 }
 
 /**
+ * Upsell gate at 80% of the daily limit (once per day). Pure so the billing
+ * kill-switch semantics stay unit-testable:
+ *  - billing OFF → never (no pricing copy may leave the system during the
+ *    free beta — the caller passes isBillingEnabled());
+ *  - 'business' has no higher tier; 'beta' is the synthetic beta plan and
+ *    must never receive pricing copy even if billing were re-enabled while a
+ *    'beta' string is still in flight (double belt on top of the flag).
+ */
+export function shouldSendUpsell(opts: {
+  billingEnabled: boolean;
+  plan: string;
+  newSentToday: number;
+  dailyLimit: number;
+  upsellSentToday: boolean;
+}): boolean {
+  if (!opts.billingEnabled) return false;
+  if (opts.plan === 'business' || opts.plan === 'beta') return false;
+  if (opts.upsellSentToday) return false;
+  return opts.newSentToday === Math.floor(opts.dailyLimit * 0.8);
+}
+
+/**
  * Computes the rescheduled time for a disconnected instance (tomorrow same time).
  */
 export function rescheduleTomorrow(scheduledAt: string): string {
