@@ -28,7 +28,7 @@ export default function PrivacyPage() {
       {/* Content */}
       <main className="max-w-4xl mx-auto px-6 py-16">
         <h1 className="text-4xl font-bold text-text-primary mb-2">Informativa sulla Privacy</h1>
-        <p className="text-gray-500 mb-12">Ultimo aggiornamento: 17 marzo 2026</p>
+        <p className="text-gray-500 mb-12">Ultimo aggiornamento: 7 luglio 2026</p>
 
         <div className="prose prose-gray max-w-none space-y-10 text-[15px] leading-relaxed">
 
@@ -158,9 +158,9 @@ export default function PrivacyPage() {
                     <td className="py-3">SCC in vigore</td>
                   </tr>
                   <tr>
-                    <td className="py-3 pr-4 font-medium">DigitalOcean LLC</td>
+                    <td className="py-3 pr-4 font-medium">Hetzner Online GmbH</td>
                     <td className="py-3 pr-4">Server per connessione WhatsApp</td>
-                    <td className="py-3 pr-4">EU</td>
+                    <td className="py-3 pr-4">EU (Germania)</td>
                     <td className="py-3">Incluso nei ToS</td>
                   </tr>
                 </tbody>

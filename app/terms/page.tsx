@@ -28,7 +28,7 @@ export default function TermsPage() {
       {/* Content */}
       <main className="max-w-4xl mx-auto px-6 py-16">
         <h1 className="text-4xl font-bold text-text-primary mb-2">Termini di Servizio</h1>
-        <p className="text-gray-500 mb-12">Ultimo aggiornamento: 17 marzo 2026</p>
+        <p className="text-gray-500 mb-12">Ultimo aggiornamento: 7 luglio 2026</p>
 
         <div className="prose prose-gray max-w-none space-y-10 text-[15px] leading-relaxed">
 
@@ -97,6 +97,7 @@ export default function TermsPage() {
                     <th className="text-left py-3 pr-4 font-semibold">Caratteristica</th>
                     <th className="text-left py-3 pr-4 font-semibold">Free</th>
                     <th className="text-left py-3 pr-4 font-semibold">Personal (&euro;4,99/mese)</th>
+                    <th className="text-left py-3 pr-4 font-semibold">Professional (&euro;9,99/mese)</th>
                     <th className="text-left py-3 font-semibold">Business (&euro;19,99/mese)</th>
                   </tr>
                 </thead>
@@ -105,25 +106,29 @@ export default function TermsPage() {
                     <td className="py-3 pr-4">Messaggi al giorno</td>
                     <td className="py-3 pr-4">3</td>
                     <td className="py-3 pr-4">20</td>
+                    <td className="py-3 pr-4">35</td>
                     <td className="py-3">50</td>
                   </tr>
                   <tr>
-                    <td className="py-3 pr-4">Contatti salvati</td>
-                    <td className="py-3 pr-4">5</td>
+                    <td className="py-3 pr-4">Contatti attivi (finestra 90 giorni)</td>
+                    <td className="py-3 pr-4">10</td>
                     <td className="py-3 pr-4">50</td>
+                    <td className="py-3 pr-4">200</td>
                     <td className="py-3">Illimitati</td>
                   </tr>
                   <tr>
                     <td className="py-3 pr-4">AI parsing</td>
                     <td className="py-3 pr-4">Incluso</td>
                     <td className="py-3 pr-4">Incluso</td>
-                    <td className="py-3">Incluso + rewrite</td>
+                    <td className="py-3 pr-4">Incluso</td>
+                    <td className="py-3">Incluso</td>
                   </tr>
                   <tr>
                     <td className="py-3 pr-4">Storico messaggi</td>
                     <td className="py-3 pr-4">7 giorni</td>
                     <td className="py-3 pr-4">30 giorni</td>
-                    <td className="py-3">90 giorni + export</td>
+                    <td className="py-3 pr-4">60 giorni</td>
+                    <td className="py-3">90 giorni</td>
                   </tr>
                 </tbody>
               </table>
@@ -182,9 +187,9 @@ export default function TermsPage() {
             <h2 className="text-2xl font-bold text-text-primary mb-4">6. Limiti di Utilizzo e Protezione Anti-Ban</h2>
             <p className="mb-4">Per proteggere gli utenti dal rischio di restrizioni WhatsApp, il Servizio applica automaticamente:</p>
             <ul className="list-disc pl-6 space-y-1">
-              <li><strong>Limite giornaliero</strong> per piano: Free (3), Personal (20), Business (50) messaggi al giorno.</li>
+              <li><strong>Limite giornaliero</strong> per piano: Free (3), Personal (20), Professional (35), Business (50) messaggi al giorno.</li>
               <li><strong>Cool-down per destinatario:</strong> massimo 3 messaggi allo stesso numero nelle 24 ore.</li>
-              <li><strong>Rate limiting:</strong> massimo 15 messaggi al minuto. Oltre 10 messaggi in 10 minuti, rallentamento a 1 messaggio al minuto.</li>
+              <li><strong>Rate limiting:</strong> massimo 15 messaggi al minuto e 100 al giorno per utente; superate le soglie, gli invii sono sospesi fino alla mezzanotte successiva.</li>
               <li><strong>Avviso automatico:</strong> all&apos;80% del limite giornaliero, l&apos;utente riceve un avviso.</li>
               <li><strong>Solo contatti noti:</strong> i messaggi possono essere inviati solo a contatti salvati (nessun invio a numeri sconosciuti).</li>
             </ul>

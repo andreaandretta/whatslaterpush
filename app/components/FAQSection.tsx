@@ -39,7 +39,7 @@ const faqs = [
   },
   {
     q: 'Posso programmare messaggi ricorrenti tipo "ogni lunedì alle 7 alla squadra"?',
-    a: 'Non ancora — è in roadmap per la prossima release. Oggi puoi schedulare un messaggio alla volta. Workaround che usano gli allenatori: la domenica sera, in 10 minuti, schedulano i 4 lunedì del mese. Il copia-incolla del testo è veloce.',
+    a: 'Sì. Quando programmi il messaggio, tocca "Ripeti" e scegli: ogni giorno, ogni settimana (stesso giorno) o ogni mese (stesso giorno del mese). Per "ogni lunedì alle 7" programmi il primo lunedì alle 7 e imposti Ripeti → ogni lunedì: le occorrenze successive si creano da sole, e l\'orario resta quello italiano anche al cambio d\'ora legale.',
   },
 ];
 
