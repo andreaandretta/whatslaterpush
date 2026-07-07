@@ -48,14 +48,17 @@ export function shouldSendMessage(msg: PendingMessage): SkipReason {
   // P9: Check trial/subscription
   const subPlan = userInst.subscription_plan;
   const trialEnd = userInst.trial_ends_at;
-  const isPaying = subPlan === 'personal' || subPlan === 'professional' || subPlan === 'business';
+  // 'beta' is the synthetic free-beta plan (app/lib/billing.ts): it must count
+  // as paying here — beta users' trial_ends_at is typically months in the past,
+  // so falling through to the trial branch would pause every beta message.
+  const isPaying = subPlan === 'personal' || subPlan === 'professional' || subPlan === 'business' || subPlan === 'beta';
   // 'free' is the TERMINAL post-trial tier: its trial_ends_at is always in the
   // past (that's how the user became free), so gating it on the trial window
   // would (and did) pause every Free user forever and make the 3/day branch
   // dead code. Free must return 'send' here; its 3-msg/day allowance is enforced
-  // downstream by claim_daily_quota (dailyLimit=3) + the line-329 pre-check.
-  // 'trial_expired' is reserved for an actual 'trial' (or unknown/empty legacy
-  // plan) whose trial date is expired or missing.
+  // downstream by claim_daily_quota (dailyLimit=3) + the daily-limit pre-check
+  // in send-messages. 'trial_expired' is reserved for an actual 'trial' (or
+  // unknown/empty legacy plan) whose trial date is expired or missing.
   if (!isPaying && subPlan !== 'free') {
     const trialExpiredAt = trialEnd ? new Date(trialEnd) : null;
     if (!trialExpiredAt || trialExpiredAt < new Date()) {

@@ -15,6 +15,12 @@ const PLANS: Record<string, PlanLimits> = {
   personal:     { dailyLimit: 20, maxContacts: 50,     maxRetry: 3, historyDays: 30, customLabels: true  },
   professional: { dailyLimit: 35, maxContacts: 200,    maxRetry: 3, historyDays: 60, customLabels: true  },
   business:     { dailyLimit: 50, maxContacts: 999999, maxRetry: 3, historyDays: 90, customLabels: true  },
+  // Synthetic free-beta plan (BILLING_ENABLED=false → getEffectivePlan in
+  // app/lib/billing.ts). Runtime-only: the DB CHECK constraint on
+  // subscription_plan rejects it, so it can never be persisted. dailyLimit 50
+  // is a hard ceiling — rate-limit.ts (SPAM_THRESHOLD=100, H11) assumes the
+  // highest tier cap stays well under 100.
+  beta:         { dailyLimit: 50, maxContacts: 300,    maxRetry: 3, historyDays: 90, customLabels: true  },
 };
 
 const FREE = PLANS.free;
@@ -29,6 +35,7 @@ const PLAN_NAMES: Record<string, string> = {
   personal: 'Personal',
   professional: 'Professional',
   business: 'Business',
+  beta: 'Beta gratuita',
 };
 
 export function getPlanName(plan: string): string {

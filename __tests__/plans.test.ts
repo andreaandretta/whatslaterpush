@@ -99,6 +99,18 @@ describe('getPlanLimits', () => {
     expect(limits.historyDays).toBe(90);
   });
 
+  // Synthetic free-beta plan (BILLING_ENABLED=false, see app/lib/billing.ts).
+  // Runtime-only: never persisted (the DB CHECK constraint rejects it).
+  // dailyLimit 50 is a hard ceiling: rate-limit.ts assumes the highest tier
+  // cap stays well under SPAM_THRESHOLD=100 (H11).
+  test('returns beta limits (free-beta: generous but capped)', () => {
+    const limits = getPlanLimits('beta');
+    expect(limits.dailyLimit).toBe(50);
+    expect(limits.maxContacts).toBe(300);
+    expect(limits.maxRetry).toBe(3);
+    expect(limits.historyDays).toBe(90);
+  });
+
   test('defaults to free for unknown plans', () => {
     const limits = getPlanLimits('unknown');
     expect(limits.dailyLimit).toBe(3);
@@ -118,6 +130,10 @@ describe('getPlanName', () => {
     expect(getPlanName('professional')).toBe('Professional');
     expect(getPlanName('business')).toBe('Business');
   });
+
+  test("beta plan -> 'Beta gratuita' (must NOT hit the 'Free' fallback)", () => {
+    expect(getPlanName('beta')).toBe('Beta gratuita');
+  });
 });
 
 describe('customLabels flag', () => {
@@ -130,6 +146,10 @@ describe('customLabels flag', () => {
     expect(getPlanLimits('personal').customLabels).toBe(true);
     expect(getPlanLimits('professional').customLabels).toBe(true);
     expect(getPlanLimits('business').customLabels).toBe(true);
+  });
+
+  test('beta plan: customLabels is true (everything included during the beta)', () => {
+    expect(getPlanLimits('beta').customLabels).toBe(true);
   });
 
   test('unknown plan falls back to free (no customLabels)', () => {

@@ -91,6 +91,31 @@ describe('shouldSendMessage', () => {
   // claim_daily_quota (dailyLimit=3). Before this fix, every Free user's
   // messages returned 'trial_expired' → paused forever (the 3/day branch was
   // dead code). The existing suite only ever exercised 'trial', hiding it.
+  // The synthetic beta plan (app/lib/billing.ts, BILLING_ENABLED=false) must
+  // behave like a paying plan here: beta users' trial_ends_at is typically
+  // months in the past, so falling through to the trial branch would pause
+  // EVERY beta message as 'trial_expired' — total outage on beta day one,
+  // same failure class as the historic C1 bug below.
+  test('returns "send" for beta plan with expired trial_ends_at', () => {
+    const msg = makeMessage({
+      user_instances: {
+        subscription_plan: 'beta',
+        trial_ends_at: '2026-01-01T00:00:00.000Z', // past — the normal state for a beta user
+      },
+    });
+    expect(shouldSendMessage(msg)).toBe('send');
+  });
+
+  test('returns "send" for beta plan with null trial_ends_at', () => {
+    const msg = makeMessage({
+      user_instances: {
+        subscription_plan: 'beta',
+        trial_ends_at: null,
+      },
+    });
+    expect(shouldSendMessage(msg)).toBe('send');
+  });
+
   test('returns "send" for free plan with expired trial_ends_at (Free 3/day cap gates downstream, NOT trial_expired)', () => {
     const msg = makeMessage({
       user_instances: {
