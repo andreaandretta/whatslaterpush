@@ -1,6 +1,21 @@
 # WhatsLater (SchedWhats) — Project Context
 
-## STATO ATTUALE (aggiornato 6 Luglio 2026)
+## STATO ATTUALE (aggiornato 7 Luglio 2026)
+
+### 🚀 SESSIONE 7 LUG 2026 — BETA GRATIS: kill-switch `BILLING_ENABLED` (implementato e pushato, beta NON ancora attivata)
+
+**DECISIONE STRATEGICA (Andrea)**: lancio in modalità "tutto gratis" per la beta. Codice Stripe INTATTO, disattivato via flag. Piano sintetico **`beta`: 50 msg/g · 300 contatti attivi (finestra 90gg) · storico 90gg · label sì** — SOLO runtime: il CHECK constraint su `subscription_plan` lo rigetta, mai persistito in DB. **Contratto flag** (idioma opt-out di `MONITORING_ALERTS_ENABLED`): env assente o ≠'false' → billing attivo; `BILLING_ENABLED=false` → beta; **riattivazione = cancellare la env + redeploy + eseguire `docs/RUNBOOK-riattivazione-billing.md` passo-passo** (commit `6505392` — contiene i fix dei 2 CRITICAL del flip: grandfather staggered strategia (a) approvata, censimento SQL, ordine tassativo DB→env).
+
+Implementato in 5 commit TDD (~45 test nuovi; suite 873 pass / **13 fail PRE-ESISTENTI** — 8 Playwright-scooped-da-Jest + 3 integration flaky del backlog #1, verificati identici su HEAD pulito in worktree):
+- **PR-1 `b5c1930`** — `app/lib/billing.ts` (server-only, MAI importarlo da 'use client': `isBillingEnabled()` + `getEffectivePlan()`); entry `beta` in PLANS/PLAN_NAMES (obbligatoria: `getPlanLimits` fallback-a su FREE per chiavi ignote); `'beta'` whitelisted in `shouldSendMessage` (senza → trial_ends_at scaduti → pausa di massa day-one).
+- **PR-2 `9b6e3a8`** — cron: blocco downgrade trial→free gate-ato (l'unica mutazione DB del billing, il runbook ci fa affidamento); piano effettivo su decisione+quota (beta 50/g); upsell 80% estratto in `shouldSendUpsell` puro (mai con billing off + cintura ≠'beta').
+- **PR-2b `9be426c`** — prerequisiti riaccensione runbook §2, SEMPRE attivi: downgrade bounded (`.limit(20)`+abort 3s sul notify), daily-limit → reschedule oltre `nextRomeMidnight()`+jitter 30min (fix head-of-line sulla finestra `limit(25)` — vale anche oggi), clamp fast-forward ricorrenze (occorrenze perse SALTATE, mai consegnate in ritardo, cap 500).
+- **PR-3 `b7eae9d`** — piano effettivo su GET/POST `/api/messages` (payload: `subscription_plan`=EFFETTIVO + `raw_plan` + `billing_enabled` + `beta_end_date`), webhook vCard/autoSave (copy neutro senza #prezzi), labels POST, stress-index; `create-checkout` → 403 `billing_disabled_beta` (**portal APERTO di proposito**: gli abbonati devono poter cancellare); `payment/webhook`: sync DB SEMPRE acceso, le 3 notify WhatsApp gate-ate. Fix sempre attivi: **unpause al checkout FILTRATO** (`'Trial scaduto%'` + scheduled_at ≤7gg — prima resuscitava tutti i paused) e **storico GET solo su stati terminali** (pending/paused sempre visibili oltre historyDays).
+- **PR-4 `c243677`** — `app/page.tsx` promossa a SERVER component (unico lettore del flag sulla landing, prop ai figli); `BetaPricingNotice` con `id="prezzi"` (anchor vive); copy beta-aware (FinalCTA, testimonial senza "5€", FAQ retention); dashboard: portale Stripe su `raw_plan`, counter include beta, pill "La beta termina il X" via env `BETA_END_DATE` (leva T-14, zero deploy); `.env.example`.
+
+**⚠️ PER ATTIVARE LA BETA (NON fatto — Appendice A runbook)**: (1) backfill one-shot dei paused `'Trial scaduto%'` (query in runbook §5.2: stantii >48h → cancelled, resto → pending — chiude anche il backlog #4); (2) bonifica subscription sandbox Stripe dei customer con `stripe_customer_id` (3 al 7 lug); (3) `BILLING_ENABLED=false` su Vercel + redeploy; (4) smoke test (msg da free parte, counter "limite 50", niente pricing). **Prima del lancio pubblico**: ToS stantie (Free "5 contatti" vs 10, manca Professional, aggiungere clausola beta), Privacy (elenca ancora DigitalOcean, manca Hetzner), FAQ ricorrenti ("non ancora" ma sono live da giugno).
+
+**Coordinamento**: in parallelo un'altra sessione ha trovato e fixato un bug prod CRITICO — il reset giornaliero quote falliva con 400 a ogni tick IN SILENZIO dal deploy (cap giornaliero di fatto A VITA): ora RPC SQL `reset_daily_counters` fail-loud (`7012332` + `51f2358` fetchCache, migration `20260707` applicata e verificata live: RAM ok, contatori azzerati). Senza quel fix il cap beta 50/g sarebbe stato 50 A VITA.
 
 ### 🔧 SESSIONE 5 LUG 2026 — decommission DigitalOcean (Fase 6 runbook)
 
