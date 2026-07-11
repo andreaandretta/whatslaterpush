@@ -269,19 +269,30 @@ export async function GET(req: NextRequest) {
       console.error('CRON: recurrence reconciliation error (non-fatal):', (reconErr as Error)?.message);
     }
 
-    const { data: pendingMessages, error: queryErr } = await supabase
+    const { data: pendingPool, error: queryErr } = await supabase
       .from('scheduled_messages')
       .select('*, user_instances!inner(id, phone_number, instance_name, trial_ends_at, subscription_plan, connection_status, messages_sent_today, upsell_sent_today)')
       .eq('status', 'pending')
       .lte('scheduled_at', new Date().toISOString())
       .order('scheduled_at', { ascending: true })
-      .limit(25);
+      .limit(60);
 
     if (queryErr) {
       console.error('CRON: Query error:', queryErr.message);
       return NextResponse.json({ error: queryErr.message }, { status: 500 });
     }
-    console.log('CRON: ' + (pendingMessages || []).length + ' pending messages found');
+
+    // Per-user fairness: cap how many of one user's messages enter a single
+    // tick so a user with a large backlog can't monopolize the window and
+    // starve others. The remaining rows are picked up on the next tick(s).
+    const MAX_PER_USER_PER_TICK = 8;
+    const perUserCount: Record<string, number> = {};
+    const pendingMessages = (pendingPool || []).filter((m: any) => {
+      const key = m.instance_phone || m.user_instances?.phone_number || 'unknown';
+      perUserCount[key] = (perUserCount[key] || 0) + 1;
+      return perUserCount[key] <= MAX_PER_USER_PER_TICK;
+    }).slice(0, 25);
+    console.log('CRON: ' + pendingMessages.length + ' pending messages selected (fair, pool=' + (pendingPool || []).length + ')');
 
     let sent = 0, failed = 0, skipped = 0, rateLimited = 0, trialExpired = 0, disconnected = 0;
 
