@@ -79,6 +79,42 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Rate limit the public pairing endpoint by IP and by phone, reusing the
+  // existing atomic rate_limit_record RPC (rate_limit_state table). Each call
+  // spawns a Baileys socket on the single Evolution node — without a cap a
+  // flood can OOM the box (#1). The RPC has no built-in threshold: we pass a
+  // 10-min window as the "minute" reset and enforce the limit on the returned
+  // count (same pattern as recordSend in app/lib/rate-limit.ts).
+  const supabase = getSupabase();
+  {
+    const PAIRING_WINDOW_MS = 10 * 60 * 1000;
+    const PAIRING_MAX_PER_IP = 8;
+    const PAIRING_MAX_PER_PHONE = 5;
+    const nowMs = Date.now();
+    const winReset = nowMs + PAIRING_WINDOW_MS;
+    const dayReset = nowMs + 86_400_000; // neutral: daily_count is not read here
+    const ip = (req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '').split(',')[0].trim() || 'unknown';
+    const [ipRes, phoneRes] = await Promise.all([
+      supabase.rpc('rate_limit_record', { p_key: 'pairing:ip:' + ip, p_now: nowMs, p_minute_reset: winReset, p_daily_reset: dayReset }),
+      supabase.rpc('rate_limit_record', { p_key: 'pairing:phone:' + cleanPhone, p_now: nowMs, p_minute_reset: winReset, p_daily_reset: dayReset }),
+    ]);
+    // Fail-open on RPC error: a rate-limiter blip must not break pairing
+    // (same non-fatal philosophy as recordSend). Flip to a 503 here if you
+    // prefer fail-closed for this public pre-auth endpoint.
+    if (!ipRes.error && !phoneRes.error) {
+      const ipCount = (ipRes.data as { minute_count: number })?.minute_count ?? 0;
+      const phoneCount = (phoneRes.data as { minute_count: number })?.minute_count ?? 0;
+      if (ipCount > PAIRING_MAX_PER_IP || phoneCount > PAIRING_MAX_PER_PHONE) {
+        return NextResponse.json(
+          { error: 'rate_limited', message: 'Troppi tentativi di collegamento. Riprova tra qualche minuto.' },
+          { status: 429, headers: { 'Retry-After': String(PAIRING_WINDOW_MS / 1000) } }
+        );
+      }
+    } else {
+      console.warn('[auth/init] rate-limit RPC error (fail-open):', ipRes.error?.message || phoneRes.error?.message);
+    }
+  }
+
   // Check Evolution API environment variables before proceeding
   if (!evoUrl || !evoKey) {
     console.error('[auth/init] FATAL: EVOLUTION_API_URL or EVOLUTION_API_KEY not set');
@@ -116,7 +152,7 @@ export async function POST(req: NextRequest) {
 
   const instanceName = `SchedWhats-${cleanPhone}`;
   const sessionId = crypto.randomUUID();
-  const supabase = getSupabase();
+  // supabase client already created above in the rate-limit gate block
 
   const expiresAt = new Date(Date.now() + SESSION_TTL_MINUTES * 60 * 1000).toISOString();
   const { error: insertErr } = await supabase
