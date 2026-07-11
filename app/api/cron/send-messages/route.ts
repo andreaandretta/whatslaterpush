@@ -760,6 +760,19 @@ export async function GET(req: NextRequest) {
           const instanceName = userInst?.instance_name;
           const ownerPhone = userInst?.phone_number;
           const err = r.reason;
+          // Send timed out: the fetch was aborted but Baileys may have delivered.
+          // Do NOT auto-requeue (that would double-send). Mark the row 'sent' with
+          // a diagnostic marker (same policy as the stale-processing recovery),
+          // and do NOT refund the quota slot — the message likely went out.
+          const isTimeout = (err as any)?.name === 'AbortError' || (err as any)?.name === 'TimeoutError';
+          if (isTimeout) {
+            await supabase.from('scheduled_messages').update({
+              status: 'sent',
+              sent_at: new Date().toISOString(),
+              error_message: 'send_timeout_indeterminate: nessuna conferma da Evolution entro 8s, marcato inviato per evitare duplicati (verifica ✓✓ su WhatsApp se critico)',
+            }).eq('id', msg.id);
+            continue; // skip refund + requeue
+          }
           // Refund the quota slot claimed pre-send: this attempt failed. On a
           // retry the next attempt re-claims; if terminal nothing was delivered.
           // Either way this attempt must not consume the user's daily quota.
