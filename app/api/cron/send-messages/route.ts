@@ -292,6 +292,9 @@ export async function GET(req: NextRequest) {
     // from the same disconnected user all crossing the 12-retry threshold
     // would fire 5 identical sendText (all failing because instance is down).
     const thresholdNotifiedInstances = new Set<string>();
+    // Dedup the "invii sospesi" owner notification to once per cron run, per
+    // instance — same reason as thresholdNotifiedInstances above.
+    const blockedNotifiedInstances = new Set<string>();
 
     // Process messages in batches of 5 for speed (P11: avoid Vercel Hobby 10s timeout)
     const TIMEOUT_MS = 8000; // bail out before Vercel's 10s limit
@@ -469,19 +472,41 @@ export async function GET(req: NextRequest) {
 
         const isBlocked = await checkFailures(supabase, ownerPhone);
         if (isBlocked) {
-          try {
-            await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
-              method: 'POST',
-              headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ number: ownerPhone, text: '\u26a0\ufe0f Messaggi sospesi temporaneamente. Troppi invii falliti.' })
-            });
-          } catch (e) {}
-          return 'skipped' as const;
+          // Move the blocked user's row past the Rome-midnight reset so it
+          // leaves the global limit(25) oldest-first window instead of
+          // re-entering it every tick and starving other users (same head-of
+          // -line fix as the daily-limit branch above). Notify the owner ONCE
+          // per cron run, with a timeout so a hung socket can't burn the batch.
+          await supabase.from('scheduled_messages').update({
+            scheduled_at: applyJitter(nextRomeMidnight(new Date()).toISOString(), 30 * 60_000),
+            error_message: 'Invii sospesi (troppi fallimenti nelle ultime 24h) \u2014 riprogrammato dopo il reset di mezzanotte',
+          }).eq('id', msg.id);
+          if (!blockedNotifiedInstances.has(instanceName)) {
+            blockedNotifiedInstances.add(instanceName);
+            try {
+              const ctrl = new AbortController();
+              const t = setTimeout(() => ctrl.abort(), 3000);
+              await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
+                method: 'POST',
+                headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ number: ownerPhone, text: '\u26a0\ufe0f Messaggi sospesi temporaneamente. Troppi invii falliti.' }),
+                signal: ctrl.signal,
+              });
+              clearTimeout(t);
+            } catch (e) {}
+          }
+          return 'rate_limited' as const;
         }
 
         const check = await canSend(supabase, ownerPhone, instanceName);
         if (!check.allowed) {
           console.log('CRON: RATE LIMITED:', ownerPhone, check.reason);
+          // Reschedule out of the window too \u2014 otherwise a rate-limited row
+          // sits at its stale scheduled_at and re-enters limit(25) each tick.
+          await supabase.from('scheduled_messages').update({
+            scheduled_at: applyJitter(nextRomeMidnight(new Date()).toISOString(), 30 * 60_000),
+            error_message: 'Rate limit raggiunto \u2014 riprogrammato dopo il reset di mezzanotte',
+          }).eq('id', msg.id);
           return 'rate_limited' as const;
         }
 
