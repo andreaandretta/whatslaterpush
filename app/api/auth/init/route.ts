@@ -98,10 +98,10 @@ export async function POST(req: NextRequest) {
       supabase.rpc('rate_limit_record', { p_key: 'pairing:ip:' + ip, p_now: nowMs, p_minute_reset: winReset, p_daily_reset: dayReset }),
       supabase.rpc('rate_limit_record', { p_key: 'pairing:phone:' + cleanPhone, p_now: nowMs, p_minute_reset: winReset, p_daily_reset: dayReset }),
     ]);
-    // Fail-open on RPC error: a rate-limiter blip must not break pairing
-    // (same non-fatal philosophy as recordSend). Flip to a 503 here if you
-    // prefer fail-closed for this public pre-auth endpoint.
-    if (!ipRes.error && !phoneRes.error) {
+    // Fail-open on RPC error or undefined response: a rate-limiter blip must
+    // not break pairing (same non-fatal philosophy as recordSend). Flip to a
+    // 503 here if you prefer fail-closed for this public pre-auth endpoint.
+    if (ipRes && phoneRes && !ipRes.error && !phoneRes.error) {
       const ipCount = (ipRes.data as { minute_count: number })?.minute_count ?? 0;
       const phoneCount = (phoneRes.data as { minute_count: number })?.minute_count ?? 0;
       if (ipCount > PAIRING_MAX_PER_IP || phoneCount > PAIRING_MAX_PER_PHONE) {
@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
         );
       }
     } else {
-      console.warn('[auth/init] rate-limit RPC error (fail-open):', ipRes.error?.message || phoneRes.error?.message);
+      console.warn('[auth/init] rate-limit RPC error (fail-open):', ipRes?.error?.message || phoneRes?.error?.message);
     }
   }
 
