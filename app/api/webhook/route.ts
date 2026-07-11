@@ -9,6 +9,10 @@ import { scrubPiiForLog } from '../../lib/log-scrubber';
 import { claimWebhookEvent, releaseWebhookEvent } from '../../lib/webhook-dedup';
 import { contactActiveCutoffIso } from '../../lib/contact-window';
 export const dynamic = 'force-dynamic';
+// The self-chat path chains askAI (8s) + verifyAndFixMessage (6s) + notify;
+// the Hobby default ~10s kills it mid-insert, orphaning the dedup claim (#4).
+// Vercel now allows up to 300s; 30s covers the worst-case LLM chain.
+export const maxDuration = 30;
 
 const supabase = createClient(
   process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -1099,10 +1103,14 @@ export async function POST(req) {
 
     if (!isFromMe) {
       console.log('WEBHOOK: Skipped - not fromMe. remoteJid=' + (msgKey?.remoteJid || 'none'));
+      // Release the dedup claim so a SIGKILL before this return doesn't
+      // permanently orphan the claim and block Evolution's retry (#4).
+      if (claimedMsgId) await releaseWebhookEvent(supabase, claimedMsgId);
       return NextResponse.json({ ok:true });
     }
     if (!senderRaw) {
       console.error('WEBHOOK: remoteJid missing');
+      if (claimedMsgId) await releaseWebhookEvent(supabase, claimedMsgId);
       return NextResponse.json({ ok:true });
     }
 
@@ -1116,11 +1124,13 @@ export async function POST(req) {
       // NEVER auto-reassign instances — it causes cross-user contamination
       // when user A sends a message to user B and both have WhatsLater instances.
       console.log(`WEBHOOK: No user for instance=${evoInstance} phone=${senderRaw}. Ignoring.`);
+      if (claimedMsgId) await releaseWebhookEvent(supabase, claimedMsgId);
       return NextResponse.json({ ok: true });
     }
 
     if (user.instance_name !== evoInstance) {
       console.error(`WEBHOOK: FATAL MISMATCH - user.instance=${user.instance_name} !== evo=${evoInstance}`);
+      if (claimedMsgId) await releaseWebhookEvent(supabase, claimedMsgId);
       return NextResponse.json({ error: 'Instance mismatch' }, { status: 409 });
     }
 
