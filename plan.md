@@ -25,7 +25,7 @@ Le 6 decisioni di prodotto/infra sono state prese. Le task sotto sono già aggio
 
 1. **Toggle "Richiedi approvazione" (Task 11) e "Promemoria" (Task 12): RIMUOVERE dalla UI ora, ma progettati per riattivazione E2E facile.** Non cancellare il codice: nascondere i toggle dietro un flag `false` in modo che riattivarli in futuro sia un flip + il wiring backend. Vedi Task 11/12.
 
-2. **`syncFullHistory` (Task 5): DISATTIVARLO (opzione a).** Sincronizzazione rubrica in background dopo la connessione. **Verifica obbligatoria aggiunta:** pairing di prova + conferma che il ContactPicker si popoli comunque via `contacts.upsert` progressivo.
+2. **`syncFullHistory` (Task 5): ~~DISATTIVARLO (opzione a)~~ → RIVISTA in opzione (b) semaforo (11-lug).** L'opzione (a) è stata scartata: il codice documenta un incidente (`6d3fb6b`) in cui disattivare il full-sync svuotava la rubrica di ogni nuovo utente. Implementato invece un **semaforo distribuito** che preserva il burst di contatti e serializza i full-sync concorrenti contro l'OOM. Vedi Task 5.
 
 3. **Rate-limit `/api/auth/init` (Task 4): SÌ, riusando `rate_limit_state` + RPC atomica esistente.** Nessuna tabella nuova: si riusa `rate_limit_record`. Vedi Task 4 (codice pronto).
 
@@ -53,7 +53,7 @@ Le 6 decisioni di prodotto/infra sono state prese. Le task sotto sono già aggio
 | 2 | Circuit-breaker: riprogramma oltre mezzanotte + dedup notifica | 1 | **critical→high** | `app/api/cron/send-messages/route.ts` |
 | 3 | Fairness per-utente (max 8/utente/tick) | 1 | **critical→high** | `app/api/cron/send-messages/route.ts` |
 | 4 | Rate-limit `/api/auth/init` (riusa `rate_limit_record`) | 1 | **critical→high** | `app/api/auth/init/route.ts` |
-| 5 | Disattivare `syncFullHistory` (+ verifica E2E) | 1 | high→medium | `app/api/auth/init/route.ts` |
+| 5 | Full-sync gate-ato da semaforo (opzione b, + verifica E2E) | 1 | high→medium | `app/api/auth/init/route.ts` + migration |
 | 6 | Timeout invio non ri-accoda (no duplicati) | 1 | high | `app/api/cron/send-messages/route.ts` |
 | 7 | `maxDuration` webhook + release claim su uscita | 1 | high→medium | `app/api/webhook/route.ts` |
 | 8 | DELETE con guard di stato + client rispetta res.ok | 2 | high→medium | `app/api/messages/route.ts`, `app/dashboard/page.tsx` |
@@ -426,48 +426,25 @@ git commit -m "fix(auth): rate-limit per-IP/per-phone su /api/auth/init riusando
 
 ---
 
-### Task 5: Evitare l'OOM da burst di `syncFullHistory` (disattivarlo — decisione #2 opzione a)
+### Task 5: Evitare l'OOM da burst di `syncFullHistory` (semaforo — decisione #2 opzione b)
 
 **Perché:** ogni primo pairing crea l'istanza con `syncFullHistory=true`; Baileys bufferizza tutta la cronologia in RAM. Il commento nel codice documenta l'OOM da "signup-burst". Il gate è solo per-utente, non serializza: 3–4 nuovi utenti nello stesso minuto = N full-sync simultanei sul nodo unico. — *Finding #2 (high→medium), confermato.*
 
 **Decisione #2:** disattivare `syncFullHistory`. La rubrica si popola dagli eventi `contacts.upsert` progressivi dopo la connessione (il webhook li gestisce già a `route.ts:1024-1072`), senza il picco RAM. **Andrea ha richiesto una verifica end-to-end obbligatoria** (Step 3): dopo il fix, un pairing reale deve comunque popolare il ContactPicker.
 
-**Files:**
-- Modify: `app/api/auth/init/route.ts:183-213`
+> **⚠️ AGGIORNATO — decisione #2 rivista in opzione (b) (11-lug).** L'opzione (a) originale (disattivare `syncFullHistory`) è stata **scartata**: il codice documenta un incidente (`auth/init:217-218`, commit `6d3fb6b`) in cui hardcodare `false` ha causato "contatti spariti su ogni nuovo pairing" — il burst di contatti *è* `syncFullHistory`. Implementata invece l'**opzione (b): un semaforo distribuito** che preserva il burst (rubrica ok) e serializza i full-sync concorrenti per prevenire l'OOM. **Già implementata e committata** (commit `27290b6` + revert `7084052`).
 
-- [ ] **Step 1: Forzare `syncFullHistory: false` nel create**
+**Files (implementati):**
+- Create: `supabase/migrations/20260711_full_sync_semaphore.sql` (tabella `full_sync_slots` + RPC `acquire_full_sync_slot`, 2 slot, TTL 120s, `FOR UPDATE SKIP LOCKED`)
+- Modify: `app/api/auth/init/route.ts` (semaforo prima del `/instance/create` + `syncFullHistory` condizionale ripristinato + `maxDuration=30`)
 
-In `app/api/auth/init/route.ts`, trova dove `syncFullHistory` viene calcolato (≈ riga 183-197) e passato nel body di `/instance/create` (≈ riga 212). Forza il valore a `false` nel body della create (`syncFullHistory: false`). NON rimuovere la variabile se è usata anche per logging; cambia solo il valore inviato a Evolution.
+- [x] **Step 1: Semaforo distribuito (fatto)** — al primo pairing (`syncFullHistory===true`) acquisisce uno slot via `acquire_full_sync_slot`; se tutti gli slot sono occupati attende fino a 2.5s (stagger del burst → picco RAM più basso), poi procede comunque (**fail-open**: mai rubrica vuota, `console.warn` + Sentry). `syncFullHistory` resta condizionale (true solo primo pairing). Fail-safe: senza migration applicata la RPC dà errore → si procede col full-sync condizionale (comportamento pre-Task-5).
 
-Nota per l'esecutore: leggi il codice attuale per confermare che il valore finisca davvero nel body di `/instance/create` e non altrove.
+- [x] **Step 2: tsc verificato** — 23 errori pre-esistenti invariati, zero nuovi in `auth/init`; test `auth-init-egress.integration` + `rate-limit` verdi.
 
-- [ ] **Step 2: Verificare compilazione**
+- [ ] **Step 3: DA APPLICARE AL DEPLOY (sessione ops di Andrea)** — applicare la migration `20260711_full_sync_semaphore.sql` al DB Supabase prima/al deploy del branch (senza, il semaforo è inattivo ma sicuro).
 
-Run: `npx tsc --noEmit 2>&1 | grep -c "auth/init"`
-Atteso: `0`.
-
-- [ ] **Step 3: VERIFICA E2E OBBLIGATORIA (richiesta da Andrea) — pairing di prova + ContactPicker**
-
-Questa task cambia il comportamento onboarding: la rubrica non arriva più in un colpo al pairing ma progressivamente. Va verificato che il picker si popoli comunque. Poiché richiede un telefono reale, **l'esecutore prepara la checklist e Andrea/la sessione ops la esegue** (non è automatizzabile da CI):
-
-  1. Deploy del branch in preview.
-  2. Pairing di un numero di prova (o re-pair di un numero sacrificabile con cache contatti svuotata).
-  3. Attendere ~30–60s dopo `CONNECTION_UPDATE state=open`.
-  4. Aprire il ContactPicker in dashboard e confermare che i contatti compaiano.
-  5. Verificare via SQL che gli `contacts.upsert` stiano arrivando:
-     ```sql
-     select count(*) from whatsapp_contacts where user_phone = '<numero_di_prova>';
-     ```
-     Atteso: > 0 e crescente nei primi minuti.
-
-Se dopo 2–3 minuti la rubrica resta vuota, **NON mergiare** questa task: significa che Evolution non emette `contacts.upsert` senza il full-sync e serve l'opzione (b) (semaforo sul full-sync) invece della disattivazione. Segnala ad Andrea.
-
-- [ ] **Step 4: Commit** (solo dopo che lo Step 3 è passato)
-
-```bash
-git add app/api/auth/init/route.ts
-git commit -m "fix(auth): disattiva syncFullHistory al primo pairing, evita OOM da burst onboarding (#2)"
-```
+- [ ] **Step 4: VERIFICA E2E (Andrea)** — con il branch in preview + migration applicata: pairing di un numero di prova, attendere 30-60s dopo `state=open`, confermare che il ContactPicker si popoli. SQL: `select count(*) from whatsapp_contacts where user_phone='<numero>';` → atteso >0 e crescente. Con l'opzione (b) il burst è preservato, quindi la rubrica **deve** popolarsi come prima; se non lo fa, il problema è altrove (non il full-sync).
 
 ---
 
