@@ -14,6 +14,10 @@ import {
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
+// init concatena forceDelete + /instance/create (10-30s quando Evolution è
+// carico) + setWebhook + sleep + il breve wait del semaforo full-sync: il
+// default Hobby ~10s è troppo stretto e taglia il pairing a metà sotto carico.
+export const maxDuration = 30;
 
 const SESSION_TTL_MINUTES = 10;
 
@@ -232,6 +236,34 @@ export async function POST(req: NextRequest) {
   }
   console.log(`[auth/init] pairing ${instanceName} syncFullHistory=${syncFullHistory} (cache-empty gate)`);
 
+  // Task 5 (opzione b): quando facciamo un full-sync (primo pairing), acquisiamo
+  // uno slot del semaforo distribuito full_sync_slots per limitare quanti
+  // full-sync girano insieme sul nodo unico ed evitare l'OOM da signup-burst —
+  // SENZA disattivare il burst di contatti (disattivarlo = rubrica vuota per ogni
+  // nuovo utente, vedi commit 6d3fb6b). Se tutti gli slot sono occupati aspettiamo
+  // brevemente (così i burst si distribuiscono nel tempo e il picco RAM cala) e
+  // poi procediamo comunque: fail-open, non rompiamo mai il caricamento contatti.
+  if (syncFullHistory) {
+    const SLOT_TTL_S = 120;    // durata approssimata di un full-sync sul nodo
+    const MAX_WAIT_MS = 2500;  // limitato per restare dentro maxDuration
+    const POLL_MS = 700;
+    const deadline = Date.now() + MAX_WAIT_MS;
+    let slot: number | null = null;
+    while (true) {
+      const { data, error } = await supabase.rpc('acquire_full_sync_slot', {
+        p_holder: instanceName,
+        p_ttl_seconds: SLOT_TTL_S,
+      });
+      slot = error ? 1 : ((data as number | null) ?? null); // fail-open su errore RPC
+      if (slot !== null || Date.now() >= deadline) break;
+      await new Promise((r) => setTimeout(r, POLL_MS));
+    }
+    if (slot === null) {
+      console.warn(`[auth/init] full-sync semaphore saturated for ${instanceName} — proceeding anyway (node under concurrent-pairing pressure)`);
+      Sentry.captureMessage('full_sync_semaphore_saturated', { level: 'warning' });
+    }
+  }
+
   let createRes: any;
   try {
     const res = await fetch(`${evoUrl}/instance/create`, {
@@ -242,9 +274,10 @@ export async function POST(req: NextRequest) {
         number: cleanPhone,
         qrcode: true,
         integration: 'WHATSAPP-BAILEYS',
-        // Fase 2 (2026-06-21): full-sync CONDIZIONALE — true solo al primo
-        // pairing (cache contatti vuota, vedi gate sopra) per ripristinare il
-        // burst rubrica, senza riesporre l'OOM da signup-burst sui nodi piccoli.
+        // full-sync CONDIZIONALE — true solo al primo pairing (cache contatti
+        // vuota, vedi gate sopra) per ripristinare il burst rubrica. L'OOM da
+        // signup-burst concorrente è mitigato dal semaforo full_sync_slots sopra
+        // (Task 5 opzione b), NON disattivando il burst.
         syncFullHistory,
         alwaysOnline: true,
         groupsIgnore: false,
