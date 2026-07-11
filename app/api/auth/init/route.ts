@@ -242,14 +242,10 @@ export async function POST(req: NextRequest) {
         number: cleanPhone,
         qrcode: true,
         integration: 'WHATSAPP-BAILEYS',
-        // Beta hardening (#2, decisione #2 opzione a): disattivato per evitare OOM
-        // da burst di signup concorrenti sul nodo singolo Hetzner. La rubrica si
-        // popola progressivamente via contacts.upsert events dopo la connessione.
-        // Il gate condizionale sopra (syncFullHistory var) è conservato dormiente
-        // per riattivazione futura. VERIFICA E2E OBBLIGATORIA: il ContactPicker
-        // deve popolarsi comunque dopo il pairing — se non succede entro 2-3 min,
-        // riattivare (rimettere `syncFullHistory` qui invece di `false`).
-        syncFullHistory: false,
+        // Fase 2 (2026-06-21): full-sync CONDIZIONALE — true solo al primo
+        // pairing (cache contatti vuota, vedi gate sopra) per ripristinare il
+        // burst rubrica, senza riesporre l'OOM da signup-burst sui nodi piccoli.
+        syncFullHistory,
         alwaysOnline: true,
         groupsIgnore: false,
         // Pairing-only egress proxy (Fase 0 §2). Injected only when an egress
