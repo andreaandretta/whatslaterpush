@@ -99,12 +99,13 @@ Implementato in 5 commit TDD (~45 test nuovi; suite 873 pass / **13 fail PRE-ESI
 - Implementazione usa Web Crypto API (compatibile Edge runtime + Node)
 
 ### Monitoring (cron trigger stack `/api/cron/send-messages`)
-Tre layer concorrenti, atomic lock previene doppio fire sullo stesso messaggio:
-1. **cron-job.org pinger @60s** — primario esterno, auth via `?secret=$CRON_SECRET`
-2. **instrumentation.ts self-cron @60s** — Next.js register(), Node-runtime-only, fallback se cron-job.org down o durante warmup lambda
-3. **vercel.json `0 0 * * *`** — daily safety net per cleanup task / catch-all
+Quattro layer concorrenti (tre @60s + una safety-net giornaliera), atomic lock previene doppio fire sullo stesso messaggio. **Runbook di ispezione: `docs/RUNBOOK-cron-triggers.md`.**
+0. **pg_cron `send-messages-cron` @60s (`* * * * *`)** — **TRIGGER PRIMARIO REALE**: job Supabase interno che chiama `net.http_get('…/api/cron/send-messages?secret=<CRON_SECRET>')`. **Verificato in prod: 84.806 run dal 13-mag-2026, 0 fallimenti (al 11-lug-2026) = 1440 invocazioni/giorno.** Non era documentato prima di Task 43. ⚠️ `CRON_SECRET` in chiaro nel comando pg_cron → da ruotare e spostare in header (Task 44).
+1. **cron-job.org pinger @60s** — pinger esterno storico, auth via `?secret=$CRON_SECRET`. ⚠️ **Inactive dal 12-giu-2026** (verificato) — non più un trigger vivo.
+2. **instrumentation.ts self-cron @60s** — Next.js register(), Node-runtime-only, fallback per-lambda-warm (×N istanze) durante warmup.
+3. **vercel.json `0 0 * * *`** — daily safety net per cleanup task / catch-all.
 
-L'atomic lock in `app/api/cron/send-messages/route.ts` (status pending → processing → sent con `UPDATE ... WHERE status='pending'`) garantisce che un singolo messaggio venga claimed da un solo trigger anche se i 3 sparano simultaneamente. Verifica salute: gaps in `audit_events` WHERE `event_type='message_sent'` segnalano trigger giù.
+**Stack @60s VIVO oggi = pg_cron + self-cron** (cron-job.org spento). L'atomic lock in `app/api/cron/send-messages/route.ts` (status pending → processing → sent con `UPDATE ... WHERE status='pending'`) garantisce che un singolo messaggio venga claimed da un solo trigger anche se sparano simultaneamente — ma ogni fire ri-esegue tutto il preamble (reset RPC quote, scan full-table ricorrenze, cleanup) → carico preamble moltiplicato ogni minuto. La riduzione della tripla concorrenza è pianificata (Task 43-bis, BLOCCATA-DA Task 44/rotazione secret — NON ancora fatta). Verifica salute: gaps in `audit_events` WHERE `event_type='message_sent'` segnalano trigger giù.
 
 ### Crons collaterali (Sprint 4 + Sprint 6)
 - **`/api/cron/cleanup-media`** domenica 03:00 UTC — batch 100 row/run (cap Vercel Hobby 10s), seleziona terminal-state (`sent|cancelled|failed`) con `media_url IS NOT NULL` e `created_at < NOW() - 30d`, rimuove file da Storage bucket `message-media`, poi nullifica colonne `media_*`. Storage error abort-prima-di-UPDATE (retry safe). Audit log `event_type='media_cleanup'`.
