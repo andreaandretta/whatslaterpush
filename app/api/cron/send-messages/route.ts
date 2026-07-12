@@ -306,6 +306,11 @@ export async function GET(req: NextRequest) {
     // Dedup the "invii sospesi" owner notification to once per cron run, per
     // instance — same reason as thresholdNotifiedInstances above.
     const blockedNotifiedInstances = new Set<string>();
+    // Within-run cooldown guard: the DB "3 msg / 24h" count is read per-message
+    // in parallel, so 5 msgs to the same recipient in one batch all see count<3
+    // and fire together (#9). Track in-run sends per recipient and enforce the
+    // cap against DB-count + in-run-count.
+    const inRunSendsToRecipient: Record<string, number> = {};
 
     // Process messages in batches of 5 for speed (P11: avoid Vercel Hobby 10s timeout)
     const TIMEOUT_MS = 8000; // bail out before Vercel's 10s limit
@@ -466,8 +471,10 @@ export async function GET(req: NextRequest) {
           .eq('status', 'sent')
           .gte('sent_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
 
-        if ((recentToRecipient || 0) >= 3) {
-          console.log('CRON: COOLDOWN — 3 msgs already sent to ' + msg.recipient_number + ' in 24h');
+        const recipKey = ownerPhone + '|' + msg.recipient_number;
+        const alreadyInRun = inRunSendsToRecipient[recipKey] || 0;
+        if ((recentToRecipient || 0) + alreadyInRun >= 3) {
+          console.log('CRON: COOLDOWN — 3 msgs already sent to ' + msg.recipient_number + ' in 24h (db=' + (recentToRecipient || 0) + ' inRun=' + alreadyInRun + ')');
           // Smart-retry: a 30-minute deferral lets the natural recipient
           // gap re-open without punishing the message with a full-day shift.
           // The cool-down query above re-evaluates each cron cycle, so if
@@ -531,6 +538,10 @@ export async function GET(req: NextRequest) {
           console.log('CRON: Message ' + msg.id + ' already claimed by another process, skipping');
           return 'skipped' as const;
         }
+
+        // Mark this recipient as "sending" in this run so the parallel cooldown
+        // check for a 2nd message to the same recipient sees it (#9).
+        inRunSendsToRecipient[recipKey] = (inRunSendsToRecipient[recipKey] || 0) + 1;
 
         // Atomic quota gate (anti-overshoot): increment messages_sent_today only
         // if still strictly under the tier limit. NULL = at/over the limit (or a
