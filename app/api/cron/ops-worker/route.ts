@@ -3,6 +3,9 @@ import { createClient } from '@supabase/supabase-js';
 import { getCoolifyBase, COOLIFY_NOT_CONFIGURED } from '../../../lib/coolify-base';
 
 export const dynamic = 'force-dynamic';
+// GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
+// (bug storico stress-index/reset-quote). force-no-store la disattiva. (Task 42)
+export const fetchCache = 'force-no-store';
 
 const EVOLUTION_TIMEOUT_MS = 8000;
 const BATCH = 10;

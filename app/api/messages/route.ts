@@ -10,6 +10,9 @@ import { isValidRule } from '../../lib/recurrence';
 import { logAuditEvent, clientIpFromHeaders, hashContactRef } from '../../lib/audit';
 
 export const dynamic = 'force-dynamic';
+// GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
+// (bug storico stress-index/reset-quote). force-no-store la disattiva. (Task 42)
+export const fetchCache = 'force-no-store';
 
 function getSupabase() {
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;

@@ -3,6 +3,9 @@ import { createClient } from '@supabase/supabase-js';
 import { fetchDropletMetrics, fetchDropletHistory24h } from '../../../lib/droplet';
 
 export const dynamic = 'force-dynamic';
+// GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
+// (bug storico stress-index/reset-quote). force-no-store la disattiva. (Task 42)
+export const fetchCache = 'force-no-store';
 
 function getSupabase() {
   return createClient(
