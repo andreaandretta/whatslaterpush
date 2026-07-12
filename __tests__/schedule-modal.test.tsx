@@ -41,13 +41,16 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
     expect(screen.getByRole('button', { name: /Invia/i })).toBeInTheDocument();
   });
 
-  test('expanding "Opzioni avanzate" reveals approval toggle and reminder row', () => {
+  test('expanding "Opzioni avanzate" does NOT reveal the flagged-off approval/reminder toggles', () => {
+    // Task 11: "Richiedi approvazione" and "Promemoria" are gated behind
+    // ADVANCED_APPROVAL_REMINDER_ENABLED (off) until implemented end-to-end,
+    // so they must not appear even when advanced options are expanded.
     render(
       <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} />
     );
     fireEvent.click(screen.getByRole('button', { name: /Opzioni avanzate/i }));
-    expect(screen.getByText(/Richiedi approvazione per l'invio/i)).toBeInTheDocument();
-    expect(screen.getByText(/^Promemoria$/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Richiedi approvazione per l'invio/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Promemoria$/i)).not.toBeInTheDocument();
   });
 
   test('FAB is disabled when message is empty', () => {
@@ -61,6 +64,7 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
     const onScheduled = jest.fn();
     const onClose = jest.fn();
     (global as any).fetch = jest.fn().mockResolvedValue({
+      ok: true,   // handleSubmit now checks res.ok (Task 10); real Response derives it from status
       status: 200,
       json: async () => ({}),
     });
