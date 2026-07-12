@@ -216,10 +216,13 @@ export async function checkWebhookInactive(): Promise<CheckResult> {
       return { name: 'webhook_inactive', status: 'ok', message: 'Nessuna istanza realmente attiva da controllare', checked_at: now };
     }
 
-    // Step 2: verify webhook is configured on each active instance via Evolution API
-    const unconfigured: string[] = [];
-    for (const inst of activeInstances) {
-      try {
+    // Step 2: verify webhook is configured on each active instance via Evolution
+    // API — in PARALLEL (Promise.allSettled) so the whole step costs ~one 8s
+    // timeout instead of N×8s. A sequential loop blew the lambda budget once
+    // several instances existed, silently killing the health-check exactly when
+    // Evolution was slow/down — the moment it's needed most. (#17)
+    const probeResults = await Promise.allSettled(
+      activeInstances.map(async (inst: any) => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 8000);
         try {
@@ -230,23 +233,24 @@ export async function checkWebhookInactive(): Promise<CheckResult> {
               signal: controller.signal,
             }
           );
-          if (!res.ok) {
-            unconfigured.push(inst.instance_name);
-            continue;
-          }
+          if (!res.ok) return false;
           const data = await res.json();
-          // Check if webhook URL is set (handles both v2.0 wrapped and v2.x flat formats)
+          // webhook URL set? (handles both v2.0 wrapped and v2.x flat formats)
           const webhookUrl = data?.url || data?.webhook?.url || '';
-          if (!webhookUrl) {
-            unconfigured.push(inst.instance_name);
-          }
+          return !!webhookUrl;
         } finally {
           clearTimeout(timeout);
         }
-      } catch {
-        unconfigured.push(inst.instance_name);
-      }
-    }
+      })
+    );
+    // A rejected probe (network error / abort) counts as unconfigured — same as
+    // the old per-iteration catch.
+    const unconfigured: string[] = activeInstances
+      .filter((_inst: any, i: number) => {
+        const r = probeResults[i];
+        return r.status === 'rejected' || r.value === false;
+      })
+      .map((inst: any) => inst.instance_name);
 
     if (unconfigured.length === activeInstances.length) {
       return { name: 'webhook_inactive', status: 'critical', message: `Webhook mancante su tutte le ${activeInstances.length} istanze attive — nessuna risposta WhatsApp in arrivo viene ricevuta.`, checked_at: now };

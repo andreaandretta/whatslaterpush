@@ -3,6 +3,12 @@ import { createClient } from '@supabase/supabase-js';
 import { runAllChecks, shouldAlert, shouldRecover, sendRecovery, logResolution, dispatchAlert, classifyTransition } from '../../../lib/monitoring';
 
 export const dynamic = 'force-dynamic';
+// 11 check in serie, alcuni con probe Evolution O(N istanze): il default Hobby
+// ~10s uccideva il runner prima del dispatch degli alert proprio durante un
+// outage. 60s dà margine (Task 17). fetchCache no-store (Task 42): la GET del
+// previousStatus è deterministica e la Data Cache la congelerebbe.
+export const maxDuration = 60;
+export const fetchCache = 'force-no-store';
 
 function getSupabase() {
   return createClient(
