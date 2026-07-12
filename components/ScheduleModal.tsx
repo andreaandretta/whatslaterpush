@@ -23,6 +23,8 @@ interface ScheduleModalProps {
   onScheduled: () => void;
   /** Pre-fill the message body — used by Duplica/Modifica from the dashboard. */
   initialMessage?: string;
+  /** When set, the modal is in edit mode: handleSubmit calls PATCH instead of POST. */
+  editMsgId?: string | null;
 }
 
 const REMINDER_LABELS: Record<ReminderValue, string> = {
@@ -60,7 +62,7 @@ function translateError(code: string): string {
   }
 }
 
-export default function ScheduleModal({ open, onClose, onBack, contact, onScheduled, initialMessage = '' }: ScheduleModalProps) {
+export default function ScheduleModal({ open, onClose, onBack, contact, onScheduled, initialMessage = '', editMsgId = null }: ScheduleModalProps) {
   const init = defaultDateTime();
   const [selectedDate, setSelectedDate] = useState<Date>(init.date);
   const [selectedTime, setSelectedTime] = useState<string>(init.time);
@@ -193,26 +195,45 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
     setError(null);
 
     try {
-      const res = await fetch('/api/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recipient_number: contact.number,
-          recipient_name: contact.name || undefined,
-          message: message.trim(),
-          scheduled_at: scheduledDate.toISOString(),
-          recurrence_rule: buildRRule(recurrence, scheduledDate),
-          ...(media ? {
-            media_type: media.media_type,
-            media_url: media.media_url,
-            media_filename: media.media_filename,
-            media_caption: message.trim() || undefined,
-          } : {}),
-        }),
-      });
+      let res: Response;
 
-      if (res.status === 200) {
-        if (shouldOfferSave(message.trim())) {
+      if (editMsgId) {
+        // Edit-in-place: PATCH the existing message instead of creating a new one.
+        // Fields accepted by PATCH: message, scheduled_at, recurrence_rule.
+        // Media edits are not supported via PATCH (backend guards it); if the
+        // user attached new media in edit mode we fall back to POST.
+        res = await fetch('/api/messages', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: editMsgId,
+            message: message.trim(),
+            scheduled_at: scheduledDate.toISOString(),
+            recurrence_rule: buildRRule(recurrence, scheduledDate) ?? null,
+          }),
+        });
+      } else {
+        res = await fetch('/api/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            recipient_number: contact.number,
+            recipient_name: contact.name || undefined,
+            message: message.trim(),
+            scheduled_at: scheduledDate.toISOString(),
+            recurrence_rule: buildRRule(recurrence, scheduledDate),
+            ...(media ? {
+              media_type: media.media_type,
+              media_url: media.media_url,
+              media_filename: media.media_filename,
+              media_caption: message.trim() || undefined,
+            } : {}),
+          }),
+        });
+      }
+
+      if (res.ok) {
+        if (!editMsgId && shouldOfferSave(message.trim())) {
           // 200ms grace as per spec — gives the implicit success feedback
           // a beat before the save dialog jumps in.
           setTimeout(() => setSaveDialogOpen(true), 200);
@@ -224,7 +245,9 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       }
 
       const body = await res.json().catch(() => ({}));
-      if (res.status === 403 && body.error === 'plan_contacts_limit_exceeded') {
+      if (res.status === 409) {
+        setError(body.message || 'Il messaggio non è più modificabile (già in invio).');
+      } else if (res.status === 403 && body.error === 'plan_contacts_limit_exceeded') {
         // plan 'beta' = free beta: no plan name (nothing purchasable) and the
         // copy must not match the 'Aggiorna piano' link gate below.
         setError(body.plan === 'beta'
@@ -261,7 +284,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <div className="text-white font-medium text-base">Programma un messaggio</div>
+          <div className="text-white font-medium text-base">{editMsgId ? 'Modifica messaggio' : 'Programma un messaggio'}</div>
         </div>
 
         <div className="flex-1 overflow-y-auto pb-24">

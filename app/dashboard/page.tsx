@@ -68,6 +68,8 @@ export default function DashboardPage() {
   const [toast, setToast] = useState<{ text: string; undo?: () => void; id: number } | null>(null);
   // Carry an initial message text into ScheduleModal when duplicating.
   const [prefillText, setPrefillText] = useState<string>('');
+  // When editing a message in-place, track its id so ScheduleModal calls PATCH.
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   // Onboarding hints — gated on localStorage. Resolved post-mount to avoid
   // SSR hydration mismatch on localStorage access.
   const [showOnboardingHints, setShowOnboardingHints] = useState(false);
@@ -201,15 +203,18 @@ export default function DashboardPage() {
     setScheduleOpen(true);
   }, []);
 
-  // Edit — same flow as duplicate for now. Backend PATCH /api/messages now
-  // supports true edit-in-place (status / scheduled_at / message / recurrence),
-  // but ScheduleModal still posts as a new schedule. Migrating it to gate on
-  // an `editMsgId` prop and route to PATCH is the next step — tracked
-  // separately so the backend can ship without dragging the modal refactor.
+  // Edit — open ScheduleModal in edit mode: pre-fill contact+text and pass the
+  // original message id so handleSubmit routes to PATCH (edit-in-place) instead
+  // of POST (new schedule). The original message is NOT duplicated.
   const handleEdit = useCallback((msg: MessagesSectionMessage) => {
-    handleDuplicate(msg);
-    showToast('Modifica come duplicato — l’originale resta finché non lo elimini.');
-  }, [handleDuplicate, showToast]);
+    setSelectedContact({
+      number: msg.recipient_number || "",
+      name: msg.recipient_name,
+    });
+    setPrefillText(msg.parsed_message || msg.caption || "");
+    setEditingMsgId(msg.id);
+    setScheduleOpen(true);
+  }, []);
 
   // Pause/resume — optimistic; backend ignores unknown statuses silently for now.
   const handlePauseToggle = useCallback(async (msg: MessagesSectionMessage) => {
@@ -398,11 +403,12 @@ export default function DashboardPage() {
 
         <ScheduleModal
           open={scheduleOpen}
-          onClose={() => { setScheduleOpen(false); setSelectedContact(null); setPrefillText(''); }}
-          onBack={() => { setScheduleOpen(false); setContactPickerOpen(true); setPrefillText(''); }}
+          onClose={() => { setScheduleOpen(false); setSelectedContact(null); setPrefillText(''); setEditingMsgId(null); }}
+          onBack={() => { setScheduleOpen(false); setContactPickerOpen(true); setPrefillText(''); setEditingMsgId(null); }}
           contact={selectedContact}
           onScheduled={fetchMessages}
           initialMessage={prefillText}
+          editMsgId={editingMsgId}
         />
 
         {showShareToast && (
