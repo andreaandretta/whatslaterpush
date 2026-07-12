@@ -130,13 +130,18 @@ export async function DELETE(req: NextRequest) {
 
   if (!msg) return NextResponse.json({ error: 'Message not found or not owned' }, { status: 403 });
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from('scheduled_messages')
     .update({ status: 'cancelled' })
     .eq('id', id)
-    .eq('instance_phone', phone);
+    .eq('instance_phone', phone)
+    .in('status', ['pending', 'paused'])   // never cancel a row the cron already claimed
+    .select('id');
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!updated || updated.length === 0) {
+    return NextResponse.json({ error: 'message_not_cancellable', message: 'Il messaggio è già in invio o inviato.' }, { status: 409 });
+  }
   return NextResponse.json({ success: true });
 }
 

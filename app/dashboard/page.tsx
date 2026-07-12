@@ -164,14 +164,20 @@ export default function DashboardPage() {
 
   const handleDelete = async (id: string) => {
     try {
-      await fetch('/api/messages', {
+      const res = await fetch('/api/messages', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.message || 'Impossibile annullare: il messaggio è già in invio.');
+        return;
+      }
+      showToast('Messaggio annullato');
       fetchMessages();
     } catch {
-      // ignore
+      showToast('Errore di rete — riprova.');
     }
   };
 
