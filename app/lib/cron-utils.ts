@@ -108,7 +108,10 @@ export function rescheduleTomorrow(scheduledAt: string): string {
  * so a "3 msg / 24h" cap doesn't punish the next message with a 24h shift.
  */
 export function rescheduleSoon(scheduledAt: string, minutes: number = 5): string {
-  const next = new Date(scheduledAt);
+  // Anchor on NOW, not the (possibly stale) original scheduled_at, so a badly-late
+  // row actually leaves the current cron window instead of staying "due now" for
+  // dozens of ticks. A future scheduled_at still anchors on itself (max preserves it).
+  const next = new Date(Math.max(Date.now(), new Date(scheduledAt).getTime()));
   next.setMinutes(next.getMinutes() + minutes);
   return next.toISOString();
 }

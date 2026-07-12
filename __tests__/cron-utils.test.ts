@@ -266,24 +266,27 @@ describe('rescheduleTomorrow', () => {
 });
 
 describe('rescheduleSoon', () => {
-  test('adds default 5 minutes when no arg passed', () => {
-    const result = rescheduleSoon('2026-06-15T18:00:00.000Z');
-    expect(result).toBe('2026-06-15T18:05:00.000Z');
+  // Task 16: rescheduleSoon anchors on max(now, scheduledAt) + minutes so a stale
+  // (past) scheduled_at doesn't stay "due now" for dozens of ticks. A future
+  // scheduled_at still anchors on itself.
+  test('adds default 5 minutes to a FUTURE scheduled_at (anchors on it)', () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // +1h
+    const result = new Date(rescheduleSoon(future)).getTime();
+    expect(result).toBe(new Date(future).getTime() + 5 * 60 * 1000);
   });
 
-  test('adds custom N minutes (30 — cool-down use case)', () => {
-    const result = rescheduleSoon('2026-06-15T18:00:00.000Z', 30);
-    expect(result).toBe('2026-06-15T18:30:00.000Z');
+  test('adds custom N minutes to a FUTURE scheduled_at (cool-down use case)', () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const result = new Date(rescheduleSoon(future, 30)).getTime();
+    expect(result).toBe(new Date(future).getTime() + 30 * 60 * 1000);
   });
 
-  test('crosses hour boundary correctly', () => {
-    const result = rescheduleSoon('2026-06-15T17:58:00.000Z', 5);
-    expect(result).toBe('2026-06-15T18:03:00.000Z');
-  });
-
-  test('crosses day boundary at midnight', () => {
-    const result = rescheduleSoon('2026-06-15T23:50:00.000Z', 30);
-    expect(result).toBe('2026-06-16T00:20:00.000Z');
+  test('anchors on NOW (not the stale scheduled_at) when scheduled_at is in the past', () => {
+    const stale = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(); // 3h ago
+    const result = new Date(rescheduleSoon(stale, 5)).getTime();
+    // ~5 min in the FUTURE, not 3h-5min in the past
+    expect(result).toBeGreaterThan(Date.now());
+    expect(result).toBeLessThanOrEqual(Date.now() + 5 * 60 * 1000 + 1000); // 1s slack
   });
 });
 
