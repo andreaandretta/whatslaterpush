@@ -15,6 +15,13 @@ import { levenshteinRatio } from '../app/lib/levenshtein';
 
 const TEMPLATE_DIFF_THRESHOLD = 0.3;
 
+// Feature flag: "Richiedi approvazione" e "Promemoria" sono raccolti dalla UI
+// ma NON ancora consegnati end-to-end (handleSubmit non li invia, non c'è cron
+// promemoria). Nascosti finché non implementati per non promettere qualcosa che
+// non accade. Riattivazione futura = mettere true QUI e fare il wiring backend
+// (invio dei campi nel POST + colonna DB + flusso conferma/promemoria).
+const ADVANCED_APPROVAL_REMINDER_ENABLED = false;
+
 interface ScheduleModalProps {
   open: boolean;
   onClose: () => void;
@@ -130,13 +137,17 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
 
   const hasReminder = reminder !== 'never';
   const hasRecurrence = recurrence !== 'none';
-  const advancedSummary = !approval && !hasReminder && !hasRecurrence
-    ? 'Nessuna notifica · invio automatico'
-    : [
-        approval ? 'Approvazione richiesta' : null,
-        hasReminder ? `Promemoria: ${REMINDER_LABELS[reminder]}` : null,
-        hasRecurrence ? `Ripeti: ${recurrenceLabel(recurrence, scheduledDate).toLowerCase()}` : null,
-      ].filter(Boolean).join(' · ');
+  const advancedSummary = !ADVANCED_APPROVAL_REMINDER_ENABLED
+    ? (hasRecurrence
+        ? `Ripeti: ${recurrenceLabel(recurrence, scheduledDate).toLowerCase()}`
+        : 'Nessuna notifica · invio automatico')
+    : (!approval && !hasReminder && !hasRecurrence
+        ? 'Nessuna notifica · invio automatico'
+        : [
+            approval ? 'Approvazione richiesta' : null,
+            hasReminder ? `Promemoria: ${REMINDER_LABELS[reminder]}` : null,
+            hasRecurrence ? `Ripeti: ${recurrenceLabel(recurrence, scheduledDate).toLowerCase()}` : null,
+          ].filter(Boolean).join(' · '));
 
   function pickTemplate(pick: TemplatePick) {
     setMessage(pick.body);
@@ -345,42 +356,46 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
 
           {advancedOpen && (
             <div id="advanced-options" className="border-t border-[#2A3942] mx-4 mt-1">
-              <div className="flex items-start gap-4 py-4">
-                <UserCheck className="w-5 h-5 text-gray-400 shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <div className="text-white text-base">Richiedi approvazione per l&apos;invio</div>
-                  <div className="text-gray-400 text-sm mt-0.5">
-                    Prima dell&apos;invio riceverai una notifica di conferma
+              {ADVANCED_APPROVAL_REMINDER_ENABLED && (
+                <>
+                  <div className="flex items-start gap-4 py-4">
+                    <UserCheck className="w-5 h-5 text-gray-400 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <div className="text-white text-base">Richiedi approvazione per l&apos;invio</div>
+                      <div className="text-gray-400 text-sm mt-0.5">
+                        Prima dell&apos;invio riceverai una notifica di conferma
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={approval}
+                      aria-label="Richiedi approvazione"
+                      onClick={() => setApproval((v) => !v)}
+                      className={`relative w-11 h-6 rounded-full transition-colors shrink-0 focus:outline-none focus:ring-2 focus:ring-primary/30 ${
+                        approval ? 'bg-primary' : 'bg-gray-600'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                          approval ? 'translate-x-5' : ''
+                        }`}
+                      />
+                    </button>
                   </div>
-                </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={approval}
-                  aria-label="Richiedi approvazione"
-                  onClick={() => setApproval((v) => !v)}
-                  className={`relative w-11 h-6 rounded-full transition-colors shrink-0 focus:outline-none focus:ring-2 focus:ring-primary/30 ${
-                    approval ? 'bg-primary' : 'bg-gray-600'
-                  }`}
-                >
-                  <span
-                    className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
-                      approval ? 'translate-x-5' : ''
-                    }`}
-                  />
-                </button>
-              </div>
 
-              <button
-                type="button"
-                onClick={() => setReminderSheetOpen(true)}
-                className="w-full flex items-center gap-4 py-3 hover:bg-white/5 text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                <Bell className="w-5 h-5 text-gray-400 shrink-0" />
-                <div className="flex-1 text-white text-base">Promemoria</div>
-                <div className="text-primary text-base">{REMINDER_LABELS[reminder]}</div>
-                <ChevronRight className="w-5 h-5 text-gray-500" />
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => setReminderSheetOpen(true)}
+                    className="w-full flex items-center gap-4 py-3 hover:bg-white/5 text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    <Bell className="w-5 h-5 text-gray-400 shrink-0" />
+                    <div className="flex-1 text-white text-base">Promemoria</div>
+                    <div className="text-primary text-base">{REMINDER_LABELS[reminder]}</div>
+                    <ChevronRight className="w-5 h-5 text-gray-500" />
+                  </button>
+                </>
+              )}
 
               <button
                 type="button"
