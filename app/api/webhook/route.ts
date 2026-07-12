@@ -970,11 +970,10 @@ export async function POST(req) {
               await new Promise(r => setTimeout(r, 1000));
               // Step 3: Welcome message
               await notifyOwner(evoInstance, inst.phone_number,
-                'Ciao! Sono il tuo assistente WhatsLater 👋\n\n' +
-                'Da qui puoi programmare messaggi WhatsApp. Ecco come:\n\n' +
-                '1️⃣ *Presenta un cliente* — tocca 📎 → Contatto e inviami la sua scheda (serve solo la prima volta)\n\n' +
-                '2️⃣ *Scrivi il comando* — "Invia a Marco domani alle 15: Ricordati l\'appuntamento!"\n\n' +
-                'Prova ora! Inviami il contatto di un tuo cliente 👇'
+                '✅ WhatsApp collegato!\n\n' +
+                'Apri *whatslaterpush.vercel.app/dashboard* (o l\'app installata) e tocca *"Manda messaggio"*: ' +
+                'scegli il contatto, scrivi, imposta data e ora. Ci pensiamo noi a inviarlo al momento giusto.\n\n' +
+                'Buon lavoro! 🎯'
               );
               // Mark welcome as sent
               await supabase.from('user_instances')
