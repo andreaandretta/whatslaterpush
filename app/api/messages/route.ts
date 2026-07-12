@@ -418,15 +418,35 @@ export async function POST(req: NextRequest) {
     .eq('owner_phone', phone)
     .gte('created_at', cutoffIso);
 
-  const { data: scheduledContacts } = await supabase
-    .from('scheduled_messages')
-    .select('recipient_number, status, sent_at, scheduled_at')
-    .eq('instance_phone', phone)
-    .neq('status', 'cancelled');
+  // Split into two bounded queries to avoid the silent 1000-row truncation:
+  //  1. In-flight rows (pending/paused/processing/awaiting_*) — always active,
+  //     no date filter needed; capped at 2000 (more in-flight than this = queue full anyway).
+  //  2. Terminal rows (sent/failed) within the 90-day window — bounded by the
+  //     date filter on the DB side, also capped at 2000 for safety.
+  const INFLIGHT_STATUSES = ['pending', 'paused', 'processing', 'awaiting_confirm', 'awaiting_contact', 'awaiting_datetime', 'awaiting_message'];
+  const [{ data: inflightContacts }, { data: terminalContacts }] = await Promise.all([
+    supabase
+      .from('scheduled_messages')
+      .select('recipient_number')
+      .eq('instance_phone', phone)
+      .in('status', INFLIGHT_STATUSES)
+      .limit(2000),
+    supabase
+      .from('scheduled_messages')
+      .select('recipient_number, status, sent_at, scheduled_at')
+      .eq('instance_phone', phone)
+      .in('status', ['sent', 'failed'])
+      .gte('scheduled_at', cutoffIso)   // proxy date filter on scheduled_at (sent_at may be null on failed)
+      .limit(2000),
+  ]);
+  if ((inflightContacts?.length ?? 0) >= 2000 || (terminalContacts?.length ?? 0) >= 2000) {
+    console.warn('[messages POST] contact-window query hit 2000-row cap — contact count may be understated for phone=' + phone);
+  }
 
   const knownSet = new Set<string>();
   for (const row of pendingContacts || []) if (row.recipient_number) knownSet.add(row.recipient_number);
-  for (const row of scheduledContacts || []) {
+  for (const row of inflightContacts || []) if (row.recipient_number) knownSet.add(row.recipient_number);
+  for (const row of terminalContacts || []) {
     if (row.recipient_number && isRecipientActive(row)) knownSet.add(row.recipient_number);
   }
 
