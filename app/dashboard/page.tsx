@@ -352,6 +352,14 @@ export default function DashboardPage() {
       />
 
       <main className="flex-1 flex flex-col w-full max-w-2xl mx-auto px-4 pt-6 pb-12 space-y-8">
+        {userPhone && !connected && (
+          <div className="rounded-xl bg-red-500/10 border border-red-500/40 px-4 py-3 flex items-center justify-between gap-3">
+            <div className="text-sm text-red-200">
+              <strong>WhatsApp disconnesso.</strong> I tuoi messaggi programmati non partono finché non ricolleghi.
+            </div>
+            <a href="/connect" className="shrink-0 rounded-lg bg-red-500 px-3 py-2 text-sm font-semibold text-white">Ricollega</a>
+          </div>
+        )}
         {userPhone && (
           subscription.expired ? (
             <div className="bg-[#202C33] border border-red-500/40 rounded-2xl p-4 flex items-center justify-between">
