@@ -61,8 +61,12 @@ export async function runWebhookLogsCleanup(): Promise<WebhookLogsCleanupResult>
 }
 
 export async function GET(req: NextRequest) {
-  const secret = new URL(req.url).searchParams.get('secret');
-  if (!secret || secret !== process.env.CRON_SECRET) {
+  // Accept CRON_SECRET via `Authorization: Bearer` header (what Vercel Cron
+  // sends) OR the legacy ?secret= query — matching send-messages. Reading only
+  // the query 401'd every scheduled Vercel Cron run (#4).
+  const provided = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
+    ?? new URL(req.url).searchParams.get('secret');
+  if (!provided || provided !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
