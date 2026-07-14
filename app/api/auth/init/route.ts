@@ -161,7 +161,7 @@ export async function POST(req: NextRequest) {
   const expiresAt = new Date(Date.now() + SESSION_TTL_MINUTES * 60 * 1000).toISOString();
   const { error: insertErr } = await supabase
     .from('pending_auth_sessions')
-    .insert({ id: sessionId, phone: cleanPhone, status: 'pending', expires_at: expiresAt });
+    .insert({ id: sessionId, phone: cleanPhone, status: 'pending', instance_name: instanceName, expires_at: expiresAt });
   if (insertErr) {
     console.error('[auth/init] insert pending session failed:', insertErr.message);
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
@@ -176,15 +176,20 @@ export async function POST(req: NextRequest) {
     .eq('phone_number', cleanPhone)
     .maybeSingle();
 
-  // If the number is currently CONNECTED, only the owner (valid sw_session
-  // cookie for that phone) may re-init — otherwise a stranger could log out /
-  // delete a live instance just by knowing the number.
-  if (existing && existing.connection_status === 'open') {
-    const payload = await verifyCookie(req.cookies.get(AUTH_COOKIE_NAME)?.value);
+  // SECURITY (BUG #8): if the number ALREADY has an account (a user_instances
+  // row in ANY state — open/close/connecting), only the owner (valid sw_session
+  // cookie for that phone) may re-initialise it. This guard previously fired
+  // ONLY on 'open', leaving the close/connecting window (routine during a flap)
+  // open to a stranger injecting a pending session for the victim's number. A
+  // brand-new number (no row) still pairs freely. Re-pair from a NEW browser
+  // (lost device, no cookie) is intentionally blocked → manual operator recovery
+  // (DELETE user_instances WHERE phone_number=X); OTP self-chat v1.5 restores it.
+  if (existing) {
+    const payload = await verifyCookie(req.cookies?.get(AUTH_COOKIE_NAME)?.value);
     if (payload?.phone !== cleanPhone) {
       await supabase.from('pending_auth_sessions').delete().eq('id', sessionId);
       return NextResponse.json(
-        { error: 'Questo numero e gia collegato. Apri WhatsLater e usa "Disconnetti" prima di ri-collegare.' },
+        { error: 'Questo numero ha gia un account. Aprilo dallo stesso browser dove sei gia loggato, oppure contatta il supporto per recuperare l\'accesso.' },
         { status: 409 }
       );
     }

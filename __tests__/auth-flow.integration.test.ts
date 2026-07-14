@@ -104,6 +104,57 @@ describe('POST /api/auth/init', () => {
     const insertCall = mockSupa.calls.find(c => c.table === 'pending_auth_sessions' && c.operation === 'insert');
     expect(insertCall).toBeTruthy();
   });
+
+  // BUG #8: an EXISTING account (user_instances row present) may only be
+  // re-initialised by its owner (valid sw_session cookie for that phone) —
+  // regardless of connection_status. Previously the guard only fired on 'open',
+  // leaving the close/connecting window open to a stranger injecting a pending
+  // session for the victim's number.
+  const CREATE_OK = async () => ({
+    ok: true, status: 200,
+    json: async () => ({ qrcode: { base64: 'x', pairingCode: 'ABCD-1234' } }), text: async () => '{}',
+  });
+
+  test('SECURITY: existing account (non-open) WITHOUT cookie → 409 (hijack guard)', async () => {
+    jest.resetModules();
+    jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+    mockSupa.setResponse('user_instances:select', { phone_number: '393331234567', connection_status: 'close' });
+    fetchMock.setHandler('/instance/create', CREATE_OK);
+    (global as any).fetch = fetchMock.mockFetch;
+    const { POST } = await import('../app/api/auth/init/route');
+    const req = new Request('http://localhost/api/auth/init', { method: 'POST', body: JSON.stringify({ phone: '393331234567' }) });
+    (req as any).cookies = { get: () => undefined };
+    const res = await POST(req as any);
+    expect(res.status).toBe(409);
+  });
+
+  test('SECURITY: existing account re-pair WITH owner cookie → not 409 (owner allowed)', async () => {
+    jest.resetModules();
+    jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+    mockSupa.setResponse('user_instances:select', { phone_number: '393331234567', connection_status: 'close' });
+    fetchMock.setHandler('/instance/create', CREATE_OK);
+    (global as any).fetch = fetchMock.mockFetch;
+    const cookie = await signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });
+    const { POST } = await import('../app/api/auth/init/route');
+    const req = new Request('http://localhost/api/auth/init', { method: 'POST', body: JSON.stringify({ phone: '393331234567' }) });
+    const cm = new Map([['sw_session', cookie]]);
+    (req as any).cookies = { get: (n: string) => cm.has(n) ? { value: cm.get(n) } : undefined };
+    const res = await POST(req as any);
+    expect(res.status).not.toBe(409);
+  });
+
+  test('pending session insert carries instance_name (fix-2 prerequisite)', async () => {
+    jest.resetModules();
+    jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+    mockSupa.setResponse('user_instances:select', null); // fresh number → no existing account (shared mock leaks between tests)
+    fetchMock.setHandler('/instance/create', CREATE_OK);
+    (global as any).fetch = fetchMock.mockFetch;
+    const { POST } = await import('../app/api/auth/init/route');
+    const req = new Request('http://localhost/api/auth/init', { method: 'POST', body: JSON.stringify({ phone: '393331234567' }) });
+    await POST(req as any);
+    const insertCall = mockSupa.calls.find(c => c.table === 'pending_auth_sessions' && c.operation === 'insert');
+    expect(insertCall!.args[0].instance_name).toBe('SchedWhats-393331234567');
+  });
 });
 
 describe('GET /api/auth/me', () => {
