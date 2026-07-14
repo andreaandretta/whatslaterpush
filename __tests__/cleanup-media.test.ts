@@ -1,10 +1,11 @@
 /**
  * Tests for the media cleanup cron (/api/cron/cleanup-media).
  *
- * Covers: selection criteria (status + media_url + 30d cutoff),
+ * Covers: selection criteria (status + media_url + retention cutoff),
  * Storage.remove call shape, DB nullification on UPDATE, and audit log row.
  */
 import { createMockSupabase } from './helpers/mocks';
+import { MAX_HISTORY_DAYS } from '../app/lib/plans';
 
 const mockSupa = createMockSupabase();
 
@@ -56,7 +57,14 @@ function findAuditInsert() {
 }
 
 describe('runMediaCleanup — selection criteria', () => {
-  test('queries scheduled_messages filtered by terminal status, non-null media_url, and 30d cutoff', async () => {
+  test('retention covers the longest plan history window (beta/business = 90d), never less', () => {
+    // Regression guard for #52: a fixed 30d cutoff stripped attachments from
+    // rows a beta user (historyDays 90) could still open — text present, photo
+    // gone. Retention must be >= the max history any plan promises.
+    expect(MAX_HISTORY_DAYS).toBe(90);
+  });
+
+  test('queries scheduled_messages filtered by terminal status, non-null media_url, and the retention cutoff', async () => {
     mockSupa.setResponse('scheduled_messages:select', [
       { id: 'm1', media_url: '393331234567/abc-foto.jpg' },
       { id: 'm2', media_url: '393331234567/xyz-video.mp4' },
@@ -81,7 +89,7 @@ describe('runMediaCleanup — selection criteria', () => {
     const ltCall = sel.chain.find(c => c.method === 'lt' && c.args[0] === 'created_at');
     expect(ltCall).toBeDefined();
     const cutoffMs = new Date(ltCall!.args[1] as string).getTime();
-    const expectedMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const expectedMs = Date.now() - MAX_HISTORY_DAYS * 24 * 60 * 60 * 1000;
     // Allow 5s drift between code path and assertion.
     expect(Math.abs(cutoffMs - expectedMs)).toBeLessThan(5_000);
     // .limit(100) — Vercel Hobby 10s budget

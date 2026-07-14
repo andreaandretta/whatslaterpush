@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { logAuditEvent } from '../../../lib/audit';
+import { MAX_HISTORY_DAYS } from '../../../lib/plans';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
@@ -8,7 +9,11 @@ export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 
 const BUCKET = 'message-media';
-const RETENTION_DAYS = 30;
+// Keep attachments at least as long as the longest history window any plan
+// promises (beta/business = 90d). A fixed 30d used to strip media from rows a
+// beta/professional user could still open in the dashboard → text present,
+// photo silently gone. Derived from PLANS so the two can never drift apart.
+const RETENTION_DAYS = MAX_HISTORY_DAYS;
 // Vercel Hobby cap is 10s; 100 rows per run keeps the Storage round-trip and
 // the IN-list UPDATE well under budget. Cron runs weekly so backlog drains
 // even if a Sunday is skipped.
@@ -31,7 +36,7 @@ export interface CleanupResult {
 
 // H8: partition candidate terminal rows into removable vs in-use. A media_url
 // still referenced by a LIVE row (in `inUse`) must NOT be removed — recurring
-// chains share one file across occurrences, so deleting a >30d 'sent' copy would
+// chains share one file across occurrences, so deleting an aged 'sent' copy would
 // break the live future occurrence. Duplicate media_urls collapse to one path.
 export function partitionRemovableMedia(
   candidates: Array<{ id: string; media_url: string }>,
@@ -67,7 +72,7 @@ export async function runMediaCleanup(): Promise<CleanupResult> {
   const allPaths = rows.map(r => r.media_url).filter(Boolean);
 
   // H8: exclude media still referenced by a LIVE (non-terminal) row. Recurring
-  // chains reuse one media_url across occurrences, so a >30d 'sent' copy can share
+  // chains reuse one media_url across occurrences, so an aged 'sent' copy can share
   // its storage file with a future pending occurrence — removing it would break
   // the live chain (createSignedUrl -> 'Failed to sign media URL' forever).
   const { data: inUseRows, error: inUseErr } = await supabase.rpc('recurring_media_in_use', { p_paths: allPaths });

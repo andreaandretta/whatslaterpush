@@ -25,6 +25,11 @@ const PLANS: Record<string, PlanLimits> = {
 
 const FREE = PLANS.free;
 
+// The longest history any plan promises. Media retention (cleanup-media cron)
+// must cover this — deleting attachments sooner would leave rows visible in the
+// dashboard (within their plan's historyDays) with their media already gone.
+export const MAX_HISTORY_DAYS = Math.max(...Object.values(PLANS).map(p => p.historyDays));
+
 export function getPlanLimits(plan: string): PlanLimits {
   return PLANS[plan] || FREE;
 }
