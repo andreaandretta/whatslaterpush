@@ -186,6 +186,25 @@ describe('PATCH /api/messages', () => {
     expect(body.message.recurrence_rule).toBeNull();
   });
 
+  test('reschedule di una riga ricorrente sposta anche recurrence_anchor_at (BUG #2)', async () => {
+    currentRow = { ...currentRow!, recurrence_rule: 'FREQ=DAILY' };
+    const { PATCH } = await import('../app/api/messages/route');
+    const at = new Date(Date.now() + 3 * 3600_000).toISOString();
+    const res = await PATCH(makeReq({ id: 'msg-1', scheduled_at: at }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.message.recurrence_anchor_at).toBe(new Date(at).toISOString());
+  });
+
+  test('reschedule di una riga NON ricorrente non imposta recurrence_anchor_at', async () => {
+    const { PATCH } = await import('../app/api/messages/route');
+    const at = new Date(Date.now() + 3 * 3600_000).toISOString();
+    const res = await PATCH(makeReq({ id: 'msg-1', scheduled_at: at }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.message.recurrence_anchor_at ?? null).toBeNull();
+  });
+
   test('400 se il body è vuoto (no fields to update)', async () => {
     const { PATCH } = await import('../app/api/messages/route');
     const res = await PATCH(makeReq({ id: 'msg-1' }));

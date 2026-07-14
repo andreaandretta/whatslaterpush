@@ -94,6 +94,20 @@ export function nextRomeMidnight(from: Date): Date {
   return romeWallClockToUtc(p.y, p.mo, p.dd + 1, 0, 0, 0);
 }
 
+// Returns the instant whose Europe/Rome DATE equals dateInstant's Rome date but
+// whose Rome TIME-OF-DAY (h/mi/s/ms) equals anchorInstant's. TIME-OF-DAY ONLY —
+// this is never a delivery instant on its own; the DATE always comes from the
+// chain cursor. Used to re-anchor a recurring chain to the user's ORIGINAL
+// time-of-day (BUG #2) after operational reschedules drifted scheduled_at toward
+// midnight. DST-safe: the time-of-day is rebuilt through the Rome wall-clock
+// helpers, so an 18:00 anchor stays 18:00 Rome whether the target date is CET or
+// CEST. Rome offsets are whole minutes, so the anchor's UTC-ms equals its Rome-ms.
+export function atAnchorTimeOfDay(dateInstant: Date, anchorInstant: Date): Date {
+  const d = romeParts(dateInstant);
+  const a = romeParts(anchorInstant);
+  return romeWallClockToUtc(d.y, d.mo, d.dd, a.h, a.mi, a.s, anchorInstant.getUTCMilliseconds());
+}
+
 // Returns the next occurrence strictly AFTER `from`, preserving the user's
 // Europe/Rome wall-clock time-of-day across DST (a 09:00 reminder stays 09:00,
 // CEST or CET). Returns null if rule is invalid or no next occurrence exists in a
@@ -177,12 +191,21 @@ export function reconcileRecurringChain(chain: {
   latestStatus: string;
   latestScheduledAt: string;
   rule: string;
+  // The chain's immutable original instant (BUG #2). When set, the next
+  // occurrence's time-of-day is re-derived from it instead of the (possibly
+  // midnight-drifted) latestScheduledAt. Null/absent → legacy drift-prone seed.
+  anchorAt?: string | null;
 }, nowMs: number = Date.now()): ReconcileDecision {
   if (chain.hasLiveRow) return { insert: false };
   // Only revive a chain whose latest row ended terminally as sent/failed. A
   // 'cancelled' latest means the user stopped the chain — never revive it.
   if (chain.latestStatus !== 'sent' && chain.latestStatus !== 'failed') return { insert: false };
-  let next = nextOccurrence(chain.rule, new Date(chain.latestScheduledAt));
+  // Seed from the chain cursor's DATE but the ANCHOR's time-of-day, so operational
+  // reschedules that pushed scheduled_at toward midnight can't ratchet the whole
+  // chain to 00:15 forever (BUG #2). Without an anchor, keep the legacy seed.
+  const cursor = new Date(chain.latestScheduledAt);
+  const seed = chain.anchorAt ? atAnchorTimeOfDay(cursor, new Date(chain.anchorAt)) : cursor;
+  let next = nextOccurrence(chain.rule, seed);
   if (!next) return { insert: false };
   // Fast-forward clamp: a chain that stalled (quota starvation, long
   // disconnect, post-beta backlog) must SKIP its missed occurrences, not

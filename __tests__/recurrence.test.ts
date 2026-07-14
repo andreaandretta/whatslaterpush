@@ -1,4 +1,4 @@
-import { parseRule, isValidRule, nextOccurrence, nextOccurrences, reconcileRecurringChain, nextRomeMidnight } from '../app/lib/recurrence';
+import { parseRule, isValidRule, nextOccurrence, nextOccurrences, reconcileRecurringChain, nextRomeMidnight, atAnchorTimeOfDay } from '../app/lib/recurrence';
 
 // FIX 3: the cron's reconciliation sweep is the single place that guarantees a
 // recurring chain's next occurrence exists, regardless of how the previous one
@@ -313,5 +313,88 @@ describe('nextOccurrences', () => {
 
   test('returns empty array when rule is invalid', () => {
     expect(nextOccurrences('INVALID', new Date(), 3)).toEqual([]);
+  });
+});
+
+// BUG #2: recurring chains drift toward midnight because operational reschedules
+// (daily-limit → nextRomeMidnight, cooldown, disconnect) overwrite scheduled_at,
+// and the reconciliation seeds the next occurrence from that mutated value. The
+// anchor holds the ORIGINAL Rome time-of-day; atAnchorTimeOfDay re-derives it.
+describe('atAnchorTimeOfDay', () => {
+  test('keeps the Rome DATE of dateInstant but the Rome TIME-OF-DAY of the anchor', () => {
+    // dateInstant 20 Jun (Rome 12:00), anchor 18:00 Rome CEST (16:00Z).
+    const out = atAnchorTimeOfDay(new Date('2026-06-20T10:00:00.000Z'), new Date('2026-06-10T16:00:00.000Z'));
+    expect(out.toISOString()).toBe('2026-06-20T16:00:00.000Z'); // 18:00 Rome on 20 Jun
+  });
+
+  test('DST-safe: an anchor captured at 18:00 CEST stays 18:00 on a CET (winter) date', () => {
+    // anchor July 18:00 Rome = 16:00Z; target date in January (CET) → 18:00 Rome = 17:00Z.
+    const out = atAnchorTimeOfDay(new Date('2026-01-15T10:00:00.000Z'), new Date('2026-07-10T16:00:00.000Z'));
+    expect(out.toISOString()).toBe('2026-01-15T17:00:00.000Z'); // 18:00 Rome, winter offset
+  });
+
+  test('preserves minutes/seconds/milliseconds from the anchor', () => {
+    const out = atAnchorTimeOfDay(new Date('2026-07-20T10:00:00.000Z'), new Date('2026-07-10T16:07:30.250Z'));
+    expect(out.toISOString()).toBe('2026-07-20T16:07:30.250Z'); // 18:07:30.250 Rome on 20 Jul
+  });
+
+  test('never rolls the DATE, even when the anchor time is earlier than dateInstant time', () => {
+    // dateInstant Rome 23:30 on 20 Jul; anchor 18:00 → result must stay on 20 Jul.
+    const out = atAnchorTimeOfDay(new Date('2026-07-20T21:30:00.000Z'), new Date('2026-07-10T16:00:00.000Z'));
+    expect(out.toISOString()).toBe('2026-07-20T16:00:00.000Z');
+  });
+
+  test('uses the ROME calendar date (not the UTC date) of dateInstant', () => {
+    // 22:30Z on 20 Jul is 00:30 Rome on 21 Jul → result is on 21 Jul.
+    const out = atAnchorTimeOfDay(new Date('2026-07-20T22:30:00.000Z'), new Date('2026-07-10T16:00:00.000Z'));
+    expect(out.toISOString()).toBe('2026-07-21T16:00:00.000Z');
+  });
+});
+
+describe('reconcileRecurringChain — anchor (BUG #2 drift fix)', () => {
+  const DAILY = 'FREQ=DAILY';
+  const ANCHOR_1800 = '2026-06-10T16:00:00.000Z'; // 18:00 Rome (CEST)
+
+  test('anchor overrides a midnight-drifted scheduled_at (the core fix)', () => {
+    // Latest row was mutated to ~00:15 Rome by the daily-limit branch, then sent.
+    // Without the anchor the next would be tomorrow at 00:15 (the drift). With it,
+    // the next re-anchors to 18:00 Rome (same-day evening skipped → no double).
+    const r = reconcileRecurringChain({
+      hasLiveRow: false, latestStatus: 'sent',
+      latestScheduledAt: '2026-06-16T00:15:00.000Z', rule: DAILY, anchorAt: ANCHOR_1800,
+    }, Date.parse('2026-06-16T00:20:00.000Z'));
+    expect(r).toEqual({ insert: true, scheduledAt: '2026-06-17T16:00:00.000Z' });
+  });
+
+  test('a same-day drift (cooldown +30min) is fully corrected back to the anchor time', () => {
+    // 18:00 → 18:30 Rome (16:00Z → 16:30Z). Next must be tomorrow at 18:00, not 18:30.
+    const r = reconcileRecurringChain({
+      hasLiveRow: false, latestStatus: 'sent',
+      latestScheduledAt: '2026-06-15T16:30:00.000Z', rule: DAILY, anchorAt: ANCHOR_1800,
+    }, Date.parse('2026-06-15T16:35:00.000Z'));
+    expect(r).toEqual({ insert: true, scheduledAt: '2026-06-16T16:00:00.000Z' });
+  });
+
+  test('anchorAt null falls back to legacy behavior (backward compatible)', () => {
+    const r = reconcileRecurringChain({
+      hasLiveRow: false, latestStatus: 'sent',
+      latestScheduledAt: '2026-06-16T00:15:00.000Z', rule: DAILY, anchorAt: null,
+    }, Date.parse('2026-06-16T00:20:00.000Z'));
+    expect(r).toEqual({ insert: true, scheduledAt: '2026-06-17T00:15:00.000Z' }); // legacy drift
+  });
+
+  test('WEEKLY chains keep the anchor time-of-day and the correct weekday', () => {
+    // Anchor 09:00 Rome (07:00Z CEST); rule every Monday. Latest sent Mon 15 Jun
+    // but drifted to 00:15. Next Monday is 22 Jun at 09:00 Rome (07:00Z).
+    const r = reconcileRecurringChain({
+      hasLiveRow: false, latestStatus: 'sent',
+      latestScheduledAt: '2026-06-16T00:15:00.000Z', rule: 'FREQ=WEEKLY;BYDAY=MO',
+      anchorAt: '2026-06-01T07:00:00.000Z',
+    }, Date.parse('2026-06-16T00:20:00.000Z'));
+    expect(r.insert).toBe(true);
+    if (r.insert) {
+      // 09:00 Rome CEST = 07:00Z, and it must be a Monday (22 Jun 2026 is a Monday).
+      expect(r.scheduledAt).toBe('2026-06-22T07:00:00.000Z');
+    }
   });
 });

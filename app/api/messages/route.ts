@@ -167,7 +167,7 @@ export async function PATCH(req: NextRequest) {
   const supabase = getSupabase();
   const { data: existing } = await supabase
     .from('scheduled_messages')
-    .select('id, instance_phone, status, media_type, media_url')
+    .select('id, instance_phone, status, media_type, media_url, recurrence_rule')
     .eq('id', id)
     .eq('instance_phone', phone)
     .single();
@@ -282,6 +282,16 @@ export async function PATCH(req: NextRequest) {
       }
       update.recurrence_rule = recurrence_rule;
     }
+  }
+
+  // BUG #2: keep the recurrence anchor in sync when the user reschedules a
+  // (still-)recurring row — the new intended time-of-day (PRE-jitter) becomes the
+  // anchor so future occurrences follow the edit; clearing the rule clears it.
+  const effectiveRule = update.recurrence_rule !== undefined ? update.recurrence_rule : (existing as any).recurrence_rule;
+  if (scheduled_at !== undefined && effectiveRule) {
+    update.recurrence_anchor_at = new Date(scheduled_at as string).toISOString();
+  } else if (update.recurrence_rule === null) {
+    update.recurrence_anchor_at = null;
   }
 
   if (Object.keys(update).length === 0) {
@@ -494,6 +504,10 @@ export async function POST(req: NextRequest) {
       caption: cleanMessage,
       parsed_message: cleanMessage,
       scheduled_at: applyJitter(scheduledDate.toISOString()),
+      // BUG #2: the anchor is the user's ORIGINAL time-of-day, PRE-jitter, so the
+      // reconciliation can re-derive it even after operational reschedules push
+      // scheduled_at toward midnight. Null for one-shot rows.
+      recurrence_anchor_at: normalizedRule ? scheduledDate.toISOString() : null,
       status: 'pending',
       retry_count: 0,
       max_retries: 3,

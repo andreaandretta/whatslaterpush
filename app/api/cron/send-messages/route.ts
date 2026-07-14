@@ -236,6 +236,7 @@ export async function GET(req: NextRequest) {
             latestStatus: row.status,
             latestScheduledAt: row.scheduled_at,
             rule: row.recurrence_rule,
+            anchorAt: row.recurrence_anchor_at, // BUG #2: re-anchor to original time-of-day
           });
           if (!decision.insert) continue;
           const chainId = row.parent_recurrence_id || row.id;
@@ -256,6 +257,7 @@ export async function GET(req: NextRequest) {
             media_filename: row.media_filename || null,
             media_caption: row.media_caption || null,
             recurrence_rule: row.recurrence_rule,
+            recurrence_anchor_at: row.recurrence_anchor_at, // BUG #2: anchor travels down the chain
             parent_recurrence_id: chainId,
           });
           if (insErr && insErr.code !== '23505') {

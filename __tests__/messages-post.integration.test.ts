@@ -135,6 +135,33 @@ describe('POST /api/messages', () => {
     expect(inserted.caption).toBe('Ciao Anna');
   });
 
+  test('recurring POST seeds recurrence_anchor_at with the PRE-jitter instant (BUG #2)', async () => {
+    mockUserInstance('personal');
+    mockSupa.setResponse('scheduled_messages:insert', { id: 'new-msg-uuid', scheduled_at: new Date(Date.now() + 3600_000).toISOString() });
+    const at = new Date(Date.now() + 3600_000).toISOString();
+    const res = await callPost({
+      recipient_number: '3339998877', message: 'Promemoria',
+      scheduled_at: at, recurrence_rule: 'FREQ=DAILY',
+    });
+    expect(res.status).toBe(200);
+    const inserted = mockSupa.calls.find((c) => c.table === 'scheduled_messages' && c.operation === 'insert')!.args[0];
+    // Anchor = the exact user-intended instant, NOT the jittered scheduled_at.
+    expect(inserted.recurrence_anchor_at).toBe(new Date(at).toISOString());
+    expect(inserted.recurrence_rule).toBe('FREQ=DAILY');
+  });
+
+  test('one-shot POST leaves recurrence_anchor_at null', async () => {
+    mockUserInstance('personal');
+    mockSupa.setResponse('scheduled_messages:insert', { id: 'new-msg-uuid', scheduled_at: new Date(Date.now() + 3600_000).toISOString() });
+    const res = await callPost({
+      recipient_number: '3339998877', message: 'Una tantum',
+      scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    expect(res.status).toBe(200);
+    const inserted = mockSupa.calls.find((c) => c.table === 'scheduled_messages' && c.operation === 'insert')!.args[0];
+    expect(inserted.recurrence_anchor_at ?? null).toBeNull();
+  });
+
   // Helper: a recently-sent scheduled_messages row (active in the 90-day window).
   const recentSent = (n: string) => ({
     recipient_number: n,
