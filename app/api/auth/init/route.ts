@@ -28,41 +28,51 @@ function getSupabase() {
   );
 }
 
+// Eventi webhook sottoscritti. TUTTI devono stare nell'enum di
+// EventController.events (v2.3.7): un solo nome fuori enum fa 400-are l'intera
+// config. MESSAGING_HISTORY_SET NON è nell'enum v2 (e mai emesso da Evolution,
+// vedi nota CLAUDE.md) — per anni ha fatto fallire in silenzio /webhook/set,
+// erano i due errori [Validate] fissi nei log container a ogni pairing.
+const WEBHOOK_EVENTS = [
+  'MESSAGES_UPSERT',
+  'CONTACTS_SET',
+  'CONTACTS_UPSERT',
+  'CONTACTS_UPDATE',
+  'CONNECTION_UPDATE',
+  'QRCODE_UPDATED',
+];
+
+function webhookConfig() {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app';
+  const webhookSecret = process.env.WEBHOOK_SECRET || '';
+  return {
+    enabled: true,
+    url: `${appUrl}/api/webhook`,
+    // Chiavi v2: byEvents/base64 (i legacy webhook_by_events/webhook_base64
+    // venivano ignorati — il default false coincideva, per fortuna).
+    byEvents: false,
+    base64: false,
+    events: WEBHOOK_EVENTS,
+    ...(webhookSecret ? { headers: { 'x-webhook-secret': webhookSecret } } : {}),
+  };
+}
+
+// Ridondanza difensiva sulla config webhook: la scrive già /instance/create col
+// blocco nested (è così che ha sempre funzionato in prod — lo schema create non
+// valida il nested e il controller lo legge). Questa POST allinea/ripara la
+// config con il body che webhookSchema v2.3.7 esige: root `webhook` required.
 async function setWebhook(name: string): Promise<void> {
   const evoUrl = process.env.EVOLUTION_API_URL;
   const evoKey = process.env.EVOLUTION_API_KEY;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app';
-  const webhookUrl = `${appUrl}/api/webhook`;
-  const webhookSecret = process.env.WEBHOOK_SECRET || '';
-  const body: any = {
-    enabled: true,
-    url: webhookUrl,
-    webhook_by_events: false,
-    webhook_base64: false,
-    events: [
-      'MESSAGES_UPSERT',
-      'CONTACTS_SET',
-      'CONTACTS_UPSERT',
-      'CONTACTS_UPDATE',
-      'MESSAGING_HISTORY_SET',
-      'CONNECTION_UPDATE',
-      'QRCODE_UPDATED',
-    ],
-  };
-  if (webhookSecret) body.headers = { 'x-webhook-secret': webhookSecret };
   try {
     const res = await fetch(`${evoUrl}/webhook/set/${name}`, {
       method: 'POST',
       headers: { apikey: evoKey!, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ webhook: webhookConfig() }),
     });
-    const data = await res.json();
-    if (data?.error || data?.status === 'error' || !res.ok) {
-      await fetch(`${evoUrl}/webhook/set/${name}`, {
-        method: 'POST',
-        headers: { apikey: evoKey!, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ webhook: body }),
-      });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      console.error('[auth/init] setWebhook rejected:', res.status, detail.slice(0, 300));
     }
   } catch (e) {
     console.error('[auth/init] setWebhook error:', e);
@@ -72,7 +82,6 @@ async function setWebhook(name: string): Promise<void> {
 export async function POST(req: NextRequest) {
   const evoUrl = process.env.EVOLUTION_API_URL;
   const evoKey = process.env.EVOLUTION_API_KEY;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app';
 
   const body = await req.json().catch(() => ({}));
   const cleanPhone = validatePhone(body?.phone || '');
@@ -201,6 +210,20 @@ export async function POST(req: NextRequest) {
     .eq('instance_name', instanceName)
     .neq('phone_number', cleanPhone);
 
+  // Se questa richiesta CREA la row user_instances (numero vergine) e poi
+  // fallisce prima del pairing, la row va rimossa nei rami d'errore: senza
+  // cookie (emesso solo a CONNECTION_UPDATE open) il guard #8 sopra la
+  // leggerebbe come "account esistente" → 409 deterministico al retry che i
+  // nostri stessi messaggi d'errore suggeriscono. Lockout con recovery
+  // operatore come unica uscita. Mai cancellarla per un account pre-esistente.
+  const isNewAccount = !existing;
+  const cleanupFailedInit = async () => {
+    await supabase.from('pending_auth_sessions').delete().eq('id', sessionId);
+    if (isNewAccount) {
+      await supabase.from('user_instances').delete().eq('phone_number', cleanPhone);
+    }
+  };
+
   // Create the trial row ONLY for a brand-new phone. ignoreDuplicates means an
   // existing user's subscription_plan / trial_ends_at are NEVER overwritten
   // (closes the plan-reset hijack). New signups still get the 7-day trial.
@@ -214,7 +237,29 @@ export async function POST(req: NextRequest) {
     { onConflict: 'phone_number', ignoreDuplicates: true }
   );
 
-  await forceDeleteInstance(instanceName);
+  // Teardown VERIFICATO (bug 2026-08-17): se la vecchia istanza sopravvive
+  // (zombie con socket 'connecting'), procedere è garanzia di codice morto —
+  // create 403 "name already in use" e il fallback connect restituirebbe lo
+  // stale qrCode in-memory. Meglio un errore onesto di un codice che il
+  // telefono rifiuta con "verifica che il numero sia corretto".
+  const teardownOk = await forceDeleteInstance(instanceName);
+  if (!teardownOk) {
+    console.error(`[auth/init] Evolution teardown failed for ${instanceName} — zombie instance still on the node, aborting pairing`);
+    // phone_hash (mai plaintext, coerente con pairing_started) così l'operatore
+    // sa QUALE istanza è zombie; flush esplicito perché la lambda Node può
+    // congelare prima del drain del transport (gotcha documentato in
+    // app/api/test/sentry/route.ts — vercelWaitUntil è no-op fuori da Edge).
+    Sentry.captureMessage('pairing_teardown_failed', {
+      level: 'error',
+      tags: { phone_hash: hashContactRefSync(cleanPhone) },
+    });
+    await cleanupFailedInit();
+    await Sentry.flush(2000).catch(() => {});
+    return NextResponse.json(
+      { error: 'Il numero risulta ancora agganciato a una vecchia sessione che non riusciamo a scollegare. Riprova tra un minuto; se succede ancora, contatta il supporto.' },
+      { status: 503 }
+    );
+  }
 
   // Gate "solo cache vuota" (Fase 2, 2026-06-21): syncFullHistory pesa sulla RAM
   // del nodo (Baileys bufferizza app-state/history al link). Lo attiviamo SOLO
@@ -298,28 +343,24 @@ export async function POST(req: NextRequest) {
               ...(egress.password ? { proxyPassword: egress.password } : {}),
             }
           : {}),
-        webhook: {
-          enabled: true,
-          url: `${appUrl}/api/webhook`,
-          webhook_by_events: false,
-          webhook_base64: false,
-          events: [
-            'MESSAGES_UPSERT',
-            'CONTACTS_SET',
-            'CONTACTS_UPSERT',
-            'CONTACTS_UPDATE',
-            'MESSAGING_HISTORY_SET',
-            'CONNECTION_UPDATE',
-            'QRCODE_UPDATED',
-          ],
-          ...(process.env.WEBHOOK_SECRET ? { headers: { 'x-webhook-secret': process.env.WEBHOOK_SECRET } } : {}),
-        },
+        // È QUESTO blocco a configurare davvero il webhook (il controller v2
+        // legge il nested; lo schema create non lo valida). setWebhook dopo è
+        // solo ridondanza difensiva. Stessa config condivisa: webhookConfig().
+        webhook: webhookConfig(),
       }),
     });
     createRes = await res.json();
+    // Una create rigettata (403 name-in-use, 400 validazione…) prima veniva
+    // ignorata: si proseguiva fino al fallback connect che può restituire un
+    // codice morto. Fail-fast con cleanup, come per l'errore di rete.
+    if (!res.ok || createRes?.error) {
+      console.error('[auth/init] instance create rejected:', res.status, JSON.stringify(createRes)?.slice(0, 300));
+      await cleanupFailedInit();
+      return NextResponse.json({ error: 'Errore creazione istanza Evolution API' }, { status: 500 });
+    }
   } catch (e) {
     console.error('[auth/init] instance create error:', e);
-    await supabase.from('pending_auth_sessions').delete().eq('id', sessionId);
+    await cleanupFailedInit();
     return NextResponse.json({ error: 'Errore creazione istanza Evolution API' }, { status: 500 });
   }
 
@@ -354,7 +395,7 @@ export async function POST(req: NextRequest) {
   if (pairingCode && !looksLikePairingCode(pairingCode)) pairingCode = null;
 
   if (!qrCode && !pairingCode) {
-    await supabase.from('pending_auth_sessions').delete().eq('id', sessionId);
+    await cleanupFailedInit();
     return NextResponse.json(
       { error: 'Impossibile generare QR o codice. Riprova tra qualche secondo.' },
       { status: 500 }

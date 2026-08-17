@@ -26,6 +26,15 @@ beforeEach(() => {
   };
   mockSupa.calls.length = 0;
   fetchMock.calls.length = 0;
+  // Teardown verificato (bug 2026-08-17): il gate di /api/auth/init accetta
+  // solo il 404 JSON della guard Evolution come prova che l'istanza è sparita.
+  // Il default 200 {ok:true} del mock condiviso non lo supera più (by design:
+  // fail-closed) — serve lo stub fedele.
+  fetchMock.setHandler('/instance/connectionState/', async () => ({
+    ok: false, status: 404,
+    json: async () => ({ status: 404, error: 'Not Found', response: { message: ['Instance not found'] } }),
+    text: async () => '{}',
+  }));
   (global as any).fetch = fetchMock.mockFetch;
 });
 
