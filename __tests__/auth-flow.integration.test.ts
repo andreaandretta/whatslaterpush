@@ -127,7 +127,10 @@ describe('POST /api/auth/init', () => {
   test('SECURITY: existing account (non-open) WITHOUT cookie → 409 (hijack guard)', async () => {
     jest.resetModules();
     jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
-    mockSupa.setResponse('user_instances:select', { phone_number: '393331234567', connection_status: 'close' });
+    // paired_at presente = account REALE: dal 2026-08-18 il guard scatta solo su
+    // righe accoppiate almeno una volta (una riga senza paired_at è onboarding
+    // interrotto e può ritentare liberamente — vedi repair-flow.test.ts).
+    mockSupa.setResponse('user_instances:select', { phone_number: '393331234567', connection_status: 'close', paired_at: '2026-07-05T15:22:07Z' });
     fetchMock.setHandler('/instance/create', CREATE_OK);
     (global as any).fetch = fetchMock.mockFetch;
     const { POST } = await import('../app/api/auth/init/route');
@@ -140,7 +143,7 @@ describe('POST /api/auth/init', () => {
   test('SECURITY: existing account re-pair WITH owner cookie → not 409 (owner allowed)', async () => {
     jest.resetModules();
     jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
-    mockSupa.setResponse('user_instances:select', { phone_number: '393331234567', connection_status: 'close' });
+    mockSupa.setResponse('user_instances:select', { phone_number: '393331234567', connection_status: 'close', paired_at: '2026-07-05T15:22:07Z' });
     fetchMock.setHandler('/instance/create', CREATE_OK);
     (global as any).fetch = fetchMock.mockFetch;
     const cookie = await signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });

@@ -71,11 +71,15 @@ function parseAdminPhones(): string[] {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Authenticated users must never land back on the connect/login pages (e.g.
-  // after hitting the browser Back button from the dashboard). While the
-  // sw_session cookie is valid we bounce them to /dashboard; the cookie is only
-  // cleared by logout ("Disconnetti"), so /connect reappears only after that.
-  if (pathname === '/' || pathname === '/connect' || pathname === '/login') {
+  // Authenticated users must never land back on the landing/login pages (e.g.
+  // after hitting the browser Back button from the dashboard) — but /connect
+  // MUST stay reachable while logged in: è il percorso di re-pair, e il guard
+  // owner-only in /api/auth/init passa proprio grazie al cookie ancora
+  // presente. Rimbalzare anche /connect (fino al 2026-08-18) rendeva il
+  // re-pair impossibile dalla UI: da loggato /connect era irraggiungibile, da
+  // sloggato il guard #8 rispondeva 409 — e il banner "Ricollega" sembrava un
+  // bottone morto.
+  if (pathname === '/' || pathname === '/login') {
     const authed = await verifyCookie(request.cookies.get(AUTH_COOKIE_NAME)?.value);
     if (authed) {
       const url = request.nextUrl.clone();

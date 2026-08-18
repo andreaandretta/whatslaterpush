@@ -295,7 +295,9 @@ describe('POST /api/auth/init — niente codice morto', () => {
   test('account pre-esistente (owner con cookie) + create fallita → la SUA row NON viene toccata', async () => {
     jest.resetModules();
     jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
-    mockSupa.setResponse('user_instances:select', { phone_number: '393331234567', connection_status: 'close' });
+    // paired_at = account reale (senza, il nuovo guard lo tratterebbe da
+    // onboarding interrotto e il cleanup CANCELLEREBBE la row — vedi repair-flow)
+    mockSupa.setResponse('user_instances:select', { phone_number: '393331234567', connection_status: 'close', paired_at: '2026-07-05T15:22:07Z' });
     fetchMock.setHandler('/instance/logout/', NOT_FOUND);
     fetchMock.setHandler('/instance/delete/', NOT_FOUND);
     fetchMock.setHandler('/instance/connectionState/', NOT_FOUND);

@@ -181,19 +181,22 @@ export async function POST(req: NextRequest) {
   // their connected instance. Read the existing row first.
   const { data: existing } = await supabase
     .from('user_instances')
-    .select('phone_number, connection_status')
+    .select('phone_number, connection_status, paired_at')
     .eq('phone_number', cleanPhone)
     .maybeSingle();
 
-  // SECURITY (BUG #8): if the number ALREADY has an account (a user_instances
-  // row in ANY state — open/close/connecting), only the owner (valid sw_session
-  // cookie for that phone) may re-initialise it. This guard previously fired
-  // ONLY on 'open', leaving the close/connecting window (routine during a flap)
-  // open to a stranger injecting a pending session for the victim's number. A
-  // brand-new number (no row) still pairs freely. Re-pair from a NEW browser
-  // (lost device, no cookie) is intentionally blocked → manual operator recovery
-  // (DELETE user_instances WHERE phone_number=X); OTP self-chat v1.5 restores it.
-  if (existing) {
+  // SECURITY (BUG #8): if the number ALREADY has a REAL account, only the owner
+  // (valid sw_session cookie for that phone) may re-initialise it. "Real" =
+  // paired_at NOT NULL (timbrato dal webhook al primo CONNECTION_UPDATE open,
+  // migration 20260818_paired_at). Una riga SENZA paired_at è un onboarding mai
+  // completato — la lascia l'upsert di un tentativo interrotto — e DEVE poter
+  // essere re-inizializzata senza cookie: prima del 2026-08-18 il guard scattava
+  // su qualsiasi riga e il primo retry di un numero vergine moriva 409 ("questo
+  // numero ha già un account") con recovery solo operatore. La finestra
+  // close/connecting di un account reale resta owner-only (hijack chiuso).
+  // Re-pair da browser nuovo (device perso, no cookie) resta bloccato → recovery
+  // operatore (runbook); OTP self-chat v1.5 lo renderà self-service.
+  if (existing?.paired_at) {
     const payload = await verifyCookie(req.cookies?.get(AUTH_COOKIE_NAME)?.value);
     if (payload?.phone !== cleanPhone) {
       await supabase.from('pending_auth_sessions').delete().eq('id', sessionId);
@@ -210,16 +213,15 @@ export async function POST(req: NextRequest) {
     .eq('instance_name', instanceName)
     .neq('phone_number', cleanPhone);
 
-  // Se questa richiesta CREA la row user_instances (numero vergine) e poi
-  // fallisce prima del pairing, la row va rimossa nei rami d'errore: senza
-  // cookie (emesso solo a CONNECTION_UPDATE open) il guard #8 sopra la
-  // leggerebbe come "account esistente" → 409 deterministico al retry che i
-  // nostri stessi messaggi d'errore suggeriscono. Lockout con recovery
-  // operatore come unica uscita. Mai cancellarla per un account pre-esistente.
-  const isNewAccount = !existing;
+  // Se il numero non ha un account REALE (nessuna riga, o riga senza
+  // paired_at lasciata da un tentativo interrotto) e questo init fallisce, la
+  // riga upsertata va rimossa nei rami d'errore: tiene il DB pulito e, in
+  // cintura col guard paired_at sopra, evita che un onboarding fallito si
+  // trasformi in 409 al retry. Mai cancellarla per un account accoppiato.
+  const isUnpairedNumber = !existing?.paired_at;
   const cleanupFailedInit = async () => {
     await supabase.from('pending_auth_sessions').delete().eq('id', sessionId);
-    if (isNewAccount) {
+    if (isUnpairedNumber) {
       await supabase.from('user_instances').delete().eq('phone_number', cleanPhone);
     }
   };

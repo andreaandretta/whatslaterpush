@@ -447,6 +447,19 @@ async function handleConnectionUpdate(payload: any): Promise<NextResponse> {
   if (error) console.error(`WEBHOOK: CONNECTION_UPDATE DB error: ${error.message}`);
   else console.log(`WEBHOOK: CONNECTION_UPDATE saved - instance=${instanceName} status=${connectionStatus}` + (connectionStatus === 'close' ? ` reason=${discCode}/${discReason}` : '') + ` rows=${updated?.length || 0}`);
 
+  // Primo pairing completato → timbra paired_at UNA VOLTA (guardia is-null).
+  // È il discriminatore del guard #8 in /api/auth/init: righe senza paired_at
+  // sono onboarding mai completato (re-init libero), righe con paired_at sono
+  // account reali (owner-only). Migration 20260818_paired_at.
+  if (connectionStatus === 'open') {
+    const { error: stampErr } = await supabase
+      .from('user_instances')
+      .update({ paired_at: nowIso })
+      .eq('instance_name', instanceName)
+      .is('paired_at', null);
+    if (stampErr) console.error(`WEBHOOK: paired_at stamp error: ${stampErr.message}`);
+  }
+
   // Audit each disconnect with its reason (fire-and-forget) so the history
   // survives the next reconnect overwriting the last_disconnect_* columns —
   // EXCEPT benign 515 (restartRequired): Baileys emits it routinely right after
