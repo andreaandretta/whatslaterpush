@@ -1311,6 +1311,18 @@ Una seconda review (3 agenti) ha rivisto il codice a valle del merge. **3 findin
 
 ---
 
+# TIER PAIRING-RESILIENCE (20 ago — post-incidente "pairing rotto" 17-19 ago, approvato da Andrea)
+
+Contesto: incidente diagnostico completo in `docs/2026-08-18-evolution-p3-build-test.md` + memoria di sessione. Cause stratificate: 3 bug nostri (zombie teardown, catch-22 middleware/guard #8, righe garbage) fixati il 18 ago; rate-limit Meta per-numero; cambio protocollo WhatsApp lato server (28-29 lug, `companion_reg_refresh`) con scialuppa `evo-patched:v2.3.7-p3` validata e pronta. La UI resta CODICE-first per scelta di prodotto (il cliente si collega dal telefono che ha in mano — QR scartato, decisione Andrea 20 ago).
+
+- [ ] **Task 54 — Allarme pairing tarato + errore reale**: `checkPairingBlackout` critical da `started>=5` → `>=2`; nel messaggio l'ultimo errore vero dai log (`audit_events.instance_disconnect` nella finestra, non-test) al posto del solo suggerimento statico; subject email umanizzato (descrizione, non `pairing_blackout — critical`); `from` con display name "WhatsLater Monitoring"; `ADMIN_EMAIL` multi-destinatario (lista separata da virgole); recovery text con dettaglio (`N collegamenti riusciti`).
+- [ ] **Task 55 — Dedup atomico onset (#9 backlog)**: migration unique partial index su `monitoring_alerts(check_name, minute_bucket)` + claim-before-send (INSERT prima dell'invio, chi perde il claim non invia). Chiude il doppio-alert da health-check concorrenti (stessa classe del doppio-invio BUG #1).
+- [ ] **Task 56 — Heartbeat di tutti i cron (#6 backlog)**: stamp `ops_heartbeat` in daily-report, cleanup-media, cleanup-webhook-logs, ops-worker; check `collateral_crons` (daily >26h, weekly >8g, ops-worker >15min) in `runAllChecks`.
+- [ ] **Task 57 — Sentinella upstream**: cron settimanale `/api/cron/upstream-watch` (vercel.json) che confronta l'ultima release di WhiskeySockets/Baileys ed evolution-foundation/evolution-api con l'ultima vista (audit_events) → email informativa su novità (è il preavviso del prossimo "muro WhatsApp").
+- [ ] **Task 58 — Freno anti-martellamento UI**: /connect gestisce 429 con countdown da `Retry-After` (pulsante disabilitato che si riattiva), copy distinti per rate-limit (arancio, aspetta) / codice scaduto (rigenera) / errore nostro (503/500: "non sei tu, siamo avvisati"). Ogni retry compulsivo oggi allunga il blocco Meta del numero del cliente.
+- [ ] **Task 59 — Runbook pairing-emergenze + canarino**: `docs/RUNBOOK-pairing-emergenze.md` con l'albero di diagnosi dell'incidente (stato istanza sul nodo → in-memory vs DB → rate-limit vs protocollo → decisione swap p3) + checklist post-deploy auth con numero canarino dedicato (max 1-2 pairing/settimana).
+- [ ] **Task 60 — ADMIN_EMAIL su account presidiato** (env Vercel, con Andrea): destinatari = entrambi gli account; valutare dominio mittente Resend verificato (via `onboarding@resend.dev` sandbox oggi).
+
 ## Appendice A — Stato baseline e regressioni (dal review multi-agente)
 
 **Baseline test (verificata):** `873 pass / 13 fail`, coerente con CLAUDE.md. I 13 fail = 8 suite Playwright raccolte per errore da Jest (**risolte dalla Task 1**) + 3 integration flaky pre-esistenti (`cron.integration`, `webhook.integration`, `webhook-quick-capture`). `tsc --noEmit` pulito.

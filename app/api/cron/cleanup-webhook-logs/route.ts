@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { logAuditEvent } from '../../../lib/audit';
+import { stampHeartbeat } from '../../../lib/heartbeat';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,6 +70,8 @@ export async function GET(req: NextRequest) {
   if (!provided || provided !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  void stampHeartbeat('cleanup-webhook-logs'); // Task 56 (#6)
 
   try {
     const result = await runWebhookLogsCleanup();

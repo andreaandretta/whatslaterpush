@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import StepNumero from '../components/connect/StepNumero';
 import StepCodice from '../components/connect/StepCodice';
 import StepPronto from '../components/connect/StepPronto';
+import { classifyInitError, type InitUiError } from '../lib/connect-errors';
 
 // Connect flow orchestrator — 3 steps:
 //   1. Numero — user types phone, we POST to /api/auth/init to start session
@@ -41,6 +42,12 @@ function ConnectFlow() {
   const [sessionId, setSessionId] = useState('');
   const [codeExpiresAt, setCodeExpiresAt] = useState<number | null>(null);
 
+  // Task 58: freno anti-martellamento. Errore classificato + istante fino al
+  // quale il CTA resta bloccato (i retry compulsivi consumano il rate-limit
+  // Meta del numero del cliente — visto dal vivo nell'incidente di agosto).
+  const [initError, setInitError] = useState<InitUiError | null>(null);
+  const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
+
   // After pairing success, redirect to dashboard. The 1.5s delay lives in
   // StepPronto so the user actually sees the celebration animation.
   const handlePaired = () => {
@@ -55,6 +62,8 @@ function ConnectFlow() {
   // Step 1 submit → /api/auth/init creates an Evolution instance + returns
   // the pairing code. Existing route already handles the heavy lifting.
   const handleNumeroSubmit = async (rawNumber: string) => {
+    // Belt: il freno UI vale anche se il CTA venisse aggirato (Enter, ecc.).
+    if (cooldownUntil && Date.now() < cooldownUntil) return;
     const number = rawNumber.replace(/\s/g, '');
     setPhoneNumber(number);
 
@@ -64,19 +73,27 @@ function ConnectFlow() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: number }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
-      if (data.pairingCode && data.sessionId) {
+      if (res.ok && data.pairingCode && data.sessionId) {
+        setInitError(null);
+        setCooldownUntil(null);
         setPairingCode(data.pairingCode);
         setSessionId(data.sessionId);
         // Pairing codes from Evolution expire in ~10 minutes.
         setCodeExpiresAt(Date.now() + 600 * 1000);
         setStep('2');
       } else {
-        alert(data.error || 'Errore di connessione. Riprova.');
+        // Task 58: niente più alert() generico — classifica (rate-limit /
+        // problema nostro / validazione) e attiva il freno col countdown.
+        const e = classifyInitError(res.status, data, res.headers.get('Retry-After'));
+        setInitError(e);
+        setCooldownUntil(Date.now() + e.cooldownSec * 1000);
       }
     } catch {
-      alert('Errore di rete. Riprova.');
+      const e = classifyInitError(0, null, null);
+      setInitError(e);
+      setCooldownUntil(Date.now() + e.cooldownSec * 1000);
     }
   };
 
@@ -113,7 +130,7 @@ function ConnectFlow() {
 
   return (
     <main className="min-h-screen bg-white">
-      {step === '1' && <StepNumero onSubmit={handleNumeroSubmit} />}
+      {step === '1' && <StepNumero onSubmit={handleNumeroSubmit} error={initError} cooldownUntil={cooldownUntil} />}
       {step === '2' && (
         <StepCodice
           code={pairingCode}

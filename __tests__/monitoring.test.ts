@@ -299,7 +299,7 @@ describe('checkFailedSpike', () => {
 // --- runAllChecks ---
 
 describe('runAllChecks', () => {
-  test('returns 11 results (cron split into heartbeat + messages_stuck)', async () => {
+  test('returns 12 results (cron split into heartbeat + messages_stuck)', async () => {
     fetchMock.setJsonResponse('/instance/fetchInstances', [{ id: 1 }], 200);
     mockSupa.setResponse('scheduled_messages:select', null, null, { count: 0 });
     mockSupa.setResponse('user_instances:select', [{ id: '1' }], null, { count: 0 });
@@ -322,7 +322,7 @@ describe('runAllChecks', () => {
       data: { result: [{ values: [['1712200000', '26843545600']] }] }
     });
     const results = await runAllChecks();
-    expect(results).toHaveLength(11);
+    expect(results).toHaveLength(12); // +collateral_crons (Task 56)
     results.forEach((r) => {
       expect(['ok', 'warning', 'critical']).toContain(r.status);
       expect(r.name).toBeTruthy();

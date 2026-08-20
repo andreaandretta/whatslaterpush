@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getCoolifyBase, COOLIFY_NOT_CONFIGURED } from '../../../lib/coolify-base';
+import { stampHeartbeat } from '../../../lib/heartbeat';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
@@ -78,6 +79,8 @@ async function runCommand(
 // the allowlisted action. Path is under /api/cron (middleware-exempt).
 export async function GET(req: NextRequest) {
   if (!authed(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  void stampHeartbeat('ops-worker'); // Task 56 (#6)
 
   const supabase = supa();
   const { data: pending, error: selErr } = await supabase

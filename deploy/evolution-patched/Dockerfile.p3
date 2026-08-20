@@ -1,0 +1,51 @@
+# evo-patched:v2.3.7-p3 — Evolution v2.3.7 con Baileys aggiornato al protocollo
+# di collegamento dispositivi che WhatsApp ha cambiato il 28-29 lug 2026
+# (companion_reg_refresh: Baileys ≤rc14 lo scarta → pair-success mai emesso →
+# "impossibile collegare / codice errato" su OGNI nuovo pairing; riprodotto
+# anche in whatsmeow → cambio server-side Meta, non bug nostro).
+#
+# Contenuto (tutto pinnato per build riproducibile):
+#   base Baileys  = master 0af2386 (= v7.0.0-rc14 + WIN_HYBRID sub-platform)
+#   + PR #2608 (bd97f0bc) \
+#   + PR #2749 (38686677)  > ricetta community-confermata "fixed login issues"
+#   + PR #2765 (4f263f0e) /  (gestione companion_reg_refresh, ack pre-login)
+#   + strip p2 (identico a giugno): historySyncConfig + version hardcoded nel
+#     companion DeviceProps — ANCORA presenti in rc14, e a giugno erano provati
+#     empiricamente come causa del rifiuto di registrazione phone-side.
+#
+# Il conflitto di merge tra 2608 e 2749 è su un SOLO file di test (add/add,
+# stesso path): risolto prendendo la versione 2749 — non finisce nell'immagine.
+#
+# Build (dal terminal del server, nessun contesto locale richiesto):
+#   docker build -t whatslater/evo-patched:v2.3.7-p3 -f deploy/evolution-patched/Dockerfile.p3 .
+# oppure via stdin (vedi docs/2026-08-18-evolution-p3-build-test.md).
+
+FROM node:20-bookworm AS baileys
+RUN git clone https://github.com/WhiskeySockets/Baileys.git /b \
+ && cd /b \
+ && git checkout 0af2386 \
+ && git fetch origin pull/2608/head:pr2608 pull/2749/head:pr2749 pull/2765/head:pr2765 \
+ && [ "$(git rev-parse pr2608)" = "bd97f0bc14eda81036eac05d91698004201fd48f" ] \
+ && [ "$(git rev-parse pr2749)" = "38686677889a4db5356da51aa9517eb12c1e0866" ] \
+ && [ "$(git rev-parse pr2765)" = "4f263f0e365c2e74dd1b824031d1c5910f518c26" ] \
+ && git config user.email build@local && git config user.name build \
+ && git merge --no-edit pr2608 \
+ && (git merge --no-edit pr2749 \
+     || (git checkout --theirs src/__tests__/Socket/messages-recv.test.ts \
+         && git add -A && git commit --no-edit)) \
+ && git merge --no-edit pr2765 \
+ && npm install \
+ && npm run build
+
+FROM evoapicloud/evolution-api:v2.3.7
+
+COPY --from=baileys /b/lib /evolution/node_modules/baileys/lib
+
+# Strip p2 (vedi Dockerfile p2 per la storia completa) + sanity check totale:
+# il nuovo handler DEVE esserci, i campi killer NON devono esserci.
+RUN BAILEYS_FILE=/evolution/node_modules/baileys/lib/Utils/validate-connection.js \
+ && sed -i '/^        historySyncConfig: {$/,/^        }$/d' "$BAILEYS_FILE" \
+ && if grep -q "historySyncConfig" "$BAILEYS_FILE"; then echo "FAIL: historySyncConfig still present"; exit 1; fi \
+ && if grep -q "primary: 10," "$BAILEYS_FILE"; then echo "FAIL: hardcoded version still present"; exit 1; fi \
+ && if ! grep -q "companion_reg_refresh" /evolution/node_modules/baileys/lib/Socket/socket.js; then echo "FAIL: companion_reg_refresh handler missing"; exit 1; fi \
+ && echo "p3 PATCH OK"

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { fetchDropletMetrics, fetchDropletHistory24h } from '../../../lib/droplet';
+import { stampHeartbeat } from '../../../lib/heartbeat';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
@@ -246,6 +247,8 @@ export async function GET(req: NextRequest) {
   if (!provided || provided !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  void stampHeartbeat('daily-report'); // Task 56 (#6)
 
   try {
     const report = await collectDailyReport();

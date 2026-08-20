@@ -111,6 +111,52 @@ export async function checkCronHeartbeat(): Promise<CheckResult> {
   }
 }
 
+// Task 56 (#6): battito dei cron COLLATERALI. La lezione dell'hotfix c9fe33a:
+// daily-report/cleanup-* sono rimasti rotti per SETTIMANE (401 a ogni run) e
+// nessuno se n'è accorto perché nessun check li osservava. Ogni cron ora timbra
+// ops_heartbeat all'ingresso (app/lib/heartbeat.ts); qui confrontiamo i timbri
+// con la cadenza attesa. Riga assente = "primo battito non ancora scritto"
+// (deploy fresco) = ok — stessa semantica di checkCronHeartbeat (nota #10):
+// se in futuro si aggiunge un prune a ops_heartbeat va cambiata in critical.
+const COLLATERAL_CRONS: Array<{ name: string; staleWarnMin: number; staleCritMin: number }> = [
+  { name: 'daily-report', staleWarnMin: 26 * 60, staleCritMin: 50 * 60 },          // giornaliero 06:00 UTC
+  { name: 'ops-worker', staleWarnMin: 26 * 60, staleCritMin: 50 * 60 },            // giornaliero 02:00 UTC (vercel.json)
+  { name: 'cleanup-media', staleWarnMin: 8 * 24 * 60, staleCritMin: 15 * 24 * 60 },        // settimanale dom 03:00
+  { name: 'cleanup-webhook-logs', staleWarnMin: 8 * 24 * 60, staleCritMin: 15 * 24 * 60 }, // settimanale dom 04:00
+];
+
+export async function checkCollateralCrons(): Promise<CheckResult> {
+  const now = new Date().toISOString();
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+      .from('ops_heartbeat')
+      .select('name, ts')
+      .in('name', COLLATERAL_CRONS.map((c) => c.name));
+    if (error) return { name: 'collateral_crons', status: 'warning', message: `Errore lettura heartbeat: ${error.message}`, checked_at: now };
+    const byName = new Map(((data || []) as Array<{ name: string; ts: string }>).map((r) => [r.name, r.ts]));
+    const problems: string[] = [];
+    let worst: 'ok' | 'warning' | 'critical' = 'ok';
+    for (const c of COLLATERAL_CRONS) {
+      const ts = byName.get(c.name);
+      if (!ts) continue; // primo battito non ancora scritto → ok (vedi nota sopra)
+      const ageMin = (Date.now() - new Date(ts).getTime()) / 60000;
+      if (ageMin > c.staleCritMin) {
+        worst = 'critical';
+        problems.push(`${c.name} fermo da ${Math.round(ageMin / 60)}h`);
+      } else if (ageMin > c.staleWarnMin) {
+        if (worst === 'ok') worst = 'warning';
+        problems.push(`${c.name} in ritardo (${Math.round(ageMin / 60)}h dall'ultimo battito)`);
+      }
+    }
+    if (worst === 'ok') return { name: 'collateral_crons', status: 'ok', message: 'Cron collaterali attivi', checked_at: now };
+    // warning resta nel DB (silent-by-default); critical passa dai canali standard
+    return { name: 'collateral_crons', status: worst, message: problems.join(' · '), checked_at: now, ...(worst === 'warning' ? { channels: ['db' as const] } : {}) };
+  } catch (err: any) {
+    return { name: 'collateral_crons', status: 'warning', message: err?.message || 'Errore', checked_at: now };
+  }
+}
+
 // "Messages stuck" — separate from cron-down. Counts pending messages that are
 // overdue (past scheduled_at by > MSG_OVERDUE_MIN) and explains WHY, with the
 // dominant reason named in plain language. Test instances are excluded.
@@ -430,15 +476,30 @@ export async function checkPairingBlackout(): Promise<CheckResult> {
     const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await supabase
       .from('audit_events')
-      .select('event_type,payload')
-      .in('event_type', ['pairing_started', 'pairing_completed'])
+      .select('event_type,payload,created_at')
+      .in('event_type', ['pairing_started', 'pairing_completed', 'instance_disconnect'])
       .gte('created_at', windowStart);
     if (error) return { name: 'pairing_blackout', status: 'critical', message: `Errore query: ${error.message}`, checked_at: now };
 
     // Exclude operator pairing tests (burned/test numbers) — otherwise repeated
     // test pairings on a Meta-blocked number trip a false "pairing rotto".
-    const rows = ((data || []) as Array<{ event_type: string; payload: any }>)
-      .filter((r) => !isTestInstance(r.payload?.instance_name));
+    // (i disconnect usano payload.instance, i pairing payload.instance_name)
+    const all = ((data || []) as Array<{ event_type: string; payload: any; created_at?: string }>)
+      .filter((r) => !isTestInstance(r.payload?.instance_name ?? r.payload?.instance));
+
+    // Task 54 (post-incidente 17-19 ago): l'ultimo errore VERO della finestra
+    // (dai CONNECTION_UPDATE close) entra nel messaggio d'allarme — il "Cosa
+    // fare" statico di giugno sembrava un'analisi ma era un bigliettino fisso;
+    // l'operatore deve vedere SUBITO se è un 401 post-codice, un rate-limit o
+    // un timeout, senza aprire i log.
+    const disconnects = all.filter((r) => r.event_type === 'instance_disconnect' && (r.payload?.reason || r.payload?.code != null));
+    disconnects.sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime());
+    const lastDisc = disconnects[disconnects.length - 1];
+    const lastError = lastDisc
+      ? ` · Ultimo errore: ${lastDisc.payload?.reason || 'sconosciuto'}${lastDisc.payload?.code != null ? ` (codice ${lastDisc.payload.code})` : ''}`
+      : '';
+
+    const rows = all.filter((r) => r.event_type !== 'instance_disconnect');
     const proxyEnabled = process.env.PAIRING_PROXY_ENABLED === 'true';
 
     // === (a) Per-egress check (proxy mode only) ===
@@ -483,8 +544,11 @@ export async function checkPairingBlackout(): Promise<CheckResult> {
     }
     if (completed >= 1) return { name: 'pairing_blackout', status: 'ok', message: `${completed}/${started} pairing riusciti in 24h`, checked_at: now };
     if (started === 0) return { name: 'pairing_blackout', status: 'ok', message: 'Nessun tentativo di pairing nelle 24h', checked_at: now };
-    if (started >= 5) return { name: 'pairing_blackout', status: 'critical', message: `${started} tentativi, 0 successi in 24h — pairing rotto`, checked_at: now };
-    return { name: 'pairing_blackout', status: 'warning', message: `${started} tentativi, 0 successi in 24h — monitora`, checked_at: now };
+    // Task 54: critical già a 2 (era 5). Coi volumi reali della beta i tentativi
+    // sono sporadici (1-4/giorno): la soglia a 5 ha tenuto l'incidente di
+    // luglio-agosto in warning silenzioso per settimane.
+    if (started >= 2) return { name: 'pairing_blackout', status: 'critical', message: `${started} tentativi, 0 successi in 24h — pairing rotto${lastError}`, checked_at: now };
+    return { name: 'pairing_blackout', status: 'warning', message: `${started} tentativi, 0 successi in 24h — monitora${lastError}`, checked_at: now };
   } catch (err: any) {
     return { name: 'pairing_blackout', status: 'critical', message: err?.message || 'Errore', checked_at: now };
   }
@@ -535,6 +599,7 @@ export async function runAllChecks(): Promise<CheckResult[]> {
   const checks = [
     checkEvolutionApi,
     checkCronHeartbeat,
+    checkCollateralCrons,
     checkMessagesStuck,
     checkWebhookInactive,
     checkSupabaseDown,
@@ -694,6 +759,8 @@ const CHECK_DESCRIPTIONS: Record<string, string> = {
   instance_flapping: 'Un numero si disconnette in continuazione — rischio ban WhatsApp',
   pairing_blackout: 'Le connessioni di nuovi numeri non vanno a buon fine',
   all_egress_down: 'Tutti i proxy di connessione sono bloccati — pairing congelato',
+  collateral_crons: 'Un cron di manutenzione non gira (report giornaliero / pulizie / ops)',
+  upstream_release: 'Nuova release upstream (Baileys/Evolution) — possibile fix o cambio del protocollo WhatsApp',
 };
 
 // "What to do" — the single most useful next action for the operator.
@@ -707,8 +774,10 @@ const CHECK_ACTIONS: Record<string, string> = {
   failed_spike: 'Apri /admin e verifica numeri/contenuti che falliscono (numeri non validi o possibile ban).',
   droplet_ram: 'Spegni istanze/app orfane su Coolify o aumenta la RAM del nodo.',
   instance_flapping: 'Sospendi gli invii su quel numero e verifica un possibile ban Meta prima di ripristinare.',
-  pairing_blackout: "Verifica l'immagine Evolution patchata e la reputazione del numero/egress usato.",
+  pairing_blackout: "Leggi 'Ultimo errore' qui sopra, poi docs/RUNBOOK-pairing-emergenze.md (nodo → rate-limit → protocollo → scialuppa p3).",
   all_egress_down: 'Sblocca manualmente un egress o attendi la scadenza della quarantena.',
+  collateral_crons: 'Controlla i log Vercel del cron indicato; riesegui a mano con ?secret= per verificare.',
+  upstream_release: "Leggi le note di release: se citano pairing/login, valuta di aggiornare l'immagine patchata (deploy/evolution-patched/Dockerfile.p3).",
 };
 
 const SEVERITY_EMOJI: Record<string, string> = { critical: '🔴', warning: '🟠', ok: '✅' };
@@ -737,7 +806,9 @@ function buildAlertText(check: CheckResult, isReminder = false): string {
 }
 
 function buildRecoveryText(check: CheckResult): string {
-  return `✅ WhatsLater — Risolto\n━━━━━━━━━━━━━━━━\n${CHECK_DESCRIPTIONS[check.name] || check.name}\nIl problema è rientrato.\nOra: ${formatItalianTime()}`;
+  // Task 54: il rientro dice QUANTO è rientrato (es. "2/3 pairing riusciti"),
+  // così l'operatore chiude l'incidente senza andare a verificare a mano.
+  return `✅ WhatsLater — Risolto\n━━━━━━━━━━━━━━━━\n${CHECK_DESCRIPTIONS[check.name] || check.name}\nIl problema è rientrato${check.message ? ` — ${check.message}` : ''}.\nOra: ${formatItalianTime()}`;
 }
 
 async function getAlertInstance(): Promise<string | null> {
@@ -790,10 +861,14 @@ async function sendEmail(check: CheckResult, text: string): Promise<boolean> {
         Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
+      // Task 54: mittente riconoscibile, subject umano (la descrizione, non il
+      // nome interno del check — "pairing_blackout — critical" non diceva nulla
+      // all'operatore), destinatari multipli (ADMIN_EMAIL lista CSV: l'alert di
+      // agosto è arrivato su un account secondario e non è stato riconosciuto).
       body: JSON.stringify({
-        from: 'onboarding@resend.dev',
-        to: operatorEmail(),
-        subject: `⚠️ WhatsLater: ${check.name} — ${check.status}`,
+        from: process.env.RESEND_FROM || 'WhatsLater Monitoring <onboarding@resend.dev>',
+        to: operatorEmail().split(',').map((s) => s.trim()).filter(Boolean),
+        subject: `${SEVERITY_EMOJI[check.status] || '⚠️'} WhatsLater: ${CHECK_DESCRIPTIONS[check.name] || check.name}${check.status === 'ok' ? ' — rientrato' : ''}`,
         text,
       }),
     });
@@ -863,6 +938,8 @@ export async function sendAlert(check: CheckResult, isReminder = false): Promise
 // carries the reminder flag so a re-notification is labelled "Promemoria".
 // Used by the health-check route for both first alerts and reminders.
 export async function dispatchAlert(check: CheckResult, isReminder = false): Promise<void> {
+  // Task 55 (#9): solo il run che vince il claim invia (vedi claimAlertSlot).
+  if (!(await claimAlertSlot(check.name, check.status))) return;
   // Per-check self-routing wins (e.g. messages_stuck dashboard-only when the
   // backlog is purely user-disconnect, which the operator can't act on).
   if (check.channels) {
@@ -885,7 +962,35 @@ export async function dispatchAlert(check: CheckResult, isReminder = false): Pro
   return sendAlert(check, isReminder);
 }
 
+// Task 55 (#9): claim atomico prima dell'invio. Due health-check concorrenti
+// (Vercel cron + pg_cron/self-cron, entrambi */15) possono leggere lo stesso
+// previousStatus e classificare entrambi 'onset' → doppio alert. Il claim è un
+// INSERT su unique index (check_name, minute_bucket): solo chi lo vince invia.
+// Stessa classe del doppio-invio messaggi (BUG #1): read-then-write reso atomico.
+// Fail-open su errori ≠ 23505: meglio un alert doppio che nessun alert.
+async function claimAlertSlot(checkName: string, status: string): Promise<boolean> {
+  try {
+    const supabase = getSupabase();
+    const { error } = await supabase.from('monitoring_alerts').insert({
+      check_name: checkName,
+      status,
+      message: '(claim)',
+      channel: 'claim',
+      minute_bucket: Math.floor(Date.now() / 60000),
+    });
+    if (error) {
+      if ((error as any).code === '23505') return false; // un run concorrente ha già il claim
+      console.error('claimAlertSlot error (fail-open):', error.message);
+      return true;
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 export async function sendRecovery(check: CheckResult): Promise<void> {
+  if (!(await claimAlertSlot(check.name, 'ok'))) return;
   const text = buildRecoveryText(check);
 
   if (await sendWhatsApp(text)) {

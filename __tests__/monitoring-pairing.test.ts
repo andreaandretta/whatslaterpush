@@ -60,17 +60,19 @@ describe('checkPairingBlackout', () => {
     expect(result.message).toContain('Nessun tentativo');
   });
 
-  test('warning: 1-4 starts with zero completions (single confused user)', async () => {
-    mockSupa.setResponse('audit_events:select', rows(2, 0));
+  // Task 54 (20 ago): soglia critical abbassata 5→2 dopo l'incidente 17-19 ago
+  // (tentativi sporadici 1-4/giorno = settimane di warning silenziosi).
+  test('warning: 1 solo start con zero completions (single confused user)', async () => {
+    mockSupa.setResponse('audit_events:select', rows(1, 0));
     const result = await checkPairingBlackout();
     expect(result.status).toBe('warning');
-    expect(result.message).toContain('2 tentativi');
+    expect(result.message).toContain('1 tentativi');
   });
 
-  test('warning at the upper boundary (4 starts, 0 completions)', async () => {
-    mockSupa.setResponse('audit_events:select', rows(4, 0));
+  test('critical già a 2 starts, 0 completions (Task 54)', async () => {
+    mockSupa.setResponse('audit_events:select', rows(2, 0));
     const result = await checkPairingBlackout();
-    expect(result.status).toBe('warning');
+    expect(result.status).toBe('critical');
   });
 
   test('critical: >=5 starts with zero completions (the May 2026 IPv6 pattern)', async () => {

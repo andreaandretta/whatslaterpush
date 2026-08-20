@@ -1,20 +1,44 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
 import Logo from '@/components/Logo';
 import HelpPopover from './HelpPopover';
+import type { InitUiError } from '@/app/lib/connect-errors';
 
 interface Props {
   onSubmit: (number: string) => void;
+  // Task 58: freno anti-martellamento — errore classificato + istante fino al
+  // quale il CTA resta bloccato (ogni retry compulsivo su /api/auth/init
+  // consuma il rate-limit Meta del numero del CLIENTE, non del server).
+  error?: InitUiError | null;
+  cooldownUntil?: number | null;
 }
 
 // Step 1 — Italian phone input, clean editorial style.
 // • Fixed +39 prefix (single-country app; can be made selectable later).
 // • Auto-formats as "333 123 4567" while typing.
 // • CTA disabled until 10 digits.
-export default function StepNumero({ onSubmit }: Props) {
+export default function StepNumero({ onSubmit, error = null, cooldownUntil = null }: Props) {
   const [raw, setRaw] = useState('');
+
+  // Countdown del freno: tick a 1s solo mentre il cooldown è attivo.
+  const [nowTs, setNowTs] = useState(() => Date.now());
+  const cooldownActive = !!cooldownUntil && cooldownUntil > nowTs;
+  useEffect(() => {
+    if (!cooldownUntil || cooldownUntil <= Date.now()) return;
+    const t = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [cooldownUntil]);
+  const remainingSec = cooldownActive ? Math.max(0, Math.ceil((cooldownUntil - nowTs) / 1000)) : 0;
+  const mmss = `${Math.floor(remainingSec / 60)}:${String(remainingSec % 60).padStart(2, '0')}`;
+
+  const ERROR_STYLES: Record<string, string> = {
+    rate_limited: 'bg-[#FFF7E8] border-[#F5B84A] text-[#7A5200]',
+    ours: 'bg-[#FDECEC] border-[#E5989E] text-[#7F1D1D]',
+    generic: 'bg-gray-100 border-gray-300 text-[#1A1F2C]',
+  };
+  const ERROR_ICONS: Record<string, string> = { rate_limited: '⏳', ours: '🛠', generic: 'ℹ️' };
 
   // Format: groups of 3-3-4 for Italian mobile.
   const formatted = useMemo(() => {
@@ -26,7 +50,7 @@ export default function StepNumero({ onSubmit }: Props) {
 
   const digitsOnly = raw.replace(/\D/g, '');
   const isValid = digitsOnly.length === 10;
-  const submit = () => isValid && onSubmit(`39${digitsOnly}`);
+  const submit = () => isValid && !cooldownActive && onSubmit(`39${digitsOnly}`);
 
   return (
     <div className="relative min-h-screen bg-white text-[#1A1F2C] overflow-hidden">
@@ -112,21 +136,36 @@ export default function StepNumero({ onSubmit }: Props) {
 
         {/* Push CTA to bottom */}
         <div className="mt-auto pt-10">
+          {error && (
+            <div className={`mb-4 rounded-2xl border px-4 py-3 ${ERROR_STYLES[error.kind] || ERROR_STYLES.generic}`}>
+              <div className="font-bold text-sm">{ERROR_ICONS[error.kind] || 'ℹ️'} {error.title}</div>
+              <div className="text-[13px] mt-0.5 leading-snug">{error.message}</div>
+              {cooldownActive && error.kind === 'rate_limited' && (
+                <div className="text-[11px] mt-1.5 opacity-80">Il pulsante si riattiva da solo allo scadere del timer.</div>
+              )}
+            </div>
+          )}
           <button
             type="button"
             onClick={submit}
-            disabled={!isValid}
+            disabled={!isValid || cooldownActive}
             className={`w-full inline-flex items-center justify-center gap-2 py-4 rounded-full text-base font-extrabold transition-all ${
-              isValid
+              isValid && !cooldownActive
                 ? 'bg-primary text-white shadow-xl shadow-primary/40'
                 : 'bg-gray-200 text-gray-400 cursor-not-allowed'
             }`}
           >
-            Continua
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <line x1="5" y1="12" x2="19" y2="12" />
-              <polyline points="12 5 19 12 12 19" />
-            </svg>
+            {cooldownActive ? (
+              <span className="tabular-nums">Riprova tra {mmss}</span>
+            ) : (
+              <>
+                Continua
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                  <polyline points="12 5 19 12 12 19" />
+                </svg>
+              </>
+            )}
           </button>
 
           <p className="mt-3 text-center text-[11px] text-gray-400 leading-relaxed">
