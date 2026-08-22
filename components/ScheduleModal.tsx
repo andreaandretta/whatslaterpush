@@ -12,6 +12,7 @@ import { TemplateBottomSheet, SaveTemplateDialog, TemplatePick } from './schedul
 import { MediaPicker, MediaAttachmentChip, MediaAttachment } from './schedule/MediaPicker';
 import { SendFab } from './schedule/SendFab';
 import { levenshteinRatio } from '../app/lib/levenshtein';
+import { applyTemplateVariables, hasTemplateVariables, firstNameOf } from '../app/lib/template-variables';
 
 const TEMPLATE_DIFF_THRESHOLD = 0.3;
 
@@ -447,7 +448,26 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
               maxLength={3500}
               className="w-full bg-[#1F2C33] text-white placeholder-gray-500 rounded-xl px-3 py-2 outline-none resize-none focus:ring-2 focus:ring-primary/30"
             />
-            <div className="text-xs text-gray-500 text-right mt-1">{message.length}/3500</div>
+            <div className="flex items-center justify-between mt-1">
+              <button
+                type="button"
+                onClick={() => setMessage((m) => (m.includes('{nome}') ? m : m + (m && !m.endsWith(' ') ? ' ' : '') + '{nome}'))}
+                className="text-xs px-2 py-1 rounded-full bg-[#1F2C33] text-gray-400 hover:text-primary"
+                title="Inserisci il nome del contatto"
+              >
+                {'{nome}'} · nome contatto
+              </button>
+              <div className="text-xs text-gray-500 text-right">{message.length}/3500</div>
+            </div>
+            {hasTemplateVariables(message) && (
+              <div className="mt-2 text-xs text-gray-400 bg-[#1F2C33]/60 rounded-lg px-3 py-2">
+                {firstNameOf(contact.name) ? (
+                  <>Anteprima per {firstNameOf(contact.name)}: <span className="text-gray-300">{applyTemplateVariables(message, contact.name)}</span></>
+                ) : (
+                  <>Questo contatto non ha un nome salvato: {'{nome}'} verrà rimosso dal messaggio.</>
+                )}
+              </div>
+            )}
           </div>
 
           {error && (

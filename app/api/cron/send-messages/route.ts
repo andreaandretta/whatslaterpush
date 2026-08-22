@@ -8,6 +8,7 @@ import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
 import { reconcileRecurringChain, nextRomeMidnight } from '../../../lib/recurrence';
 import { computeTypingDelay, sendTypingPresence } from '../../../lib/typing-presence';
+import { applyTemplateVariables } from '../../../lib/template-variables';
 import { logAuditEvent, hashContactRef } from '../../../lib/audit';
 
 export const dynamic = 'force-dynamic';
@@ -605,6 +606,15 @@ export async function GET(req: NextRequest) {
         const sendKind = signedMediaUrl ? 'media' : 'text';
         console.log('CRON: Sending msg ' + msg.id + ' kind=' + sendKind + ' via instance=' + instanceName + ' to=' + msg.recipient_number);
 
+        // Resolve {nome} at send time from the row's recipient_name, so every
+        // origin (dashboard, self-chat, recurrences) gets substitution and the
+        // queued row keeps the raw token for editing.
+        const outboundText = applyTemplateVariables(msg.parsed_message, msg.recipient_name);
+        const outboundCaption = applyTemplateVariables(
+          msg.media_caption || msg.parsed_message || null,
+          msg.recipient_name
+        );
+
         // Atomic point-of-no-return claim (replaces the old unconditional stamp).
         // send_attempted_at flips null->now() exactly once per attempt, so the
         // loser of two concurrent invocations skips HERE instead of double-sending.
@@ -636,7 +646,7 @@ export async function GET(req: NextRequest) {
                   number: msg.recipient_number,
                   mediatype: msg.media_type,
                   media: signedMediaUrl,
-                  caption: msg.media_caption || msg.parsed_message || undefined,
+                  caption: outboundCaption || undefined,
                   fileName: msg.media_filename || undefined,
                 }),
                 signal: sendCtrl.signal,
@@ -648,7 +658,7 @@ export async function GET(req: NextRequest) {
               {
                 method: 'POST',
                 headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ number: msg.recipient_number, text: msg.parsed_message }),
+                body: JSON.stringify({ number: msg.recipient_number, text: outboundText }),
                 signal: sendCtrl.signal,
               }
             );
