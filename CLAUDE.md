@@ -1,6 +1,16 @@
 # WhatsLater (SchedWhats) — Project Context
 
-## STATO ATTUALE (aggiornato 13 Luglio 2026)
+## STATO ATTUALE (aggiornato 22 Agosto 2026)
+
+### 🎯 SESSIONE 22 AGO 2026 — Intel nativo WhatsApp + audit competitor + variabili {nome} — **`main` @ `16a95d4` (pushed)**
+
+**INTEL CRITICA — scheduling nativo WhatsApp in arrivo (WABetaInfo, beta iOS 26.22.10.76)**: tap-and-hold su invia, min 10 minuti, **MAX 2 SETTIMANE**, **ZERO ricorrenze**, coda solo per-chat. Ad agosto non abilitato nemmeno ai beta tester → orizzonte trimestri. **Decisione posizionamento (Andrea)**: WhatsLater si riposiziona da "programma messaggi" a "sistema di promemoria clienti"; il lancio nativo = educazione mercato gratis, preparare SEO su "messaggi ricorrenti WhatsApp" PRIMA del rilascio.
+
+**FEATURE DEPLOYATA — variabili {nome}** (`16a95d4`, TDD 14 test): token `{nome}` risolto AL MOMENTO DELL'INVIO nel cron col primo nome di `recipient_name` (testo + caption, ogni origine); riga in coda conserva il token; fallback pulito senza nome; chip + anteprima live in ScheduleModal. `[Nome]` (sintassi self-chat) non è una variabile. Lib: `app/lib/template-variables.ts`.
+
+**AUDIT COMPETITOR (6 prodotti)**: WA Reminders = gemello architetturale a **$19-39/mese** (WhatsLater €4,99 → sottoprezzato 4-6x, post-beta €9,99-14,99 ok); Blueticks vende l'invio a browser chiuso a $45-50/mese; on-device (SKEDit/Wasavi) = recensioni piene di invii falliti. Landing copy da adottare: "anche a telefono spento · senza browser aperto · senza template approvati". Roadmap gap in ordine: ~~variabili {nome}~~ FATTO → Google Calendar sync (hero, fit ICP-D) → ricorrenza annuale (compleanni) → note contatto → stats utente → snooze one-tap → broadcast multi-destinatario.
+
+**5 PATTERN GITHUB DA IMPLEMENTARE** (deep-read openclaw#122758/#122761/#127654 + PraisonAI#4054, mappati con file:riga — dettagli in `AndreaVault/decisions.md` 22 ago): (1) **custody ack**: `status='sent'` oggi = socket locale; il webhook butta via SERVER_ACK(2) e **ERROR(0)** → colonna `server_ack_at` + ERROR→`failed_after_send` + sweep riconciliazione; (2) **Evolution 5xx post-relay** oggi va nel retry generico → rischio doppio invio, va trattato come indeterminato (come i timeout); (3) **echo-guard content-based** `webhook/route.ts:1237` (substring `[Nome]` ecc.) = anti-pattern → catturare `key.id` da notifyOwner e sopprimere per identità; (4) **3 `.slice()` UTF-16 nudi** in `messages/route.ts` → `truncateAtGrapheme` con `Intl.Segmenter`; (5) **4xx permanenti** oggi bruciano 3 retry → fail-fast + notifica immediata, 429 con Retry-After. Validati: dedup webhook by-ID (corretto, non toccare), no-chunking (corretto), architettura outbox+tick.
 
 ### 🛡️ SESSIONE 11-13 LUG 2026 — HARDENING PRE-SCALA BETA (Fase 1+2) — **LIVE in produzione dal 13 lug, `main` @ `d306248`**
 
