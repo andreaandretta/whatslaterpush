@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Calendar, CheckCircle2, CreditCard, Loader2, LogOut, Send, X,
 } from 'lucide-react';
@@ -10,6 +11,7 @@ import { ContactAvatar } from '@/components/ContactAvatar';
 import PricingSection from '../components/PricingSection';
 import FAQSection from '../components/FAQSection';
 import MessagesSection, { type ScheduledMessage as MessagesSectionMessage } from '../components/MessagesSection';
+import CalendarSyncCard from '../components/CalendarSyncCard';
 import { DeliveryStatusIcon } from '../components/DeliveryStatusIcon';
 import { MessagesEmptyState } from '../components/MessagesEmptyState';
 import { shouldShowOnboardingHints, markOnboardingDone } from '../../components/onboarding/OnboardingTour';
@@ -53,6 +55,7 @@ interface ScheduledMessage {
 type Segment = 'D' | 'B' | 'C' | null;
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [instanceName, setInstanceName] = useState('');
   const [userPhone, setUserPhone]       = useState('');
   const [messages, setMessages]         = useState<ScheduledMessage[]>([]);
@@ -191,6 +194,21 @@ export default function DashboardPage() {
       setToast((curr) => (curr && curr.id === id ? null : curr));
     }, 5000);
   }, []);
+
+  // Google Calendar OAuth callback lands here with ?calendar=connected|error.
+  // Toast the outcome once the page is actually rendering (post auth-check,
+  // so the 5s auto-dismiss doesn't race the session validation), then strip
+  // the param so a refresh doesn't re-toast.
+  const calendarParamHandled = useRef(false);
+  useEffect(() => {
+    if (!sessionValidated || calendarParamHandled.current) return;
+    calendarParamHandled.current = true;
+    const cal = new URLSearchParams(window.location.search).get('calendar');
+    if (!cal) return;
+    if (cal === 'connected') showToast('Google Calendar collegato!');
+    else if (cal === 'error') showToast('Collegamento Google Calendar non riuscito — riprova.');
+    router.replace('/dashboard');
+  }, [sessionValidated, showToast, router]);
 
   // Duplicate — opens ScheduleModal pre-filled with the same contact and text.
   // Skips the contact picker step entirely. The user just confirms date/time.
@@ -416,6 +434,12 @@ export default function DashboardPage() {
             />
           )
         )}
+
+        {/* Google Calendar reminders — the card manages its own visibility:
+            it renders nothing while CALENDAR_SYNC_ENABLED is off (GET
+            /api/calendar → {enabled:false}), so mounting it unconditionally
+            here is safe. */}
+        {userPhone && <CalendarSyncCard onShowToast={showToast} />}
 
         {/* Pricing visible only to free/trial (and expired so the "Abbonati"
             anchor in the expired banner still resolves). Paying users manage
