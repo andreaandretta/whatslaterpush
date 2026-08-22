@@ -1,6 +1,7 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
-import { Copy, Pencil, Pause, Play, Trash2, RotateCcw, X } from 'lucide-react';
+import { Copy, Pencil, Pause, Play, Trash2, RotateCcw, X, Clock } from 'lucide-react';
+import { snoozePlusHour, snoozeTonight, snoozeTomorrowSameTime } from '../lib/schedule-quick';
 
 export interface MessageActions {
   onDuplicate: () => void;
@@ -16,6 +17,11 @@ export interface MessageActions {
   canPause: boolean;
   canRetry: boolean;
   canDelete: boolean;
+  // Snooze one-tap — reschedules without opening the edit modal. Needs the
+  // row's current scheduled_at for "Domani stessa ora".
+  canSnooze?: boolean;
+  scheduledAt?: string;
+  onSnooze?: (iso: string, label: string) => void;
 }
 
 interface Props extends MessageActions {
@@ -28,6 +34,7 @@ export function MessageActionsSheet({
   open, onClose, title,
   onDuplicate, onEdit, onPauseToggle, onRetry, onDelete,
   isPaused, canEdit, canPause, canRetry, canDelete,
+  canSnooze, scheduledAt, onSnooze,
 }: Props) {
   const sheetRef = useRef<HTMLDivElement>(null);
 
@@ -100,6 +107,38 @@ export function MessageActionsSheet({
         </div>
 
         <div className="h-px bg-[#2A3942] mx-5 my-2" />
+
+        {/* Snooze one-tap: reschedule presets without the full edit modal.
+            Options computed at render so "Stasera" disappears after 19:00. */}
+        {canSnooze && onSnooze && (() => {
+          const now = new Date();
+          const tonight = snoozeTonight(now);
+          const opts: { label: string; date: Date }[] = [
+            { label: '+1 ora', date: snoozePlusHour(now) },
+            ...(tonight ? [{ label: 'Stasera 20:00', date: tonight }] : []),
+            ...(scheduledAt
+              ? [{ label: 'Domani stessa ora', date: snoozeTomorrowSameTime(new Date(scheduledAt), now) }]
+              : []),
+          ];
+          return (
+            <div className="px-5 pt-1 pb-2">
+              <div className="flex items-center gap-2 text-gray-500 text-[11px] uppercase tracking-wider font-semibold mb-2">
+                <Clock className="w-3.5 h-3.5" /> Posticipa
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                {opts.map((o) => (
+                  <button
+                    key={o.label}
+                    onClick={() => { onSnooze(o.date.toISOString(), o.label); onClose(); }}
+                    className="text-xs px-3 py-2 rounded-full bg-[#2A3942] text-gray-200 hover:bg-[#3B4A54] transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Actions */}
         <div className="py-1">

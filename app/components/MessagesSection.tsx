@@ -30,6 +30,7 @@ interface Props {
   onEdit: (msg: ScheduledMessage) => void;
   onPauseToggle: (msg: ScheduledMessage) => void;
   onRetry: (msg: ScheduledMessage) => Promise<void> | void;
+  onSnooze: (msg: ScheduledMessage, iso: string, label: string) => void;
   onShowToast: (text: string, undo?: () => void) => void;
   // Live Evolution link state — drives the "Ricollega WhatsApp" CTA on a
   // failed card even when the stored error string is ambiguous.
@@ -87,7 +88,7 @@ const UPCOMING_STATUSES = new Set([
 const SENT_STATUSES = new Set(['sent', 'cancelled']);
 
 export default function MessagesSection({
-  messages, onDelete, onDuplicate, onEdit, onPauseToggle, onRetry, onShowToast, connected,
+  messages, onDelete, onDuplicate, onEdit, onPauseToggle, onRetry, onSnooze, onShowToast, connected,
 }: Props) {
   const [tab, setTab] = useState<Tab>('upcoming');
   const [query, setQuery] = useState('');
@@ -306,6 +307,9 @@ export default function MessagesSection({
         canPause={!!actionMsg && (actionMsg.status === 'pending' || actionMsg.status === 'paused')}
         canRetry={!!actionMsg && actionMsg.status === 'failed'}
         canDelete={!!actionMsg && (UPCOMING_STATUSES.has(actionMsg.status) || actionMsg.status === 'failed')}
+        canSnooze={!!actionMsg && (actionMsg.status === 'pending' || actionMsg.status === 'paused')}
+        scheduledAt={actionMsg?.scheduled_at}
+        onSnooze={(iso, label) => actionMsg && onSnooze(actionMsg, iso, label)}
       />
     </div>
   );

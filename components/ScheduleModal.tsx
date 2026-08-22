@@ -13,6 +13,7 @@ import { MediaPicker, MediaAttachmentChip, MediaAttachment } from './schedule/Me
 import { SendFab } from './schedule/SendFab';
 import { levenshteinRatio } from '../app/lib/levenshtein';
 import { applyTemplateVariables, hasTemplateVariables, firstNameOf } from '../app/lib/template-variables';
+import { formatSendCta, quickDateChips, isSameDay } from '../app/lib/schedule-quick';
 
 const TEMPLATE_DIFF_THRESHOLD = 0.3;
 
@@ -299,7 +300,8 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           <div className="text-white font-medium text-base">{editMsgId ? 'Modifica messaggio' : 'Programma un messaggio'}</div>
         </div>
 
-        <div className="flex-1 overflow-y-auto pb-24">
+        {/* pb-6: il CTA non è più un FAB sovrapposto ma una barra in-flow */}
+        <div className="flex-1 overflow-y-auto pb-6">
           <div className="flex items-start justify-between px-4 pt-5 pb-3">
             <div className="text-white font-bold text-xl">
               Messaggio per {contactLabel}
@@ -314,6 +316,35 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           </div>
 
           <div className="border-t border-[#2A3942] mx-4" />
+
+          {/* Chip data rapide (pattern beta nativa WhatsApp): un tap imposta la
+              data mantenendo l'orario; il calendario resta per tutto il resto. */}
+          <div className="flex items-center gap-2 px-4 pt-3 flex-wrap">
+            {quickDateChips().map((chip) => {
+              const active = isSameDay(selectedDate, chip.date);
+              return (
+                <button
+                  key={chip.label}
+                  type="button"
+                  onClick={() => setSelectedDate(chip.date)}
+                  className={`text-xs px-3 py-1.5 rounded-full capitalize transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 ${
+                    active
+                      ? 'bg-primary/15 text-primary border border-primary'
+                      : 'bg-[#1F2C33] text-gray-400 border border-transparent hover:text-gray-200'
+                  }`}
+                >
+                  {chip.label}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => setCalendarOpen(true)}
+              className="text-xs px-3 py-1.5 rounded-full bg-[#1F2C33] text-gray-400 border border-transparent hover:text-gray-200 inline-flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <CalendarIcon className="w-3.5 h-3.5" /> Altra data
+            </button>
+          </div>
 
           <div className="flex items-center gap-4 px-4 py-2">
             <CalendarIcon className="w-5 h-5 text-gray-400 shrink-0" />
@@ -482,7 +513,18 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           )}
         </div>
 
-        <SendFab disabled={!canSubmit} loading={submitting} onClick={handleSubmit} />
+        {/* Microcopy onesta sui casi limite (pattern beta nativa): dichiara il
+            comportamento a istanza disconnessa invece di lasciare il dubbio. */}
+        <div className="px-5 pt-2 text-[11px] text-gray-500 text-center">
+          Se WhatsApp è disconnesso all&apos;orario previsto, il messaggio parte appena si riconnette.
+        </div>
+
+        <SendFab
+          disabled={!canSubmit}
+          loading={submitting}
+          onClick={handleSubmit}
+          label={formatSendCta(scheduledDate)}
+        />
 
         <DarkCalendarDialog
           open={calendarOpen}

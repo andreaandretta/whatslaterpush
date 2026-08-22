@@ -236,6 +236,30 @@ export default function DashboardPage() {
     }
   }, [fetchMessages, showToast]);
 
+  // Snooze one-tap — reschedule via PATCH without opening the edit modal.
+  // Optimistic update on scheduled_at; the refetch settles the jittered value.
+  const handleSnooze = useCallback(async (msg: MessagesSectionMessage, iso: string, label: string) => {
+    const prev = msg.scheduled_at;
+    setMessages((p) => p.map((m) => (m.id === msg.id ? { ...m, scheduled_at: iso } : m)));
+    showToast(`Posticipato: ${label.toLowerCase()}`);
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: msg.id, scheduled_at: iso }),
+      });
+      if (!res.ok) {
+        setMessages((p) => p.map((m) => (m.id === msg.id ? { ...m, scheduled_at: prev } : m)));
+        showToast('Non sono riuscito a posticiparlo — riprova.');
+        return;
+      }
+      fetchMessages();
+    } catch {
+      setMessages((p) => p.map((m) => (m.id === msg.id ? { ...m, scheduled_at: prev } : m)));
+      showToast('Errore di rete — riprova.');
+    }
+  }, [fetchMessages, showToast]);
+
   // Retry — re-queue a failed message (status: failed → pending). The
   // FailedMessageCard owns the inline spinner (it awaits this), so we DON'T
   // optimistically flip the status: the card stays red/spinning until the
@@ -386,6 +410,7 @@ export default function DashboardPage() {
               onEdit={handleEdit}
               onPauseToggle={handlePauseToggle}
               onRetry={handleRetry}
+              onSnooze={handleSnooze}
               onShowToast={showToast}
               connected={connected}
             />
