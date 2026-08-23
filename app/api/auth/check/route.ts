@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
 
   const { data: session, error } = await supabase
     .from('pending_auth_sessions')
-    .select('id, phone, status, instance_name, expires_at')
+    .select('id, phone, status, instance_name, expires_at, pairing_code, conn_state')
     .eq('id', sessionId)
     .gt('expires_at', new Date().toISOString())
     .maybeSingle();
@@ -43,7 +43,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Session not found or expired' }, { status: 410 });
   }
   if (session.status !== 'authenticated') {
-    return NextResponse.json({ authenticated: false });
+    // pairingCode = codice CORRENTE (il webhook lo aggiorna a ogni rotazione
+    // di Evolution): la pagina lo mostra al posto di quello iniziale ormai
+    // morto. connState alimenta il feedback "collegamento in corso".
+    return NextResponse.json({
+      authenticated: false,
+      pairingCode: session.pairing_code || null,
+      connState: session.conn_state || null,
+    });
   }
 
   const cookieValue = await signCookie({

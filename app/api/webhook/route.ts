@@ -7,6 +7,7 @@ import { isBillingEnabled, getEffectivePlan } from '../../lib/billing';
 import { containsAmbiguousTimeKeyword, hasExplicitHHMM } from '../../lib/quick-capture-utils';
 import { scrubPiiForLog } from '../../lib/log-scrubber';
 import { claimWebhookEvent, releaseWebhookEvent } from '../../lib/webhook-dedup';
+import { extractPairingCode, syncPairingCode, syncConnState } from '../../lib/pairing-code-sync';
 import { contactActiveCutoffIso } from '../../lib/contact-window';
 export const dynamic = 'force-dynamic';
 // The self-chat path chains askAI (8s) + verifyAndFixMessage (6s) + notify;
@@ -956,11 +957,25 @@ export async function POST(req) {
     const evoInstance = payload?.instance || '';
     console.log('WEBHOOK event=' + eventType + ' instance=' + evoInstance);
 
+    // QRCODE_UPDATED: Evolution rigenera il pairing code ~ogni 45s. Salva il
+    // codice CORRENTE sulla pending session così /connect mostra sempre quello
+    // valido (incidente "terno al lotto" 23 ago). Best-effort, mai bloccante.
+    if (eventType === 'qrcode.updated' || eventType === 'QRCODE_UPDATED') {
+      const freshCode = extractPairingCode(payload);
+      if (freshCode && evoInstance) {
+        await syncPairingCode(supabase, evoInstance, freshCode);
+      }
+      return NextResponse.json({ ok: true });
+    }
+
     // Handle CONNECTION_UPDATE
     if (eventType === 'connection.update' || eventType === 'CONNECTION_UPDATE') {
       const connData = payload?.data;
       const state = connData?.state || connData?.connection || connData?.status;
       console.log('WEBHOOK: CONNECTION_UPDATE state=' + state + ' instance=' + evoInstance);
+
+      // Feedback "richiesta ricevuta" per la UI di /connect (best-effort).
+      if (evoInstance) await syncConnState(supabase, evoInstance, state);
 
       await handleConnectionUpdate(payload);
 

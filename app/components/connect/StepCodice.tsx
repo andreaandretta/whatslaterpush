@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Logo from '@/components/Logo';
 import HelpPopover from './HelpPopover';
 
@@ -8,16 +8,34 @@ interface Props {
   code: string;
   expiresAt: number | null;
   phoneNumber: string;
+  // Stato live dell'istanza durante il pairing ('connecting'|'open'|'close'):
+  // alimenta il banner "collegamento in corso" — il segnale di fiducia che
+  // prima arrivava solo dalla notifica push di WhatsApp.
+  connState?: string | null;
   onBack: () => void;
   onRegenerate: () => void;
 }
 
 // Step 2 — pairing code with one-click copy + countdown + deep-link to WhatsApp.
 // Polling for pairing status happens in the parent (app/connect/page.tsx) so
-// this component stays pure presentation + clipboard.
-export default function StepCodice({ code, expiresAt, onBack, onRegenerate }: Props) {
+// this component stays pure presentation + clipboard. Il codice si AGGIORNA
+// da solo quando Evolution lo rigenera (~45s): flash "codice aggiornato".
+export default function StepCodice({ code, expiresAt, connState = null, onBack, onRegenerate }: Props) {
   const [copied, setCopied] = useState(false);
   const [remaining, setRemaining] = useState<string>('');
+  const [justRotated, setJustRotated] = useState(false);
+  const prevCodeRef = useRef(code);
+
+  // Flash quando il codice ruota (nuovo codice ≠ precedente, non al mount).
+  useEffect(() => {
+    if (prevCodeRef.current && code && code !== prevCodeRef.current) {
+      setJustRotated(true);
+      const t = setTimeout(() => setJustRotated(false), 2500);
+      prevCodeRef.current = code;
+      return () => clearTimeout(t);
+    }
+    prevCodeRef.current = code;
+  }, [code]);
 
   // Live countdown — ticks every second. When 0 the user is invited to
   // regenerate. Don't auto-regenerate (would mask backend issues).
@@ -100,10 +118,19 @@ export default function StepCodice({ code, expiresAt, onBack, onRegenerate }: Pr
         {/* Code card */}
         <div className="mt-6 bg-white border border-[#075E54]/10 rounded-2xl p-4 shadow-md shadow-black/5">
           <div className="text-[11px] uppercase tracking-widest font-extrabold text-[#5A6573] text-center mb-3">
-            Il tuo codice
+            {justRotated ? (
+              <span className="text-[#4FBE7C]">✓ Codice aggiornato — usa questo</span>
+            ) : (
+              'Il tuo codice (si rinnova da solo)'
+            )}
           </div>
           <div className="flex gap-2 mb-2.5">
-            <div className="flex-1 bg-[#C8F2DE] rounded-xl py-4 text-center font-mono text-2xl font-bold tracking-widest text-[#1A1F2C] select-all">
+            <div
+              key={code}
+              className={`flex-1 rounded-xl py-4 text-center font-mono text-2xl font-bold tracking-widest text-[#1A1F2C] select-all transition-colors ${
+                justRotated ? 'bg-[#4FBE7C]/40 animate-pulse' : 'bg-[#C8F2DE]'
+              }`}
+            >
               {code || '--------'}
             </div>
             <button
@@ -146,6 +173,20 @@ export default function StepCodice({ code, expiresAt, onBack, onRegenerate }: Pr
             )}
           </div>
         </div>
+
+        {/* Stato live del collegamento (dal webhook via poll): il segnale di
+            fiducia che prima dava solo la notifica push di WhatsApp. */}
+        {connState === 'connecting' && (
+          <div className="mt-3 flex items-center justify-center gap-2 rounded-xl bg-[#E8F8F0] border border-[#4FBE7C]/40 px-4 py-3 text-[13px] font-semibold text-[#075E54]">
+            <span className="inline-block h-2 w-2 rounded-full bg-[#4FBE7C] animate-pulse" />
+            WhatsApp ha ricevuto la richiesta — inserisci il codice ora
+          </div>
+        )}
+        {connState === 'close' && (
+          <div className="mt-3 flex items-center justify-center gap-2 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-[13px] font-semibold text-amber-700">
+            Collegamento interrotto — attendi il prossimo codice e riprova con quello
+          </div>
+        )}
 
         {/* Deep-link */}
         <a

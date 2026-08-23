@@ -584,17 +584,27 @@ describe('CONNECTION_UPDATE marks pending_auth_sessions', () => {
     expect(updateCall).toBeTruthy();
   });
 
-  test('state=close does NOT touch pending_auth_sessions', async () => {
+  test('state=close non tocca MAI lo status della sessione (solo conn_state informativo)', async () => {
+    // Invariante di sicurezza: un CONNECTION_UPDATE close non deve poter
+    // autenticare/invalidare una sessione (status resta intatto). Dal fix
+    // "terno al lotto" (23 ago) il close PUÒ scrivere conn_state — è solo
+    // feedback per la UI di /connect, scoped a status='pending' non scaduti.
     mockSupa.setResponse('user_instances:update', { data: [{ id: 'u1', phone_number: '393331234567' }], error: null });
     const payload = makeConnectionPayload({
       instance: 'SchedWhats-393331234567',
       state: 'close',
     });
     await callWebhook(payload);
-    const updateCall = mockSupa.calls.find(
+    const updates = mockSupa.calls.filter(
       c => c.table === 'pending_auth_sessions' && c.operation === 'update'
     );
-    expect(updateCall).toBeFalsy();
+    for (const u of updates) {
+      const fields = Object.keys(u.args[0] || {});
+      expect(fields).toEqual(['conn_state']); // mai status, mai altro
+      // e SEMPRE scoped alle sole sessioni pending attive
+      const eqs = (u.chain || []).filter((s: any) => s.method === 'eq').map((s: any) => s.args);
+      expect(eqs).toContainEqual(['status', 'pending']);
+    }
   });
 });
 

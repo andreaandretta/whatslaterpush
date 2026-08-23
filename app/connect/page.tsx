@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense, useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import StepNumero from '../components/connect/StepNumero';
 import StepCodice from '../components/connect/StepCodice';
@@ -52,6 +52,13 @@ function ConnectFlow() {
   // vecchio già invalidato → "codice errato" sul telefono. Un solo init alla
   // volta, sempre.
   const [submitting, setSubmitting] = useState(false);
+  // Stato connessione dell'istanza durante il pairing (dal webhook, via
+  // /api/auth/check): 'connecting' → "collegamento in corso" nella UI.
+  const [connState, setConnState] = useState<string | null>(null);
+  // Ref sempre allineata al codice mostrato: il poll gira in una closure con
+  // deps [step, sessionId], senza ref confronterebbe un valore stantio e
+  // resetterebbe il countdown a ogni tick.
+  const pairingCodeRef = useRef('');
 
   // After pairing success, redirect to dashboard. The 1.5s delay lives in
   // StepPronto so the user actually sees the celebration animation.
@@ -85,10 +92,14 @@ function ConnectFlow() {
       if (res.ok && data.pairingCode && data.sessionId) {
         setInitError(null);
         setCooldownUntil(null);
+        pairingCodeRef.current = data.pairingCode;
         setPairingCode(data.pairingCode);
         setSessionId(data.sessionId);
-        // Pairing codes from Evolution expire in ~10 minutes.
-        setCodeExpiresAt(Date.now() + 600 * 1000);
+        setConnState(null);
+        // Evolution RIGENERA il codice ~ogni 45s (QRCODE_UPDATED): il
+        // countdown onesto è ~60s, non 10 minuti. Alla rotazione il poll
+        // sotto riceve il codice fresco e resetta il countdown.
+        setCodeExpiresAt(Date.now() + 60 * 1000);
         setStep('2');
       } else {
         // Task 58: niente più alert() generico — classifica (rate-limit /
@@ -128,7 +139,16 @@ function ConnectFlow() {
         if (data.authenticated) {
           clearInterval(interval);
           handlePaired();
+          return;
         }
+        // Codice ruotato da Evolution → mostra SEMPRE quello corrente
+        // (incidente "terno al lotto" 23 ago) e riparti col countdown.
+        if (typeof data.pairingCode === 'string' && data.pairingCode && data.pairingCode !== pairingCodeRef.current) {
+          pairingCodeRef.current = data.pairingCode;
+          setPairingCode(data.pairingCode);
+          setCodeExpiresAt(Date.now() + 60 * 1000);
+        }
+        if (typeof data.connState === 'string') setConnState(data.connState);
       } catch {
         // network blip — keep polling
       }
@@ -145,6 +165,7 @@ function ConnectFlow() {
           code={pairingCode}
           expiresAt={codeExpiresAt}
           phoneNumber={phoneNumber}
+          connState={connState}
           onBack={() => setStep('1')}
           onRegenerate={() => handleNumeroSubmit(phoneNumber)}
         />
