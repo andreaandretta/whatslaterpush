@@ -58,9 +58,9 @@ describe('extractEventPhone', () => {
     expect(r?.phone).toBe('393401234567');
   });
 
-  test('fisso con 0 iniziale (comportamento normalizeItalianPhone: 0 rimosso)', () => {
+  test('fisso con 0 iniziale: lo 0 resta (E.164 italiano, fix 23 ago)', () => {
     const r = extractEventPhone({ summary: 'Studio 0612345678' });
-    expect(r?.phone).toBe('39612345678');
+    expect(r?.phone).toBe('390612345678');
   });
 
   test('priorità: summary vince su description e location', () => {

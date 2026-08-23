@@ -15,8 +15,8 @@ describe('normalizeItalianPhone', () => {
     expect(normalizeItalianPhone('00393401234567')).toBe('393401234567');
   });
 
-  test('converts leading 0 (landline) to 39 prefix', () => {
-    expect(normalizeItalianPhone('0612345678')).toBe('39612345678');
+  test('landline: keeps the leading 0 under the 39 prefix (E.164 italiano)', () => {
+    expect(normalizeItalianPhone('0612345678')).toBe('390612345678');
   });
 
   test('adds 39 prefix to 10-digit mobile starting with 3', () => {
