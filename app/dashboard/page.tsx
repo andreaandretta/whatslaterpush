@@ -158,6 +158,18 @@ export default function DashboardPage() {
 
 
   const handleLogout = async () => {
+    // Freno educativo (incidente 23 ago): la stabilità del collegamento È il
+    // prodotto. Sloggarsi non serve mai (i messaggi partono comunque) e per
+    // rientrare serve il supporto finché il recupero self-service (OTP v1.5)
+    // non esiste. Confirm onesto prima di un'azione che oggi è un vicolo cieco.
+    const ok = window.confirm(
+      'Sicuro di volerti disconnettere?\n\n' +
+      '• I tuoi messaggi programmati partono COMUNQUE, anche senza login: ' +
+      'per uscire ti basta chiudere la pagina.\n' +
+      '• Per rientrare dovrai ricollegare WhatsApp contattando il supporto.\n\n' +
+      'Disconnettersi non serve quasi mai: vuoi farlo davvero?'
+    );
+    if (!ok) return;
     if (msgTimer.current) clearInterval(msgTimer.current);
     try {
       await fetch('/api/auth/logout', { method: 'POST' });

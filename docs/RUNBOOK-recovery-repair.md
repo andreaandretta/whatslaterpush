@@ -18,12 +18,27 @@ Un utente legittimo scrive che non riesce a ri-collegare il suo numero (ha perso
    select phone_number, subscription_plan, connection_status, trial_ends_at
    from user_instances where phone_number = '<PHONE>';
 
-   -- Reset: rimuove la riga account → il numero ridiventa "nuovo" per /api/auth/init
+   -- ⚠️ PRIMA il delete nudo FALLISCE con FK 23503: scheduled_messages ha la
+   -- FK user_instance_id → user_instances (verificato 23 ago). Sgancia i
+   -- messaggi (restano intatti, ancorati a instance_phone) e poi cancella:
+   with target as (select id from user_instances where phone_number = '<PHONE>')
+   update scheduled_messages set user_instance_id = null
+   where user_instance_id in (select id from target);
+
    delete from user_instances where phone_number = '<PHONE>';
    ```
-   ⚠️ Nota: `delete` cancella la riga `user_instances`. Le `scheduled_messages` restano (referenziano `instance_phone`), ma senza `user_instances` il piano/trial si resetta al re-pair (nuovo trial 7gg). Se vuoi PRESERVARE il piano, valuta invece un UPDATE mirato del solo `connection_status` NON è sufficiente (il guard morde su qualsiasi riga esistente) — la strada pulita per la beta è il delete + eventuale ripristino manuale del piano post-repair.
-3. **L'utente ri-collega** — apre `/connect`, inserisce il numero, scansiona il pairing code sul telefono. Ora `/api/auth/init` non trova la riga → procede → pairing normale → nuovo cookie 90gg.
-4. **(Se serve) ripristina il piano** — se l'utente era su un piano diverso da trial e il delete l'ha resettato, reimposta `subscription_plan`/`trial_ends_at` con un UPDATE su `user_instances` dopo il re-pair.
+   ⚠️ Senza `user_instances` il piano/trial si resetta al re-pair (nuovo trial 7gg). Un UPDATE del solo `connection_status` NON basta (il guard morde su qualsiasi riga esistente) — la strada pulita per la beta è il delete + eventuale ripristino manuale del piano post-repair.
+3. **L'utente ri-collega** — apre `/connect`, inserisce il numero, inserisce il pairing code sul telefono. Ora `/api/auth/init` non trova la riga → procede → pairing normale → nuovo cookie 90gg.
+4. **Backfill dei messaggi** — ri-aggancia lo storico/coda al NUOVO account (eseguito con successo il 23 ago, 63 righe):
+   ```sql
+   update scheduled_messages sm
+   set user_instance_id = ui.id
+   from user_instances ui
+   where ui.phone_number = sm.instance_phone
+     and sm.user_instance_id is null
+     and ui.phone_number = '<PHONE>';
+   ```
+5. **(Se serve) ripristina il piano** — se l'utente era su un piano diverso da trial e il delete l'ha resettato, reimposta `subscription_plan`/`trial_ends_at` con un UPDATE su `user_instances` dopo il re-pair.
 
 ## Perché non è automatizzato
 Distinguere "owner legittimo da browser nuovo" da "attaccante che conosce il numero" senza un secondo fattore è impossibile: sono indistinguibili a livello di richiesta. Il fattore umano (verifica identità operatore) è il gate corretto finché non c'è l'OTP self-chat.
