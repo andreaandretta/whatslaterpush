@@ -2,7 +2,9 @@
 
 ## STATO ATTUALE (aggiornato 22 Agosto 2026)
 
-### 🎯 SESSIONE 22 AGO 2026 — Intel nativo WhatsApp + audit competitor + variabili {nome} — **`main` @ `16a95d4` (pushed)**
+### 🎯 SESSIONE 22-23 AGO 2026 — Intel nativo + audit competitor + 4 feature + fix pairing "terno al lotto" — **`main` @ `512d827`**
+
+**FIX PAIRING 23 AGO (incidente …2226 + fisso 081)**: Evolution rigenera il pairing code ~45s ma la UI lo mostrava 10 min → codici morti ("codice errato"/"connessione in corso" che muore). Fix deployati: anti doppio-tap (`20c11ec`), **sync codice via webhook→pending_auth_sessions→poll** + countdown onesto 60s + flash "codice aggiornato" + banner "WhatsApp ha ricevuto la richiesta" su conn_state (`512d827`, lib `pairing-code-sync`, migration `20260823` APPLICATA). Zombie …2226 teardown via ops_commands. Insight runbook: push assente = registrazione mai partita; entrambi i numeri ri-accoppiati (il fisso 081…5377 è il PRIMO numero fisso su WhatsLater).
 
 **INTEL CRITICA — scheduling nativo WhatsApp in arrivo (WABetaInfo, beta iOS 26.22.10.76)**: tap-and-hold su invia, min 10 minuti, **MAX 2 SETTIMANE**, **ZERO ricorrenze**, coda solo per-chat. Ad agosto non abilitato nemmeno ai beta tester → orizzonte trimestri. **Decisione posizionamento (Andrea)**: WhatsLater si riposiziona da "programma messaggi" a "sistema di promemoria clienti"; il lancio nativo = educazione mercato gratis, preparare SEO su "messaggi ricorrenti WhatsApp" PRIMA del rilascio.
 
