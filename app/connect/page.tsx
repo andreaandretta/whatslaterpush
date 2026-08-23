@@ -47,6 +47,11 @@ function ConnectFlow() {
   // Meta del numero del cliente — visto dal vivo nell'incidente di agosto).
   const [initError, setInitError] = useState<InitUiError | null>(null);
   const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
+  // Anti doppio-tap (incidente 23 ago): due init in volo generano DUE codici
+  // e le risposte possono arrivare fuori ordine → la UI mostra il codice
+  // vecchio già invalidato → "codice errato" sul telefono. Un solo init alla
+  // volta, sempre.
+  const [submitting, setSubmitting] = useState(false);
 
   // After pairing success, redirect to dashboard. The 1.5s delay lives in
   // StepPronto so the user actually sees the celebration animation.
@@ -64,6 +69,8 @@ function ConnectFlow() {
   const handleNumeroSubmit = async (rawNumber: string) => {
     // Belt: il freno UI vale anche se il CTA venisse aggirato (Enter, ecc.).
     if (cooldownUntil && Date.now() < cooldownUntil) return;
+    if (submitting) return; // un solo init in volo
+    setSubmitting(true);
     const number = rawNumber.replace(/\s/g, '');
     setPhoneNumber(number);
 
@@ -94,6 +101,8 @@ function ConnectFlow() {
       const e = classifyInitError(0, null, null);
       setInitError(e);
       setCooldownUntil(Date.now() + e.cooldownSec * 1000);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -130,7 +139,7 @@ function ConnectFlow() {
 
   return (
     <main className="min-h-screen bg-white">
-      {step === '1' && <StepNumero onSubmit={handleNumeroSubmit} error={initError} cooldownUntil={cooldownUntil} />}
+      {step === '1' && <StepNumero onSubmit={handleNumeroSubmit} error={initError} cooldownUntil={cooldownUntil} submitting={submitting} />}
       {step === '2' && (
         <StepCodice
           code={pairingCode}

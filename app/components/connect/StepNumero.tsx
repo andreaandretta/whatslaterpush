@@ -8,6 +8,7 @@ import type { InitUiError } from '@/app/lib/connect-errors';
 
 interface Props {
   onSubmit: (number: string) => void;
+  submitting?: boolean;
   // Task 58: freno anti-martellamento — errore classificato + istante fino al
   // quale il CTA resta bloccato (ogni retry compulsivo su /api/auth/init
   // consuma il rate-limit Meta del numero del CLIENTE, non del server).
@@ -19,7 +20,7 @@ interface Props {
 // • Fixed +39 prefix (single-country app; can be made selectable later).
 // • Auto-formats as "333 123 4567" while typing.
 // • CTA disabled until 10 digits.
-export default function StepNumero({ onSubmit, error = null, cooldownUntil = null }: Props) {
+export default function StepNumero({ onSubmit, error = null, cooldownUntil = null, submitting = false }: Props) {
   const [raw, setRaw] = useState('');
 
   // Countdown del freno: tick a 1s solo mentre il cooldown è attivo.
@@ -50,7 +51,7 @@ export default function StepNumero({ onSubmit, error = null, cooldownUntil = nul
 
   const digitsOnly = raw.replace(/\D/g, '');
   const isValid = digitsOnly.length === 10;
-  const submit = () => isValid && !cooldownActive && onSubmit(`39${digitsOnly}`);
+  const submit = () => isValid && !cooldownActive && !submitting && onSubmit(`39${digitsOnly}`);
 
   return (
     <div className="relative min-h-screen bg-white text-[#1A1F2C] overflow-hidden">
@@ -148,9 +149,9 @@ export default function StepNumero({ onSubmit, error = null, cooldownUntil = nul
           <button
             type="button"
             onClick={submit}
-            disabled={!isValid || cooldownActive}
+            disabled={!isValid || cooldownActive || submitting}
             className={`w-full inline-flex items-center justify-center gap-2 py-4 rounded-full text-base font-extrabold transition-all ${
-              isValid && !cooldownActive
+              isValid && !cooldownActive && !submitting
                 ? 'bg-primary text-white shadow-xl shadow-primary/40'
                 : 'bg-gray-200 text-gray-400 cursor-not-allowed'
             }`}
