@@ -1,15 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../../../lib/auth-cookie';
+import { getSupabaseAdmin } from '../../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 
-function getSupabase() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) throw new Error('Missing Supabase credentials');
-  return createClient(url, key);
-}
 
 async function getAuthedPhone(req: NextRequest): Promise<string | null> {
   const raw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
@@ -42,7 +36,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (category !== undefined) updates.category = typeof category === 'string' && category.length > 0 ? category : null;
   if (emoji !== undefined) updates.emoji = typeof emoji === 'string' && emoji.length > 0 ? emoji : null;
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('user_templates')
     .update(updates)
@@ -61,7 +55,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   const phone = await getAuthedPhone(req);
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('user_templates')
     .delete()

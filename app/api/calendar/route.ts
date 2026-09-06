@@ -8,8 +8,8 @@
  *          then drop the connection row (token included).
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
+import { getSupabaseAdmin } from '../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
@@ -20,13 +20,6 @@ const MIN_OFFSET_MINUTES = 5;
 const MAX_OFFSET_MINUTES = 2880; // 48h
 const MAX_TEMPLATE_CHARS = 3500;
 
-function getSupabase() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url) throw new Error('Missing SUPABASE_URL');
-  if (!key) throw new Error('SUPABASE_SERVICE_ROLE_KEY required');
-  return createClient(url, key);
-}
 
 async function getAuthedPhone(req: NextRequest): Promise<string | null> {
   const raw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
@@ -44,7 +37,7 @@ export async function GET(req: NextRequest) {
   const phone = await getAuthedPhone(req);
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const { data: conn, error } = await supabase
     .from('calendar_connections')
     .select('id, google_email, calendar_id, reminder_offset_minutes, message_template, enabled, last_synced_at, last_sync_error')
@@ -131,7 +124,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'no_valid_fields' }, { status: 400 });
   }
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const { data: conn, error: selErr } = await supabase
     .from('calendar_connections')
     .select('id')
@@ -155,7 +148,7 @@ export async function DELETE(req: NextRequest) {
   const phone = await getAuthedPhone(req);
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const { data: conn, error: selErr } = await supabase
     .from('calendar_connections')
     .select('id')

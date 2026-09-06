@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { logAuditEvent } from '../../../lib/audit';
 import { stampHeartbeat } from '../../../lib/heartbeat';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
@@ -15,12 +15,6 @@ const RETENTION_DAYS = 30;
 // even if a Sunday is skipped.
 const BATCH_SIZE = 100;
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 export interface CleanupResult {
   status: 'ok' | 'noop';
@@ -47,7 +41,7 @@ export function partitionRemovableMedia(
 }
 
 export async function runMediaCleanup(): Promise<CleanupResult> {
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   const { data: candidates, error: selErr } = await supabase

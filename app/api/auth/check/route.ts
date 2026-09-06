@@ -1,16 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { signCookie, AUTH_COOKIE_NAME, AUTH_COOKIE_MAX_AGE } from '../../../lib/auth-cookie';
 import { logAuditEvent, clientIpFromHeaders } from '../../../lib/audit';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 // Polled by /connect every ~2.5s during the pairing window. Receives the
 // sessionId in the JSON body (not the URL) so it never lands in Vercel access
@@ -26,7 +20,7 @@ export async function POST(req: NextRequest) {
   if (!sessionId) {
     return NextResponse.json({ error: 'sessionId required' }, { status: 400 });
   }
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
 
   const { data: session, error } = await supabase
     .from('pending_auth_sessions')

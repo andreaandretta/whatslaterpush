@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { logAuditEvent } from '../../../lib/audit';
 import { stampHeartbeat } from '../../../lib/heartbeat';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 
 const RETENTION_DAYS = 30;
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 export interface WebhookLogsCleanupResult {
   status: 'ok' | 'noop';
@@ -20,7 +14,7 @@ export interface WebhookLogsCleanupResult {
 }
 
 export async function runWebhookLogsCleanup(): Promise<WebhookLogsCleanupResult> {
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   // PostgREST .delete({ count: 'exact' }) returns the number of rows actually

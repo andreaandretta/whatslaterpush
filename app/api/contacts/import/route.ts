@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
 import { logAuditEvent } from '../../../lib/audit';
 import { capContactImport } from '../../../lib/csv-parser';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,12 +13,6 @@ const MAX_ROWS = 1000;
 const MAX_CONTACTS_PER_USER = 5000;
 const E164_RE = /^39\d{8,11}$/;
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 interface ImportRow {
   name?: string;
@@ -75,7 +69,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
 
   // Pre-insert dedup: count contacts already in cache so we can report
   // skipped_duplicates honestly. The upsert itself is ON CONFLICT DO UPDATE,

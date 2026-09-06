@@ -14,7 +14,6 @@
  * as send-messages Task 43).
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { decryptToken } from '../../../lib/calendar-crypto';
 import { GoogleApiError, refreshAccessToken, listUpcomingEvents } from '../../../lib/google-calendar';
 import {
@@ -23,6 +22,8 @@ import {
   type ExistingReminderRow,
 } from '../../../lib/calendar-sync';
 import { stampHeartbeat } from '../../../lib/heartbeat';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
@@ -37,13 +38,6 @@ const MAX_CONNECTIONS_PER_RUN = 20;
 const MAX_EXISTING_ROWS = 1000;
 const TOUCHABLE_STATUSES = ['pending', 'paused'];
 
-function getSupabase() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url) throw new Error('Missing SUPABASE_URL');
-  if (!key) throw new Error('SUPABASE_SERVICE_ROLE_KEY required');
-  return createClient(url, key);
-}
 
 interface CalendarConnectionRow {
   id: string;
@@ -203,7 +197,7 @@ export async function GET(req: NextRequest) {
 
   void stampHeartbeat('calendar-sync'); // Task 56 (#6)
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const now = new Date();
 
   const { data: connections, error: connErr } = await supabase

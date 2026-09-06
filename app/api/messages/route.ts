@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { getPlanLimits } from '../../lib/plans';
 import { isBillingEnabled, getEffectivePlan } from '../../lib/billing';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
@@ -8,24 +7,13 @@ import { applyJitter } from '../../lib/cron-utils';
 import { contactActiveCutoffIso, isRecipientActive } from '../../lib/contact-window';
 import { isValidRule } from '../../lib/recurrence';
 import { logAuditEvent, clientIpFromHeaders, hashContactRef } from '../../lib/audit';
+import { getSupabaseAdmin } from '../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
 // (bug storico stress-index/reset-quote). force-no-store la disattiva. (Task 42)
 export const fetchCache = 'force-no-store';
 
-function getSupabase() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url) throw new Error('Missing SUPABASE_URL');
-  // Anon-role fallback removed: this route writes to user_instances and
-  // scheduled_messages with service-role permissions (bypasses RLS). A
-  // silent fallback to NEXT_PUBLIC_SUPABASE_ANON_KEY in misconfigured envs
-  // would either fail mid-request with cryptic RLS errors or, worse, leak
-  // anon-readable rows. Fail loud at handler entry instead.
-  if (!key) throw new Error('SUPABASE_SERVICE_ROLE_KEY required (anon-role fallback removed)');
-  return createClient(url, key);
-}
 
 async function getAuthedPhone(req: NextRequest): Promise<string | null> {
   const raw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
@@ -37,7 +25,7 @@ export async function GET(req: NextRequest) {
   const phone = await getAuthedPhone(req);
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const { data: user } = await supabase
     .from('user_instances')
     .select('id, trial_ends_at, subscription_plan, connection_status')
@@ -123,7 +111,7 @@ export async function DELETE(req: NextRequest) {
   const { id } = body;
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const { data: msg } = await supabase
     .from('scheduled_messages')
     .select('id, instance_phone')
@@ -164,7 +152,7 @@ export async function PATCH(req: NextRequest) {
   const { id, status, scheduled_at, message, recurrence_rule, action } = body || {};
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const { data: existing } = await supabase
     .from('scheduled_messages')
     .select('id, instance_phone, status, media_type, media_url, recurrence_rule')
@@ -402,7 +390,7 @@ export async function POST(req: NextRequest) {
     normalizedRule = recurrence_rule;
   }
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const { data: user } = await supabase
     .from('user_instances')
     .select('id, subscription_plan')

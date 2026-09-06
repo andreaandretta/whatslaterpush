@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { denyUnlessOpsAuthorized } from '../../../../lib/ops-auth';
 import { getCoolifyBase, COOLIFY_NOT_CONFIGURED } from '../../../../lib/coolify-base';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdminOrNull } from '../../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,10 +11,9 @@ type Action = (typeof ALLOWED_ACTIONS)[number];
 
 async function auditOp(kind: string, uuid: string, action: string, status: number) {
   try {
-    const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!url || !key) return;
-    await createClient(url, key).from('audit_events').insert({
+    const supabase = getSupabaseAdminOrNull();
+    if (!supabase) return;
+    await supabase.from('audit_events').insert({
       user_phone: null,
       event_type: `ops_coolify_${action}`,
       payload: { kind, uuid, upstream_status: status },

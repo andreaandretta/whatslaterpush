@@ -33,14 +33,8 @@ export class FrozenError extends Error {
 
 const VALID_PROTOCOLS: EgressProtocol[] = ['http', 'https', 'socks4', 'socks5'];
 
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from './supabase-admin';
 
-function getSupabase(): SupabaseClient {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  );
-}
 
 interface LatestEgressEvent {
   event_type: 'egress_quarantine' | 'egress_unquarantine';
@@ -50,7 +44,7 @@ interface LatestEgressEvent {
 // Returns { error } distinctly from { event: null } so callers can FAIL CLOSED on
 // a read error instead of mistaking it for "no quarantine on record".
 async function getLatestEgressEvent(egressId: string): Promise<{ error: boolean; event: LatestEgressEvent | null }> {
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('audit_events')
     .select('event_type,payload')
@@ -108,7 +102,7 @@ export async function quarantineEgress(
   // per-tick re-detections that would otherwise spam audit_events.
   if (isActive && newUntilMs - activeUntilMs < QUARANTINE_EXTEND_THRESHOLD_MS) return;
   const until = new Date(newUntilMs).toISOString();
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const { error: insErr } = await supabase.from('audit_events').insert({
     event_type: 'egress_quarantine',
     payload: { egress_id: egressId, reason, until },
@@ -120,7 +114,7 @@ export async function quarantineEgress(
 
 export async function unquarantineEgress(egressId: string, reason: string = 'manual'): Promise<void> {
   if (!(await isEgressQuarantined(egressId))) return;
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const { error } = await supabase.from('audit_events').insert({
     event_type: 'egress_unquarantine',
     payload: { egress_id: egressId, reason },

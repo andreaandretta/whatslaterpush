@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { validatePhone } from '../../../lib/phone';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
@@ -12,6 +11,7 @@ import {
   type Egress,
 } from '../../../lib/egress-pool';
 import crypto from 'crypto';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 // init concatena forceDelete + /instance/create (10-30s quando Evolution è
@@ -21,12 +21,6 @@ export const maxDuration = 30;
 
 const SESSION_TTL_MINUTES = 10;
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 // Eventi webhook sottoscritti. TUTTI devono stare nell'enum di
 // EventController.events (v2.3.7): un solo nome fuori enum fa 400-are l'intera
@@ -98,7 +92,7 @@ export async function POST(req: NextRequest) {
   // flood can OOM the box (#1). The RPC has no built-in threshold: we pass a
   // 10-min window as the "minute" reset and enforce the limit on the returned
   // count (same pattern as recordSend in app/lib/rate-limit.ts).
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   {
     const PAIRING_WINDOW_MS = 10 * 60 * 1000;
     const PAIRING_MAX_PER_IP = 8;

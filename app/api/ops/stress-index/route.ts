@@ -3,7 +3,7 @@ import { denyUnlessOpsAuthorized } from '../../../lib/ops-auth';
 import { fetchDropletMetrics } from '../../../lib/droplet';
 import { getPlanLimits } from '../../../lib/plans';
 import { getEffectivePlan } from '../../../lib/billing';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 // Opt every fetch in this route (incl. the Supabase RPC) out of Next's fetch
@@ -18,12 +18,6 @@ const RAM_WARN = 70;
 const RAM_CRIT = 85;            // OOM-imminent threshold
 const CRON_STALE_SEC = 180;     // cron stack considered down if monitor silent >3 min
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  );
-}
 
 const RANK: Record<string, number> = { unknown: 0, ok: 0, warning: 1, critical: 2 };
 function worstOf(...s: string[]): string {
@@ -37,7 +31,7 @@ export async function GET(req: NextRequest) {
   const denied = denyUnlessOpsAuthorized(req);
   if (denied) return denied;
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const [metrics, snapRes] = await Promise.all([
     fetchDropletMetrics().catch(() => null),
     supabase.rpc('ops_stress_snapshot'),

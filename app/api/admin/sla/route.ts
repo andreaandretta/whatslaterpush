@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { requireAdmin } from '../../../lib/admin-auth';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
 // (bug storico stress-index/reset-quote). force-no-store la disattiva. (Task 42)
 export const fetchCache = 'force-no-store';
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 function parseSince(raw: string | null): { ms: number; label: string } {
   if (raw === '7d') return { ms: 7 * 86400_000, label: '7d' };
@@ -39,7 +33,7 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const since = parseSince(url.searchParams.get('since'));
   const sinceIso = new Date(Date.now() - since.ms).toISOString();
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
 
   // Pull message_sent events with drift_ms in window.
   const { data: sentEvents, error: sentErr } = await supabase

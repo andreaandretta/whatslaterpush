@@ -1,14 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { forceDeleteInstance } from '../../lib/evolution';
+import { getSupabaseAdmin } from '../../lib/supabase-admin';
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 const EVO_URL = process.env.EVOLUTION_API_URL;
 const EVO_KEY = process.env.EVOLUTION_API_KEY;
@@ -133,7 +127,7 @@ export async function POST(req: NextRequest) {
                           const owner = await getOwnerPhone(instanceName);
                           console.log('[connect] owner check:', owner);
                           // Always persist open status to DB regardless of owner
-                          const supa = getSupabase();
+                          const supa = getSupabaseAdmin();
                           await supa.from('user_instances')
                             .update({ connection_status: 'open', last_connection_update: new Date().toISOString() })
                             .eq('instance_name', instanceName);
@@ -141,7 +135,7 @@ export async function POST(req: NextRequest) {
                 }
                 if (state === 'connecting' || state === 'qr') return NextResponse.json({ status: 'connecting' });
                 {
-        const supa = getSupabase();
+        const supa = getSupabaseAdmin();
         await supa.from('user_instances')
           .update({ connection_status: 'close', last_connection_update: new Date().toISOString() })
           .eq('instance_name', instanceName);
@@ -176,7 +170,7 @@ export async function POST(req: NextRequest) {
         const { instanceName } = body;
         if (!instanceName) return NextResponse.json({ error: 'instanceName required' }, { status: 400 });
         await forceDeleteInstance(instanceName);
-        const supa = getSupabase();
+        const supa = getSupabaseAdmin();
         await supa.from('user_instances')
           .update({ connection_status: 'close', last_connection_update: new Date().toISOString() })
           .eq('instance_name', instanceName);
@@ -197,7 +191,7 @@ export async function POST(req: NextRequest) {
         if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) {
           return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
-        const supa = getSupabase();
+        const supa = getSupabaseAdmin();
         const { data: instances } = await supa.from('user_instances')
           .select('instance_name, connection_status')
           .in('connection_status', ['open', 'connecting']);

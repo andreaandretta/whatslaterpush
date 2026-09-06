@@ -25,7 +25,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { getSupabaseAdminOrNull } from '../../lib/supabase-admin'
 
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
 // (bug storico stress-index/reset-quote). force-no-store la disattiva. (Task 42)
@@ -73,16 +73,14 @@ export async function GET() {
   }
 
   // 3. Supabase: presence + operational queue / disconnect probes
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabase = getSupabaseAdminOrNull()
 
   const queue = { pending_overdue_5min: 0, critical: false }
   const instances = { disconnected_30min: 0, critical: false }
 
-  if (supabaseUrl && supabaseKey) {
+  if (supabase) {
     checks.database = true
     try {
-      const supabase = createClient(supabaseUrl, supabaseKey)
       const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
       const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString()
 

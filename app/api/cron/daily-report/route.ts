@@ -1,19 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { fetchDropletMetrics, fetchDropletHistory24h } from '../../../lib/droplet';
 import { stampHeartbeat } from '../../../lib/heartbeat';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
 // (bug storico stress-index/reset-quote). force-no-store la disattiva. (Task 42)
 export const fetchCache = 'force-no-store';
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 // Fail-fast read: throw at call site if ADMIN_PHONE is unset rather than
 // silently routing the daily report to a hardcoded fallback (audit-2026-05-25
@@ -40,7 +34,7 @@ export interface DailyReportData {
 }
 
 export async function collectDailyReport(): Promise<DailyReportData> {
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const yesterdayISO = yesterday.toISOString();
@@ -190,7 +184,7 @@ export function formatWhatsAppReport(r: DailyReportData): string {
 
 async function sendReportWhatsApp(text: string): Promise<boolean> {
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     // SECURITY: only the operator's own instance may send admin reports.
     // Never use customer instances — daily reports contain aggregated revenue
     // and user metrics that must not leak into customers' chat history.
@@ -223,7 +217,7 @@ async function sendReportWhatsApp(text: string): Promise<boolean> {
 export const AUDIT_RETENTION_DAYS = 90;
 
 export async function pruneOldAuditEvents(): Promise<number> {
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const cutoff = new Date(Date.now() - AUDIT_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const { count, error } = await supabase
     .from('audit_events')
@@ -252,7 +246,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const report = await collectDailyReport();
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
 
     // Store in DB
     await supabase.from('daily_reports').upsert(report, { onConflict: 'report_date' });

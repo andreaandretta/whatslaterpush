@@ -1,20 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { validatePhone } from '../../lib/phone';
 import { evolutionClient } from '../../../lib/evolution/client';
+import { getSupabaseAdmin } from '../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
 // (bug storico stress-index/reset-quote). force-no-store la disattiva. (Task 42)
 export const fetchCache = 'force-no-store';
 
-function getSupabase() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) throw new Error('Missing Supabase credentials');
-  return createClient(url, key);
-}
 
 interface OutContact {
   number: string;
@@ -138,7 +132,7 @@ export async function GET(req: NextRequest) {
   if (!payload?.phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const phone = payload.phone;
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
 
   const { data: user } = await supabase
     .from('user_instances')

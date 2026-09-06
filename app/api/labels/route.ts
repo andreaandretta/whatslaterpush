@@ -1,21 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { isValidLabelColor } from '../../lib/labels';
 import { getPlanLimits } from '../../lib/plans';
 import { getEffectivePlan } from '../../lib/billing';
+import { getSupabaseAdmin } from '../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
 // (bug storico stress-index/reset-quote). force-no-store la disattiva. (Task 42)
 export const fetchCache = 'force-no-store';
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 async function authedPhone(req: NextRequest): Promise<string | null> {
   const raw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
@@ -28,7 +22,7 @@ export async function GET(req: NextRequest) {
   const phone = await authedPhone(req);
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const { data: labels, error } = await supabase
     .from('contact_labels')
     .select('id, name, color, display_order, created_at')
@@ -71,7 +65,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid_color' }, { status: 400 });
   }
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
 
   // Tier gate: Free plan can still see existing label rows via GET, but
   // cannot create new ones. Returns 403 plan_label_locked so the UI can

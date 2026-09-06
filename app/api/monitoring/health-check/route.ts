@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { runAllChecks, shouldAlert, shouldRecover, sendRecovery, logResolution, dispatchAlert, classifyTransition } from '../../../lib/monitoring';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 // 11 check in serie, alcuni con probe Evolution O(N istanze): il default Hobby
@@ -10,12 +10,6 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 export const fetchCache = 'force-no-store';
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 export async function GET(req: NextRequest) {
   // Auth: Vercel cron injects `Authorization: Bearer ${CRON_SECRET}` on its
@@ -38,7 +32,7 @@ export async function GET(req: NextRequest) {
     console.warn('[health-check] DEPRECATION: query-param secret used. Migrate callers to `Authorization: Bearer $CRON_SECRET` — query secrets leak into access logs.');
   }
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const results = await runAllChecks();
 
   // Pre-launch silence lever: when MONITORING_ALERTS_ENABLED=false the checks

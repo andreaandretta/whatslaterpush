@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { sendAlertWithChannel } from '../../../lib/monitoring';
 import { stampHeartbeat } from '../../../lib/heartbeat';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 // Task 57 (tier pairing-resilience) — sentinella upstream.
 //
@@ -29,18 +29,12 @@ function authorized(req: NextRequest): boolean {
   return !!provided && !!process.env.CRON_SECRET && provided === process.env.CRON_SECRET;
 }
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 export async function GET(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   void stampHeartbeat('upstream-watch'); // Task 56 (#6)
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const news: string[] = [];
   const seen: Array<{ repo: string; tag: string }> = [];
 

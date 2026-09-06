@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { denyUnlessOpsAuthorized } from '../../../../lib/ops-auth';
 import { getCoolifyBase, COOLIFY_NOT_CONFIGURED } from '../../../../lib/coolify-base';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdminOrNull } from '../../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
@@ -24,10 +24,9 @@ function kindPlural(k: string | null): string {
 
 async function auditOp(action: string, kind: string, uuid: string, key: string, status: number) {
   try {
-    const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const sk = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!url || !sk) return;
-    await createClient(url, sk).from('audit_events').insert({
+    const supabase = getSupabaseAdminOrNull();
+    if (!supabase) return;
+    await supabase.from('audit_events').insert({
       user_phone: null,
       event_type: `ops_coolify_env_${action}`,
       payload: { kind, uuid, key, upstream_status: status },

@@ -11,22 +11,15 @@
  * history/logs, so nothing sensitive may leak into it.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { verifyOAuthState } from '../../../lib/calendar-oauth-state';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
 import { exchangeAuthCode } from '../../../lib/google-calendar';
 import { encryptToken } from '../../../lib/calendar-crypto';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 
-function getSupabase() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url) throw new Error('Missing SUPABASE_URL');
-  if (!key) throw new Error('SUPABASE_SERVICE_ROLE_KEY required');
-  return createClient(url, key);
-}
 
 function appOrigin(reqUrl: string): string | null {
   // Must match the origin used by /api/calendar/auth (redirect_uri parity).
@@ -67,7 +60,7 @@ export async function GET(req: NextRequest) {
       redirectUri: `${origin}/api/calendar/callback`,
     });
 
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     // Re-connect resets the error state and re-enables sync (the recovery path
     // for reauth_required); per-user settings (calendar_id, offset, template)
     // are NOT in the upsert so an existing row keeps them, a new row gets the

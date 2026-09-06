@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { denyUnlessOpsAuthorized } from '../../../lib/ops-auth';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdminOrNull } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,12 +9,6 @@ export const dynamic = 'force-dynamic';
 // while bounding the table at ~2880 righe (1/min).
 const PRUNE_AFTER_MS = 48 * 60 * 60 * 1000;
 
-function getSupabase() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return null;
-  return createClient(url, key);
-}
 
 function asPercent(v: unknown): number | null {
   const n = Number(v);
@@ -41,7 +35,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'ram_percent required (0-100)' }, { status: 400 });
   }
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdminOrNull();
   if (!supabase) {
     return NextResponse.json({ error: 'Supabase env not configured' }, { status: 500 });
   }

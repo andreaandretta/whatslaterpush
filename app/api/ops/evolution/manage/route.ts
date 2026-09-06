@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { denyUnlessOpsAuthorized } from '../../../../lib/ops-auth';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdminOrNull } from '../../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,10 +20,9 @@ function evoDelete(path: string, key: string, signal: AbortSignal) {
 // Best-effort audit trail for destructive ops (never blocks the action).
 async function auditOp(name: string, action: string, steps: Record<string, unknown>) {
   try {
-    const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!url || !key) return;
-    await createClient(url, key).from('audit_events').insert({
+    const supabase = getSupabaseAdminOrNull();
+    if (!supabase) return;
+    await supabase.from('audit_events').insert({
       user_phone: null,
       event_type: `ops_evolution_${action}`,
       payload: { instance: name, steps },

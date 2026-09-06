@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { AUTH_COOKIE_NAME, verifyCookie } from '../../../lib/auth-cookie';
 import { logAuditEvent, clientIpFromHeaders } from '../../../lib/audit';
 import { forceDeleteInstance, instanceNameForPhone } from '../../../lib/evolution';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 export async function POST(req: NextRequest) {
   // Best-effort attempt to attribute the logout to a user_phone. If the cookie
@@ -40,7 +34,7 @@ export async function POST(req: NextRequest) {
   // guard intact: you can only disconnect the number carried in YOUR cookie.
   if (payload?.phone) {
     try {
-      await getSupabase()
+      await getSupabaseAdmin()
         .from('user_instances')
         .update({ connection_status: 'close' })
         .eq('phone_number', payload.phone);

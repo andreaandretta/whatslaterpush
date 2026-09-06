@@ -1,20 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { runAllChecks, CheckResult } from '../../../lib/monitoring';
 import { maskPhoneForLLM, maskInstanceNamesForLLM } from '../../../lib/audit';
 import { requireAdmin } from '../../../lib/admin-auth';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 async function buildContext(): Promise<string> {
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
 
   const [checks, totalRes, planRes, expiringRes, churnedRes, alertsRes] = await Promise.all([
     runAllChecks(),

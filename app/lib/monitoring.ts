@@ -1,7 +1,7 @@
-import { createClient } from '@supabase/supabase-js';
 import { fetchDropletMetrics } from './droplet';
 import { isEgressQuarantined, quarantineEgress, loadEgressFromEnv } from './egress-pool';
 import { isTestInstance } from './monitoring-filters';
+import { getSupabaseAdmin } from './supabase-admin';
 
 // --- Tunables (env-overridable so thresholds can be tuned without a deploy) ---
 
@@ -45,12 +45,6 @@ export interface CheckResult {
 
 // --- Supabase client ---
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 // --- Individual Checks ---
 
@@ -88,7 +82,7 @@ export async function checkEvolutionApi(): Promise<CheckResult> {
 export async function checkCronHeartbeat(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from('ops_heartbeat')
       .select('ts')
@@ -128,7 +122,7 @@ const COLLATERAL_CRONS: Array<{ name: string; staleWarnMin: number; staleCritMin
 export async function checkCollateralCrons(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from('ops_heartbeat')
       .select('name, ts')
@@ -169,7 +163,7 @@ export async function checkCollateralCrons(): Promise<CheckResult> {
 export async function checkMessagesStuck(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     const cutoff = new Date(Date.now() - MSG_OVERDUE_MIN * 60 * 1000).toISOString();
     const { data, error } = await supabase
       .from('scheduled_messages')
@@ -239,7 +233,7 @@ export async function checkMessagesStuck(): Promise<CheckResult> {
 export async function checkWebhookInactive(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     // Step 1: instances that SHOULD be active = connection_status 'open' AND seen
     // recently. We pull phone_number + last_connection_update so we can drop test
     // instances and long-abandoned 'open' stubs (never-really-active) before
@@ -314,7 +308,7 @@ export async function checkWebhookInactive(): Promise<CheckResult> {
 export async function checkSupabaseDown(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     const { error } = await supabase.from('user_instances').select('id').limit(1);
     if (error) return { name: 'supabase_down', status: 'critical', message: `Errore database: ${error.message}`, checked_at: now };
     return { name: 'supabase_down', status: 'ok', message: 'Database raggiungibile', checked_at: now };
@@ -329,7 +323,7 @@ export async function checkSupabaseDown(): Promise<CheckResult> {
 export async function checkMessagesStalled(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from('scheduled_messages')
       .select('id, user_instances!inner(instance_name, phone_number)')
@@ -351,7 +345,7 @@ export async function checkMessagesStalled(): Promise<CheckResult> {
 export async function checkFailedSpike(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from('scheduled_messages')
       .select('id, user_instances!inner(instance_name, phone_number)')
@@ -415,7 +409,7 @@ export async function checkDropletRam(): Promise<CheckResult> {
 export async function checkInstanceFlapping(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     const windowStart = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
     const { data, error } = await supabase
       .from('audit_events')
@@ -472,7 +466,7 @@ export async function checkInstanceFlapping(): Promise<CheckResult> {
 export async function checkPairingBlackout(): Promise<CheckResult> {
   const now = new Date().toISOString();
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await supabase
       .from('audit_events')
@@ -570,7 +564,7 @@ export async function checkAllEgressDown(): Promise<CheckResult> {
     const states = await Promise.all(pool.map(e => isEgressQuarantined(e.id)));
     const quarantinedCount = states.filter(Boolean).length;
     if (quarantinedCount === pool.length) {
-      const supabase = getSupabase();
+      const supabase = getSupabaseAdmin();
       await supabase.from('audit_events').insert({
         event_type: 'pairing_freeze_activated',
         payload: { pool_size: pool.length, triggered_at: now },
@@ -676,7 +670,7 @@ export function maskNumber(value: string | null | undefined): string {
 // window is suppressed — that is what stops the every-tick re-spam.
 export async function shouldAlert(checkName: string, currentStatus?: string): Promise<boolean> {
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     const windowMs = reminderMs();
     const windowStart = new Date(Date.now() - windowMs).toISOString();
     const { data, error } = await supabase
@@ -713,7 +707,7 @@ export async function shouldAlert(checkName: string, currentStatus?: string): Pr
 // subsequent tick — from re-sending "Risolto" for the same recovery.
 export async function shouldRecover(checkName: string): Promise<boolean> {
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from('monitoring_alerts')
       .select('status')
@@ -813,7 +807,7 @@ function buildRecoveryText(check: CheckResult): string {
 
 async function getAlertInstance(): Promise<string | null> {
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     // SECURITY: Only use the operator's own instance as sender. Never route alerts
     // through customer instances — the alert text may include admin links and
     // would otherwise leak into customers' WhatsApp sent-message history.
@@ -880,7 +874,7 @@ async function sendEmail(check: CheckResult, text: string): Promise<boolean> {
 
 async function logAlert(check: CheckResult, channel: string): Promise<void> {
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     await supabase.from('monitoring_alerts').insert({
       check_name: check.name,
       status: check.status,
@@ -970,7 +964,7 @@ export async function dispatchAlert(check: CheckResult, isReminder = false): Pro
 // Fail-open su errori ≠ 23505: meglio un alert doppio che nessun alert.
 async function claimAlertSlot(checkName: string, status: string): Promise<boolean> {
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin();
     const { error } = await supabase.from('monitoring_alerts').insert({
       check_name: checkName,
       status,

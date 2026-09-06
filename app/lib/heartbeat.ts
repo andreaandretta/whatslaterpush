@@ -4,14 +4,11 @@
 // c9fe33a) non veniva notato da nessuno. Ogni cron ora timbra all'ingresso;
 // checkCollateralCrons in monitoring.ts confronta i timbri con la cadenza
 // attesa e avvisa quando un battito manca.
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from './supabase-admin';
 
 export async function stampHeartbeat(name: string): Promise<void> {
   try {
-    const supabase = createClient(
-      process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = getSupabaseAdmin();
     await supabase.from('ops_heartbeat').upsert(
       { name, ts: new Date().toISOString() },
       { onConflict: 'name' }

@@ -1,19 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { runAllChecks } from '../../../lib/monitoring';
 import { requireAdmin } from '../../../lib/admin-auth';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
 // (bug storico stress-index/reset-quote). force-no-store la disattiva. (Task 42)
 export const fetchCache = 'force-no-store';
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 // --- Stripe helpers (raw fetch, no SDK) ---
 
@@ -74,7 +68,7 @@ async function getStripeData() {
 // --- Business data ---
 
 async function getBusinessData() {
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
 
   const [totalRes, planRes, expiringRes, churnedRes, recentRes] = await Promise.all([
     supabase.from('user_instances').select('id', { count: 'exact', head: true }),
@@ -121,7 +115,7 @@ export async function GET(req: NextRequest) {
   const admin = await requireAdmin(req);
   if (admin instanceof NextResponse) return admin;
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
 
   const [system, business, stripe, alertsRes, dailyReportRes] = await Promise.all([
     runAllChecks(),

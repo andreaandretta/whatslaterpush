@@ -61,3 +61,5 @@ screenshots/*.png
 # Playwright (local E2E artifacts — screenshots, traces, html report)
 /test-results/
 /playwright-report/
+.env*
+.claude/scheduled_tasks.lock

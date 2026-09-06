@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { evolutionClient } from '../../../../lib/evolution/client';
 import { validatePhone } from '../../../lib/phone';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,12 +31,6 @@ export const dynamic = 'force-dynamic';
 // a 1000-user fleet runs ~3 minutes and never has more than one Evolution
 // call in flight at a time.
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 // Mirror the jid→number normalisation used in /api/contacts/route.ts so
 // we don't drift on edge cases (device suffix, groups, broadcasts).
@@ -80,7 +74,7 @@ export async function POST(req: NextRequest) {
     || url.searchParams.get('refresh') === 'true';
   const onlyPhone = url.searchParams.get('phone');
 
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
 
   let usersQuery = supabase
     .from('user_instances')

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { requireAdmin } from '../../../lib/admin-auth';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 // Data source for the admin "Torre di Controllo" page (app/admin/tower).
 // Aggregates everything server-side so the browser never sees OPS_SECRET:
@@ -16,12 +16,6 @@ import { requireAdmin } from '../../../lib/admin-auth';
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
 
 // Self-fetch one of our own JSON endpoints with a hard timeout so a slow upstream
 // (DigitalOcean / Evolution / Coolify) can never push this route past the Vercel
@@ -49,7 +43,7 @@ export async function GET(req: NextRequest) {
   // (The ops routes still accept ?secret= for GET-only external callers like the
   // Cowork Torre — that deprecated fallback is unrelated to this internal caller.)
   const opsHeaders = ops ? { Authorization: `Bearer ${ops}` } : undefined;
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
 
   const [usersRes, droplet, evolution, coolify, health] = await Promise.all([
     supabase.rpc('admin_tower_users'),

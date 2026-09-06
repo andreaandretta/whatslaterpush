@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 import { getCoolifyBase, COOLIFY_NOT_CONFIGURED } from '../../../lib/coolify-base';
 import { stampHeartbeat } from '../../../lib/heartbeat';
 
@@ -12,8 +12,7 @@ const EVOLUTION_TIMEOUT_MS = 8000;
 const BATCH = 10;
 
 function supa() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  return createClient(url, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+  return getSupabaseAdmin();
 }
 
 // Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` automatically; manual
