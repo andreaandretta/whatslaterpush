@@ -28,7 +28,7 @@ export default function PrivacyPage() {
       {/* Content */}
       <main className="max-w-4xl mx-auto px-6 py-16">
         <h1 className="text-4xl font-bold text-text-primary mb-2">Informativa sulla Privacy</h1>
-        <p className="text-gray-500 mb-12">Ultimo aggiornamento: 7 luglio 2026</p>
+        <p className="text-gray-500 mb-12">Ultimo aggiornamento: 7 settembre 2026</p>
 
         <div className="prose prose-gray max-w-none space-y-10 text-[15px] leading-relaxed">
 
@@ -64,6 +64,7 @@ export default function PrivacyPage() {
             <h3 className="text-lg font-semibold text-text-primary mb-2">2.3 Dati NON raccolti</h3>
             <ul className="list-disc pl-6 space-y-1">
               <li>Non leggiamo n&eacute; archiviamo i messaggi WhatsApp ricevuti dall&apos;utente (ad eccezione dei messaggi inviati a s&eacute; stessi per la programmazione).</li>
+              <li>Non archiviamo i messaggi WhatsApp ricevuti dai contatti dell&apos;utente. Per rispettare chi non vuole pi&ugrave; ricevere promemoria, il testo di un messaggio ricevuto in una chat individuale pu&ograve; essere confrontato in memoria con poche parole chiave (ad esempio &ldquo;stop&rdquo;, &ldquo;basta&rdquo;): in tal caso i promemoria verso quel numero vengono sospesi. Il testo non viene salvato, registrato n&eacute; trasmesso a terzi; conserviamo solo la data dell&apos;ultimo messaggio ricevuto per ciascun numero.</li>
               <li>Non accediamo alla rubrica completa dell&apos;utente.</li>
               <li>Non utilizziamo cookie di profilazione o tracciamento di terze parti.</li>
               <li>Non raccogliamo dati di geolocalizzazione.</li>

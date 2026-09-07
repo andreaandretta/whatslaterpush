@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { forceDeleteInstance } from '../../lib/evolution';
 import { getSupabaseAdmin } from '../../lib/supabase-admin';
+import { WEBHOOK_EVENTS } from '../../lib/webhook-config';
 
 
 const EVO_URL = process.env.EVOLUTION_API_URL;
@@ -43,15 +44,9 @@ async function setWebhook(name: string): Promise<void> {
                             url: webhookUrl,
                             webhook_by_events: false,
                             webhook_base64: false,
-                            events: [
-                              'MESSAGES_UPSERT',
-                              'CONTACTS_SET',
-                              'CONTACTS_UPSERT',
-                              'CONTACTS_UPDATE',
-                              'MESSAGING_HISTORY_SET',
-                              'CONNECTION_UPDATE',
-                              'QRCODE_UPDATED',
-                            ],
+                            // Unica lista in app/lib/webhook-config.ts: la copia locale
+                            // includeva MESSAGING_HISTORY_SET (fuori enum v2 → 400 silenzioso).
+                            events: WEBHOOK_EVENTS,
           };
           if (webhookSecret) {
                   webhookBody.headers = { 'x-webhook-secret': webhookSecret };

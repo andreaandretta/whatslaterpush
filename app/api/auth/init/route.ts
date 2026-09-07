@@ -12,6 +12,7 @@ import {
 } from '../../../lib/egress-pool';
 import crypto from 'crypto';
 import { getSupabaseAdmin } from '../../../lib/supabase-admin';
+import { WEBHOOK_EVENTS } from '../../../lib/webhook-config';
 
 export const dynamic = 'force-dynamic';
 // init concatena forceDelete + /instance/create (10-30s quando Evolution è
@@ -27,14 +28,7 @@ const SESSION_TTL_MINUTES = 10;
 // config. MESSAGING_HISTORY_SET NON è nell'enum v2 (e mai emesso da Evolution,
 // vedi nota CLAUDE.md) — per anni ha fatto fallire in silenzio /webhook/set,
 // erano i due errori [Validate] fissi nei log container a ogni pairing.
-const WEBHOOK_EVENTS = [
-  'MESSAGES_UPSERT',
-  'CONTACTS_SET',
-  'CONTACTS_UPSERT',
-  'CONTACTS_UPDATE',
-  'CONNECTION_UPDATE',
-  'QRCODE_UPDATED',
-];
+// La lista vive in app/lib/webhook-config.ts (unica copia, con MESSAGES_UPDATE).
 
 function webhookConfig() {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://whatslaterpush.vercel.app';

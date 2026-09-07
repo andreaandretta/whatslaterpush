@@ -9,6 +9,8 @@ import { scrubPiiForLog } from '../../lib/log-scrubber';
 import { claimWebhookEvent, releaseWebhookEvent } from '../../lib/webhook-dedup';
 import { extractPairingCode, syncPairingCode, syncConnState } from '../../lib/pairing-code-sync';
 import { contactActiveCutoffIso } from '../../lib/contact-window';
+import { handleInboundOptOut } from '../../lib/opt-out';
+import { recordCustodyAck } from '../../lib/custody-ack';
 export const dynamic = 'force-dynamic';
 // The self-chat path chains askAI (8s) + verifyAndFixMessage (6s) + notify;
 // the Hobby default ~10s kills it mid-insert, orphaning the dedup claim (#4).
@@ -1025,7 +1027,23 @@ export async function POST(req) {
         const status = typeof upd?.update?.status === 'number'
           ? upd.update.status
           : (typeof upd?.status === 'number' ? upd.status : null);
-        if (!msgId || (status !== 3 && status !== 4)) continue;
+        if (!msgId || status === null) continue;
+
+        // Custody ack (pattern #1, CLAUDE.md): SERVER_ACK(2) = WhatsApp ha
+        // preso in carico il messaggio; ERROR(0) = lo ha rifiutato dopo che
+        // noi lo avevamo già segnato 'sent'. Colonne dalla migration
+        // 20260907_custody_ack_optout; il flag resta spento finché non è applicata.
+        if (status === 2 || status === 0) {
+          if (process.env.CUSTODY_ACK_ENABLED === 'true') {
+            try {
+              touched += await recordCustodyAck(supabase, msgId, status);
+            } catch (e) {
+              console.error('WEBHOOK: custody ack failed:', (e as any)?.message || e);
+            }
+          }
+          continue;
+        }
+        if (status !== 3 && status !== 4) continue;
 
         // delivered_at: set if missing for both DELIVERY_ACK and READ
         // (READ implies DELIVERED on WhatsApp).
@@ -1127,6 +1145,19 @@ export async function POST(req) {
 
     const senderRaw = (msgKey?.remoteJid || '').split('@')[0];
     const isFromMe = msgKey?.fromMe === true;
+
+    // Opt-out del destinatario (anti-ban, 7 set 2026): l'unico uso che facciamo
+    // di un messaggio IN ARRIVO. Il testo si legge solo per riconoscere
+    // "stop/basta/non scrivermi" e per segnare last_inbound_at: niente viene
+    // salvato né loggato. Dietro flag finché migration e privacy non sono
+    // aggiornate (app/lib/opt-out.ts).
+    if (!isFromMe && process.env.OPT_OUT_ENABLED === 'true') {
+      try {
+        await handleInboundOptOut(supabase, evoInstance, msgKey, msgContent);
+      } catch (e) {
+        console.error('WEBHOOK: opt-out handling failed:', (e as any)?.message || e);
+      }
+    }
 
     if (!isFromMe) {
       console.log('WEBHOOK: Skipped - not fromMe. remoteJid=' + (msgKey?.remoteJid || 'none'));

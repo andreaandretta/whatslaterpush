@@ -10,6 +10,7 @@ import {
   snoozeTomorrowSameTime,
   formatSendCta,
   quickDateChips,
+  courtesyHint,
 } from '@/app/lib/schedule-quick';
 
 const at = (iso: string) => new Date(iso);
@@ -80,5 +81,19 @@ describe('quickDateChips', () => {
     expect(chips[1].date.getDate()).toBe(23);
     expect(chips[2].date.getDate()).toBe(29);
     expect(chips[2].label.length).toBeGreaterThan(0);
+  });
+});
+
+
+describe('courtesyHint (avviso soft fuori 08-21, ora locale)', () => {
+  const local = (h: number, m = 0) => new Date(2026, 8, 10, h, m, 0, 0);
+  test('dentro la fascia → null', () => {
+    expect(courtesyHint(local(8))).toBeNull();
+    expect(courtesyHint(local(20, 59))).toBeNull();
+  });
+  test('fuori fascia → frase con l\'orario, nessun blocco', () => {
+    expect(courtesyHint(local(23, 10))).toContain('23:10');
+    expect(courtesyHint(local(7, 30))).toContain('7:30');
+    expect(courtesyHint(local(21))).not.toBeNull();
   });
 });

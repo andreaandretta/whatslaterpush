@@ -7,6 +7,8 @@ interface MsgLike {
   sent_at?: string | null;
   delivered_at?: string | null;
   read_at?: string | null;
+  ack_error_at?: string | null;
+  server_ack_at?: string | null;
   scheduled_at?: string;
 }
 
@@ -22,6 +24,14 @@ function formatTime(iso: string | null | undefined): string {
 // Returns null when the message is not yet sent (status != 'sent') so the
 // caller can keep the existing pending/awaiting badge unchanged.
 export function DeliveryStatusIcon({ msg }: { msg: MsgLike }) {
+  // Custody ack: WhatsApp ha rifiutato il messaggio DOPO il nostro 'sent'.
+  if (msg.ack_error_at) {
+    return (
+      <span title={`Non accettato da WhatsApp ${formatTime(msg.ack_error_at)}`} aria-label="Non accettato da WhatsApp" data-testid="status-ack-error" className="text-red-400 font-bold">
+        !
+      </span>
+    );
+  }
   if (msg.read_at) {
     return (
       <span title={`Letto ${formatTime(msg.read_at)}`} aria-label="Letto" data-testid="status-read">

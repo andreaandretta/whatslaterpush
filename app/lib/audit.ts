@@ -13,6 +13,7 @@ export type AuditEventType =
   | 'tier_changed'
   | 'webhook_received'
   | 'auth_login'
+  | 'recipient_suppressed' // anti-ban 7 set 2026: opt-out o rifiuti ripetuti di WhatsApp
   | 'auth_logout'
   | 'payment_event'
   | (string & {});

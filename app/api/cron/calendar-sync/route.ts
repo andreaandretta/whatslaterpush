@@ -24,6 +24,10 @@ import {
 import { stampHeartbeat } from '../../../lib/heartbeat';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseAdmin } from '../../../lib/supabase-admin';
+import { getPlanLimits } from '../../../lib/plans';
+import { getEffectivePlan } from '../../../lib/billing';
+import { isSamePhone } from '../../../lib/anti-ban';
+import { listSuppressedRecipients, suppressionsEnabled } from '../../../lib/suppressions';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
@@ -94,7 +98,7 @@ async function syncConnection(
   // like the dashboard POST creates them — enrich from user_instances.
   const { data: user, error: userErr } = await supabase
     .from('user_instances')
-    .select('id')
+    .select('id, subscription_plan')
     .eq('phone_number', conn.user_phone)
     .maybeSingle();
   if (userErr) throw new Error('user_instances lookup failed: ' + userErr.message);
@@ -121,9 +125,27 @@ async function syncConnection(
 
   // Inserts one-by-one: the unique index on calendar_event_key can 23505 when
   // a concurrent run won the race — benign per-row skip, never a batch abort.
+  // Stessi freni del path manuale (POST /api/messages, anti-ban 7 set 2026):
+  // mai un promemoria a se stessi, e coda piena = stop (MAX_PENDING = cap
+  // giornaliero × 7). Prima il calendar li saltava entrambi.
+  const limits = getPlanLimits(getEffectivePlan((user as any).subscription_plan));
+  const maxPending = limits.dailyLimit * 7;
+  const { count: pendingNow } = await supabase
+    .from('scheduled_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('instance_phone', conn.user_phone)
+    .eq('status', 'pending');
+  let pendingCount = pendingNow || 0;
+  const suppressed = suppressionsEnabled() ? await listSuppressedRecipients(supabase, conn.user_phone) : new Set<string>();
   let inserted = 0;
   let skippedConflicts = 0;
+  let skippedSelf = 0;
+  let skippedQueueFull = 0;
+  let skippedSuppressed = 0;
   for (const row of actions.inserts) {
+    if (isSamePhone(row.recipient_number, conn.user_phone)) { skippedSelf++; continue; }
+    if (suppressed.has(row.recipient_number)) { skippedSuppressed++; continue; }
+    if (pendingCount >= maxPending) { skippedQueueFull++; continue; }
     const { error } = await supabase.from('scheduled_messages').insert({
       ...row,
       user_instance_id: user.id,
@@ -132,11 +154,16 @@ async function syncConnection(
     });
     if (!error) {
       inserted++;
+      pendingCount++;
     } else if (error.code === '23505') {
       skippedConflicts++;
     } else {
       throw new Error('calendar-sync insert failed: ' + error.message);
     }
+  }
+
+  if (skippedSelf || skippedQueueFull || skippedSuppressed) {
+    console.warn(`[calendar-sync] connection ${conn.id}: skipped ${skippedSelf} self-target, ${skippedQueueFull} over MAX_PENDING (${maxPending}), ${skippedSuppressed} suppressed recipients`);
   }
 
   let updated = 0;

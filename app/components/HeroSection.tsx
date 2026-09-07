@@ -4,6 +4,9 @@ import Link from 'next/link';
 // Hero v4 — WhatsApp-native single-screen layout for ICP D (allenatore /
 // parroco / scout / istruttore). The "scheduled → sent" chip is the hero,
 // the chat bubble shows a real coach-style message, and the only saturated
+// 2026-09-07: the preview is a 1:1 chat on purpose — the product refuses
+// @g.us/@broadcast targets (api/messages), so a "Gruppo · 18 partecipanti"
+// mock promised something the first tap would deny. Restore only with groups.
 // green on the page is the "Inizia gratis" CTA. Spec: sprint5/HERO-SPEC-FINAL.html
 // North-star mockup: sprint5/hero-v4-final.html.
 export default function HeroSection() {
@@ -14,7 +17,7 @@ export default function HeroSection() {
         <div className="text-[#1A1F2C]">
           <span className="inline-flex items-center gap-1.5 bg-[#F0F2F5] text-[#54656F] px-2.5 py-1 rounded-full text-[11px] font-semibold mb-4">
             <span className="w-1.5 h-1.5 rounded-full bg-[#25D366]"></span>
-            Per chi gestisce un gruppo WhatsApp
+            Per chi manda gli stessi promemoria ogni settimana
           </span>
 
           <h1 className="font-heading text-[28px] sm:text-4xl lg:text-5xl font-black leading-[1.06] tracking-tight">
@@ -84,12 +87,12 @@ function ChatPreview() {
         </svg>
         <div className="w-9 h-9 rounded-full bg-white/20 text-white flex items-center justify-center shrink-0">
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" />
+            <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
           </svg>
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-white text-sm font-semibold leading-tight">Gruppo Allenamento</div>
-          <div className="text-white/70 text-[11px]">18 partecipanti</div>
+          <div className="text-white text-sm font-semibold leading-tight">Marco (papà di Luca)</div>
+          <div className="text-white/70 text-[11px]">online</div>
         </div>
         <svg className="w-4 h-4 text-white/80" viewBox="0 0 24 24" fill="currentColor">
           <circle cx="12" cy="5" r="1.6" />
@@ -121,7 +124,7 @@ function ChatPreview() {
         <div className="hero-float flex justify-end">
           <div className="max-w-[80%] bg-[#DCF8C6] text-[#111B21] rounded-2xl rounded-tr-sm px-3 py-2 shadow-sm">
             <p className="text-[13px] leading-snug">
-              Ci vediamo domani alle <strong>18:00</strong> al campo per l&apos;allenamento. Ricordatevi la borraccia! 💪
+              Ciao Marco, domani allenamento alle <strong>18:00</strong> al campo. Ricordati la borraccia di Luca! 💪
             </p>
             <div className="flex items-center justify-end gap-1 mt-1">
               <span className="text-[10px] text-[#667781]">09:00</span>

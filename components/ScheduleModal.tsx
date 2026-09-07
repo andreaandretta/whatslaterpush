@@ -13,7 +13,7 @@ import { MediaPicker, MediaAttachmentChip, MediaAttachment } from './schedule/Me
 import { SendFab } from './schedule/SendFab';
 import { levenshteinRatio } from '../app/lib/levenshtein';
 import { applyTemplateVariables, hasTemplateVariables, firstNameOf } from '../app/lib/template-variables';
-import { formatSendCta, quickDateChips, isSameDay } from '../app/lib/schedule-quick';
+import { formatSendCta, quickDateChips, isSameDay, courtesyHint } from '../app/lib/schedule-quick';
 
 const TEMPLATE_DIFF_THRESHOLD = 0.3;
 
@@ -512,6 +512,12 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
             </div>
           )}
         </div>
+
+        {courtesyHint(scheduledDate) && (
+          <div className="mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-xs text-center" role="status">
+            {courtesyHint(scheduledDate)}
+          </div>
+        )}
 
         {/* Microcopy onesta sui casi limite (pattern beta nativa): dichiara il
             comportamento a istanza disconnessa invece di lasciare il dubbio. */}

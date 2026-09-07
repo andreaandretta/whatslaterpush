@@ -19,11 +19,11 @@ const faqs = [
   },
   {
     q: 'È contro i termini di WhatsApp? Rischio il ban?',
-    a: 'No. WhatsLater usa la stessa tecnologia di WhatsApp Web (linked devices ufficiali). Non simuliamo click, non usiamo API non autorizzate, non facciamo invii massivi. Tu schedula i messaggi che mandi comunque ogni giorno — semplicemente li scrivi prima.',
+    a: 'Nessuno può garantirti il contrario, e diffida di chi lo fa. WhatsApp blocca soprattutto chi scrive a persone che non lo conoscono o che lo segnalano come spam. WhatsLater è costruito per tenerti lontano da lì: scrivi solo a contatti con cui hai già una chat, pochi promemoria mirati al giorno (20-30, non liste), con limiti automatici che ti fermano prima di esagerare. Il collegamento è lo stesso di WhatsApp Web (dispositivi collegati). Le regole che seguiamo sono scritte nei Termini, non nascoste.',
   },
   {
     q: "In cosa è diverso da WhatsApp Business o dallo scheduling nativo?",
-    a: "WhatsApp Business serve a chi gestisce un'attività con catalogo, risposte automatiche e profilo aziendale — non a chi vuole solo programmare un messaggio dal proprio numero personale. Lo scheduling nativo invece esiste solo dentro le Community e richiede il telefono acceso. WhatsLater funziona sul tuo numero normale, dal browser, anche col telefono spento.",
+    a: "WhatsApp Business serve a chi ha un catalogo, risposte automatiche e un profilo aziendale. WhatsApp sta anche aggiungendo la programmazione dei messaggi: dalle prime versioni di prova serve per un singolo messaggio tra qualche giorno, dentro una chat, senza ricorrenze e con il telefono acceso. WhatsLater è per i promemoria che mandi ogni settimana a decine di persone, anche tra sei mesi, tutti in una coda sola, dal tuo numero e anche col telefono spento.",
   },
   {
     q: 'Cosa succede se il mio telefono è spento?',
@@ -31,11 +31,11 @@ const faqs = [
   },
   {
     q: 'Posso vedere il messaggio prima che parta?',
-    a: 'Sì, attivando "Richiedi approvazione" nelle Opzioni avanzate della schermata di scheduling. Prima dell\'invio ricevi una notifica e devi confermare. Di default è disattivato — la maggior parte preferisce setup-and-forget.',
+    a: 'Sì, in due momenti. Quando lo programmi vedi il testo, il destinatario e l\'orario ripetuto in parole nel bottone ("Invia domani alle 9:00"), così niente sorprese. Finché non è partito lo ritrovi nella coda: puoi modificare testo e orario, metterlo in pausa, posticiparlo di un\'ora o a domani, oppure eliminarlo.',
   },
   {
     q: 'I miei messaggi e contatti sono al sicuro?',
-    a: "I messaggi schedulati sono cifrati a riposo sul nostro server europeo (Frankfurt). Una volta inviati, vengono eliminati dopo il periodo di storico previsto dal piano (7/30/60/90 giorni). Non leggiamo le tue chat, non analizziamo il contenuto, non condividiamo nulla con terze parti.",
+    a: "I messaggi programmati sono cifrati a riposo su server nell'Unione Europea (Germania e Irlanda). Una volta inviati, vengono eliminati dopo il periodo di storico previsto dal piano (7/30/60/90 giorni). Non leggiamo le tue chat, non analizziamo il contenuto, non usiamo tracker né pubblicità, non condividiamo nulla con terze parti.",
   },
   {
     q: 'Posso programmare messaggi ricorrenti tipo "ogni lunedì alle 7 alla squadra"?',

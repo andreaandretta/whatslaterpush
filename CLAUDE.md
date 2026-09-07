@@ -125,6 +125,36 @@ Quattro layer concorrenti (tre @60s + una safety-net giornaliera), atomic lock p
 - 555+ test unit/integration verdi (`npm test`) — baseline post-Sprint 5 PWA, +9 dalla PR #18 (manifest shape 4 + InstallPrompt gating 5). Storico: 480 post-Sprint 2 → 509 post-Sprint 3 → 523 post-Sprint 4 (CLAUDE.md riportava 526 ma il vero baseline pre-Sprint-6 era 523) → 546 post-Sprint 6 → 555+ post-Sprint 5 PWA. Numero esatto da contare con un `npm test` fresco dopo i merge di Sprint 7.5 ops.
 - 7 suite e2e Playwright (`__tests__/e2e/*.spec.ts`) — al momento jest le scoopa per errore di config (issue pre-esistente, non bloccante per release)
 
+## Guardrail anti-ban e flag (7 set 2026)
+
+Logica pura in `app/lib/anti-ban.ts` (test in `__tests__/anti-ban.test.ts`), I/O in
+`first-contact.ts`, `suppressions.ts`, `opt-out.ts`, `custody-ack.ts`. Si applicano SOLO
+alle decisioni automatiche (orari calcolati dal calendario, riprogrammazioni del cron):
+l'orario scelto a mano dall'utente non viene mai toccato.
+
+- **Fascia di cortesia 08-21 Roma**: il calendar sposta gli invii fuori fascia (alle 08:00
+  o alle 20:00 della sera prima, mai oltre l'evento); il cron riprogramma "a domattina"
+  (08:00 + jitter) invece che a mezzanotte. Nella modale solo un avviso soft.
+- **Spread co-orari**: tre promemoria allo stesso istante → +0/+90/+180 s, deterministico.
+- **Rampa warm-up**: numero appena collegato → 5/5/10/15/25/35 al giorno nei primi 6 giorni
+  (`user_instances.connected_at`). `WARMUP_RAMP_DISABLED=true` la spegne.
+- **Corsia lenta numeri nuovi**: a chi non ha mai ricevuto un nostro messaggio e non è in
+  rubrica (whatsapp_contacts con sorgente non manuale) si scrive max `NEW_RECIPIENTS_PER_DAY`
+  (default 5) al giorno; il resto slitta a domattina col motivo in chiaro. Fail-open.
+  `NEW_RECIPIENTS_DISABLED=true` la spegne.
+- **Calendar dentro i freni del manuale**: niente self-target, MAX_PENDING (cap × 7),
+  destinatari sospesi saltati.
+- **"✅ Inviato a X!" per ogni invio è SPENTO** (raddoppiava il volume, violava il principio
+  silenzioso, creava la chat doppia "Nome (Tu)" sugli account @lid). `OWNER_SENT_NOTIFY_ENABLED=true` lo riaccende.
+- **MESSAGES_UPDATE** ora sottoscritto (lista unica in `app/lib/webhook-config.ts`); il
+  daily-report riallinea ogni giorno i webhook di tutte le istanze aperte
+  (`WEBHOOK_SELFHEAL_DISABLED=true` per fermarlo). Prima le spunte non potevano arrivare.
+- **Custody ack + opt-out: DIETRO FLAG finché la migration `20260907_custody_ack_optout.sql`
+  NON è applicata** (serve l'ok di Andrea). Poi: `CUSTODY_ACK_ENABLED=true` (SERVER_ACK →
+  `server_ack_at`, ERROR → `ack_error_at` + sospensione al 3° rifiuto in 7 gg) e
+  `OPT_OUT_ENABLED=true` (un "stop/basta" in arrivo sospende il destinatario e mette in pausa
+  i suoi pending; si legge il testo SOLO per la regex, mai salvato: aggiornare la privacy prima).
+
 ## Documenti canonici per AI sessions
 
 - **Questo file** (`CLAUDE.md`) — regole vive, stato, vincoli, cosa c'è in lista

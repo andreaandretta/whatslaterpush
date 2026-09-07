@@ -6,7 +6,10 @@ import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon
 import { isBillingEnabled, getEffectivePlan } from '../../../lib/billing';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
-import { reconcileRecurringChain, nextRomeMidnight } from '../../../lib/recurrence';
+import { reconcileRecurringChain } from '../../../lib/recurrence';
+import { effectiveDailyLimit, nextRomeMorning, newRecipientsPerDay, romeDayStart } from '../../../lib/anti-ban';
+import { isKnownRecipient, countNewRecipientsSentToday } from '../../../lib/first-contact';
+import { getSuppression, suppressionsEnabled, suppressionReasonText } from '../../../lib/suppressions';
 import { computeTypingDelay, sendTypingPresence } from '../../../lib/typing-presence';
 import { applyTemplateVariables } from '../../../lib/template-variables';
 import { logAuditEvent, hashContactRef } from '../../../lib/audit';
@@ -274,7 +277,7 @@ export async function GET(req: NextRequest) {
 
     const { data: pendingPool, error: queryErr } = await supabase
       .from('scheduled_messages')
-      .select('*, user_instances!inner(id, phone_number, instance_name, trial_ends_at, subscription_plan, connection_status, messages_sent_today, upsell_sent_today)')
+      .select('*, user_instances!inner(id, phone_number, instance_name, trial_ends_at, subscription_plan, connection_status, messages_sent_today, upsell_sent_today, connected_at)')
       .eq('status', 'pending')
       .lte('scheduled_at', new Date().toISOString())
       .order('scheduled_at', { ascending: true })
@@ -315,6 +318,7 @@ export async function GET(req: NextRequest) {
     // cap against DB-count + in-run-count.
     const inRunSendsToRecipient: Record<string, number> = {};
 
+    const inRunNewRecipients: Record<string, Set<string>> = {}; // corsia lenta numeri nuovi (per run)
     // Process messages in batches of 5 for speed (P11: avoid Vercel Hobby 10s timeout)
     const TIMEOUT_MS = 8000; // bail out before Vercel's 10s limit
     const messages = pendingMessages || [];
@@ -449,9 +453,17 @@ export async function GET(req: NextRequest) {
         // plan with the same || 'free' fallback as before.
         const plan = effectivePlan;
         const planLimits = getPlanLimits(plan);
+        // Rampa di warm-up (anti-ban, 7 set 2026): un numero appena collegato non
+        // parte col cap pieno del piano ma con 5/5/10/15/25/35 nei primi 6 giorni
+        // (Baileys #1983: 15-20 numeri nuovi al giorno da un'istanza fresca →
+        // restrizioni progressive e ban). WARMUP_RAMP_DISABLED=true la spegne.
+        const dailyLimit = process.env.WARMUP_RAMP_DISABLED === 'true'
+          ? planLimits.dailyLimit
+          : effectiveDailyLimit(planLimits.dailyLimit, msg.user_instances.connected_at, new Date());
+        const inWarmup = dailyLimit < planLimits.dailyLimit;
         const sentToday = msg.user_instances.messages_sent_today || 0;
-        if (sentToday >= planLimits.dailyLimit) {
-          console.log('CRON: DAILY LIMIT reached for ' + ownerPhone + ' (' + sentToday + '/' + planLimits.dailyLimit + ' plan=' + plan + ')');
+        if (sentToday >= dailyLimit) {
+          console.log('CRON: DAILY LIMIT reached for ' + ownerPhone + ' (' + sentToday + '/' + dailyLimit + ' plan=' + plan + (inWarmup ? ' warmup' : '') + ')');
           // Head-of-line fix (runbook §2): left at its old scheduled_at the row
           // re-enters the limit(25) oldest-first window on every tick until
           // midnight — a couple of over-quota users starve everyone else's
@@ -459,8 +471,8 @@ export async function GET(req: NextRequest) {
           // a backlog doesn't burst at 00:00 sharp); it could not have sent
           // before the reset anyway, so delivery timing is unchanged.
           await supabase.from('scheduled_messages').update({
-            scheduled_at: applyJitter(nextRomeMidnight(new Date()).toISOString(), 30 * 60_000),
-            error_message: 'Limite giornaliero raggiunto (' + sentToday + '/' + planLimits.dailyLimit + ') — riprogrammato dopo il reset di mezzanotte',
+            scheduled_at: applyJitter(nextRomeMorning(new Date()).toISOString(), 30 * 60_000),
+            error_message: 'Limite giornaliero raggiunto (' + sentToday + '/' + dailyLimit + ')' + (inWarmup ? ' nei primi giorni dal collegamento' : '') + ' — riprogrammato a domattina',
           }).eq('id', msg.id);
           return 'rate_limited' as const;
         }
@@ -491,6 +503,45 @@ export async function GET(req: NextRequest) {
           return 'rate_limited' as const;
         }
 
+        // Destinatario sospeso (ha scritto "stop", oppure WhatsApp ha rifiutato
+        // 3 messaggi verso di lui): la riga va in pausa con il motivo, mai inviata.
+        if (suppressionsEnabled()) {
+          const sup = await getSuppression(supabase, ownerPhone, msg.recipient_number);
+          if (sup) {
+            await supabase.from('scheduled_messages')
+              .update({ status: 'paused', error_message: suppressionReasonText(sup.reason) })
+              .eq('id', msg.id).eq('status', 'pending');
+            console.log('CRON: SUPPRESSED recipient for ' + ownerPhone + ' reason=' + sup.reason);
+            return 'skipped' as const;
+          }
+        }
+
+        // Corsia lenta per i numeri NUOVI (anti-ban, 7 set 2026): a un numero che
+        // l'utente non ha mai scritto e che non ha in rubrica si scrive al massimo
+        // N volte al giorno (default 5, env NEW_RECIPIENTS_PER_DAY). Nessuna
+        // domanda a nessuno: la riga slitta a domattina con il motivo in chiaro.
+        // Per l'ICP D (rubrica già piena) non scatta quasi mai; per un calendario
+        // importato in blocco è la differenza tra 5 e 50 sconosciuti al giorno.
+        if (process.env.NEW_RECIPIENTS_DISABLED !== 'true') {
+          const known = await isKnownRecipient(supabase, ownerPhone, msg.recipient_number);
+          if (!known) {
+            const todayStartIso = romeDayStart(new Date()).toISOString();
+            const inRun = inRunNewRecipients[ownerPhone] || (inRunNewRecipients[ownerPhone] = new Set<string>());
+            const newToday = await countNewRecipientsSentToday(supabase, ownerPhone, todayStartIso);
+            const inRunOthers = inRun.has(msg.recipient_number) ? inRun.size - 1 : inRun.size;
+            const cap = newRecipientsPerDay();
+            if (newToday + inRunOthers >= cap) {
+              console.log('CRON: NEW-RECIPIENT LANE full for ' + ownerPhone + ' (' + (newToday + inRunOthers) + '/' + cap + ')');
+              await supabase.from('scheduled_messages').update({
+                scheduled_at: applyJitter(nextRomeMorning(new Date()).toISOString(), 30 * 60_000),
+                error_message: 'Numeri nuovi: massimo ' + cap + ' al giorno a chi non ti ha mai scritto — riprogrammato a domattina',
+              }).eq('id', msg.id);
+              return 'rate_limited' as const;
+            }
+            inRun.add(msg.recipient_number);
+          }
+        }
+
         const isBlocked = await checkFailures(supabase, ownerPhone);
         if (isBlocked) {
           // Move the blocked user's row past the Rome-midnight reset so it
@@ -499,8 +550,8 @@ export async function GET(req: NextRequest) {
           // -line fix as the daily-limit branch above). Notify the owner ONCE
           // per cron run, with a timeout so a hung socket can't burn the batch.
           await supabase.from('scheduled_messages').update({
-            scheduled_at: applyJitter(nextRomeMidnight(new Date()).toISOString(), 30 * 60_000),
-            error_message: 'Invii sospesi (troppi fallimenti nelle ultime 24h) \u2014 riprogrammato dopo il reset di mezzanotte',
+            scheduled_at: applyJitter(nextRomeMorning(new Date()).toISOString(), 30 * 60_000),
+            error_message: 'Invii sospesi (troppi fallimenti nelle ultime 24h) \u2014 riprogrammato a domattina',
           }).eq('id', msg.id);
           if (!blockedNotifiedInstances.has(instanceName)) {
             blockedNotifiedInstances.add(instanceName);
@@ -525,8 +576,8 @@ export async function GET(req: NextRequest) {
           // Reschedule out of the window too \u2014 otherwise a rate-limited row
           // sits at its stale scheduled_at and re-enters limit(25) each tick.
           await supabase.from('scheduled_messages').update({
-            scheduled_at: applyJitter(nextRomeMidnight(new Date()).toISOString(), 30 * 60_000),
-            error_message: 'Rate limit raggiunto \u2014 riprogrammato dopo il reset di mezzanotte',
+            scheduled_at: applyJitter(nextRomeMorning(new Date()).toISOString(), 30 * 60_000),
+            error_message: 'Rate limit raggiunto \u2014 riprogrammato a domattina',
           }).eq('id', msg.id);
           return 'rate_limited' as const;
         }
@@ -551,7 +602,7 @@ export async function GET(req: NextRequest) {
         // concurrent send took the last slot) -> release the processing lock back
         // to pending and rate-limit. Refunded in the catch if the send fails.
         const { data: claimedQuota, error: quotaErr } = await supabase
-          .rpc('claim_daily_quota', { p_phone: ownerPhone, p_limit: planLimits.dailyLimit });
+          .rpc('claim_daily_quota', { p_phone: ownerPhone, p_limit: dailyLimit });
         if (quotaErr || claimedQuota == null) {
           // Requeue: clear send_attempted_at so the released row does not carry a
           // stale timestamp into its next attempt (see buildQuotaRequeueUpdate).
@@ -559,7 +610,7 @@ export async function GET(req: NextRequest) {
           // Rome-midnight reset (head-of-line, runbook §2). A transient RPC
           // error is NOT a quota verdict: plain requeue, retried next tick.
           await supabase.from('scheduled_messages').update(buildQuotaRequeueUpdate(
-            quotaErr ? undefined : applyJitter(nextRomeMidnight(new Date()).toISOString(), 30 * 60_000)
+            quotaErr ? undefined : applyJitter(nextRomeMorning(new Date()).toISOString(), 30 * 60_000)
           )).eq('id', msg.id);
           console.log('CRON: quota exhausted (atomic) for ' + ownerPhone + ' plan=' + plan + (quotaErr ? ' err=' + quotaErr.message : ''));
           return 'rate_limited' as const;
@@ -757,13 +808,21 @@ export async function GET(req: NextRequest) {
           } catch (e) {}
         }
 
-        try {
-          await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
-            method: 'POST',
-            headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ number: ownerPhone, text: '\u2705 Inviato a ' + (msg.recipient_name || msg.recipient_number) + '!' })
-          });
-        } catch (notifyErr) {}
+        // 2026-09-07: la conferma "✅ Inviato a X!" a OGNI invio riuscito è
+        // spenta di default. Raddoppiava il volume in uscita dal numero
+        // dell'utente (un promemoria = due messaggi), contraddiceva il
+        // principio silenzioso (CLAUDE.md) e, sugli account passati al nuovo
+        // identificativo @lid, creava una seconda chat "Nome (Tu)" sul telefono
+        // (vault, diagnosi 6 set). Resta dietro flag per un opt-in futuro.
+        if (process.env.OWNER_SENT_NOTIFY_ENABLED === 'true') {
+          try {
+            await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
+              method: 'POST',
+              headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ number: ownerPhone, text: '\u2705 Inviato a ' + (msg.recipient_name || msg.recipient_number) + '!' })
+            });
+          } catch (notifyErr) {}
+        }
         return 'sent' as const;
       }));
 

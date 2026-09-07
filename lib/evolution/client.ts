@@ -5,6 +5,7 @@
  */
 
 import { EvolutionInstance, EvolutionMessage, ConnectResponse } from '@/types'
+import { WEBHOOK_EVENTS } from '../../app/lib/webhook-config'
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY
@@ -178,14 +179,7 @@ class EvolutionClient {
   async setWebhook(
     instanceName: string,
     webhookUrl: string,
-    events: string[] = [
-      'MESSAGES_UPSERT',
-      'CONTACTS_SET',
-      'CONTACTS_UPSERT',
-      'CONTACTS_UPDATE',
-      'MESSAGING_HISTORY_SET',
-      'CONNECTION_UPDATE',
-    ]
+    events: string[] = WEBHOOK_EVENTS
   ): Promise<void> {
     await this.request(`/webhook/set/${instanceName}`, {
       method: 'POST',

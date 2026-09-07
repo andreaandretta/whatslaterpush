@@ -242,7 +242,7 @@ describe('POST /api/auth/init — niente codice morto', () => {
     expect(parsed.webhook.headers).toEqual({ 'x-webhook-secret': 'whsec-test' });
     // toEqual ESATTO, non arrayContaining: un solo evento extra fuori enum
     // farebbe 400-are l'intera config in prod — il superset è la regressione.
-    expect(parsed.webhook.events).toEqual(['MESSAGES_UPSERT', 'CONTACTS_SET', 'CONTACTS_UPSERT', 'CONTACTS_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED']);
+    expect(parsed.webhook.events).toEqual(['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONTACTS_SET', 'CONTACTS_UPSERT', 'CONTACTS_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED']); // MESSAGES_UPDATE dal 7 set 2026 (ricevute)
   });
 
   test('payload /instance/create: blocco webhook con chiavi v2 e senza MESSAGING_HISTORY_SET', async () => {
@@ -263,7 +263,7 @@ describe('POST /api/auth/init — niente codice morto', () => {
     expect(parsed.webhook.base64).toBe(false);
     expect(parsed.webhook.webhook_by_events).toBeUndefined();
     // toEqual ESATTO (vedi test setWebhook): il superset È la regressione.
-    expect(parsed.webhook.events).toEqual(['MESSAGES_UPSERT', 'CONTACTS_SET', 'CONTACTS_UPSERT', 'CONTACTS_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED']);
+    expect(parsed.webhook.events).toEqual(['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONTACTS_SET', 'CONTACTS_UPSERT', 'CONTACTS_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED']); // MESSAGES_UPDATE dal 7 set 2026 (ricevute)
   });
 
   // Il guard #8 scatta su QUALSIASI row user_instances esistente e il cookie

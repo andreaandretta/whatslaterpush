@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchDropletMetrics, fetchDropletHistory24h } from '../../../lib/droplet';
 import { stampHeartbeat } from '../../../lib/heartbeat';
-import { getSupabaseAdmin } from '../../../lib/supabase-admin';
+import { getSupabaseAdmin, getSupabaseAdminOrNull } from '../../../lib/supabase-admin';
+import { refreshWebhooksForOpenInstances } from '../../../lib/webhook-config';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
@@ -256,9 +257,19 @@ export async function GET(req: NextRequest) {
     await sendReportWhatsApp(text);
 
     // Housekeeping: prune audit_events older than retention window.
+    // Auto-riparazione webhook (7 set 2026): riallinea gli eventi sottoscritti
+    // (MESSAGES_UPDATE incluso) su tutte le istanze aperte, una volta al giorno.
+    let webhooksRefreshed: { ok: number; failed: number; skipped: boolean } = { ok: 0, failed: 0, skipped: true };
+    try {
+      const admin = getSupabaseAdminOrNull();
+      if (admin) webhooksRefreshed = await refreshWebhooksForOpenInstances(admin);
+    } catch (e) {
+      console.error('[daily-report] webhook self-heal failed:', (e as any)?.message || e);
+    }
+
     const pruned = await pruneOldAuditEvents();
 
-    return NextResponse.json({ status: 'ok', report, audit_pruned: pruned });
+    return NextResponse.json({ status: 'ok', report, audit_pruned: pruned, webhooks_refreshed: webhooksRefreshed });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'Report failed' }, { status: 500 });
   }

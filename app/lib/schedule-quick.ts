@@ -34,6 +34,18 @@ export function formatSendCta(scheduled: Date, now: Date = new Date()): string {
   return `Invia ${format(scheduled, 'EEE d MMM', { locale: it })} alle ${time}`;
 }
 
+/**
+ * Avviso soft (solo testo, nessun blocco) quando l'orario scelto a mano cade
+ * fuori dalla fascia 08-21: l'utente resta libero, ma sa che chi riceve
+ * potrebbe dormire. Speculare alla fascia di cortesia degli invii automatici
+ * (app/lib/anti-ban.ts), che invece sposta l'orario da sola.
+ */
+export function courtesyHint(scheduled: Date): string | null {
+  const h = scheduled.getHours();
+  if (h >= 8 && h < 21) return null;
+  return `Alle ${format(scheduled, 'H:mm')} chi riceve potrebbe dormire: i promemoria di solito si mandano tra le 8 e le 21.`;
+}
+
 export interface QuickDateChip {
   label: string;
   date: Date;

@@ -11,6 +11,7 @@
 import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { normalizeItalianPhone } from './phone';
+import { applyCourtesyWindow, spreadCoTimed, romeParts, romeWallClockToUtc } from './anti-ban';
 
 // ── Types ──
 
@@ -146,24 +147,8 @@ export function cleanRecipientName(
 
 // ── Event start / send time ──
 
-// Europe/Rome wall-clock helpers — same DST-correct pattern as the private
-// helpers in recurrence.ts (kept private there; small enough to mirror).
-function romeParts(d: Date): { y: number; mo: number; dd: number; h: number; mi: number; s: number } {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Europe/Rome', hourCycle: 'h23',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(d);
-  const g = (t: string) => Number(parts.find(p => p.type === t)!.value);
-  return { y: g('year'), mo: g('month'), dd: g('day'), h: g('hour'), mi: g('minute'), s: g('second') };
-}
-
-function romeWallClockToUtc(y: number, mo: number, dd: number, h: number, mi: number, s: number): Date {
-  const guess = Date.UTC(y, mo - 1, dd, h, mi, s);
-  const p = romeParts(new Date(guess));
-  const romeAsUtc = Date.UTC(p.y, p.mo - 1, p.dd, p.h, p.mi, p.s);
-  return new Date(guess - (romeAsUtc - guess));
-}
+// Europe/Rome wall-clock helpers (romeParts / romeWallClockToUtc) live in
+// app/lib/anti-ban.ts, shared with the send cron — imported above.
 
 export function eventStartOf(event: Pick<CalendarEvent, 'start'>): Date | null {
   const start = event.start;
@@ -188,7 +173,11 @@ export function computeSendAt(eventStart: Date, offsetMinutes: number, now: Date
     // Too close (or past) but the event is still ahead → send shortly.
     return new Date(now.getTime() + CLAMP_DELAY_MS);
   }
-  return sendAt;
+  // Fascia di cortesia 08-21 Roma (anti-ban): un evento alle 07:00 con anticipo
+  // di un'ora NON manda un WhatsApp alle 06:00 — va alle 20:00 della sera
+  // prima. Il clamp qui sopra resta fuori: è l'utente che ha appena creato
+  // l'evento. Vedi applyCourtesyWindow per le regole.
+  return applyCourtesyWindow(sendAt, now, eventStart);
 }
 
 // ── Message rendering ──
@@ -254,6 +243,10 @@ export function diffEventsToActions(args: {
   // (no phone, already started, broken start) is NOT treated as removed.
   const activeKeys = new Set<string>();
 
+  // Pass 1: collect schedulable candidates (provenance gate, phone, send time).
+  type Candidate = { key: string; sendAt: Date; text: string; name: string | null; phone: string };
+  const candidates: Candidate[] = [];
+
   for (const event of events) {
     if (!event?.id) continue;
     if (event.status === 'cancelled') continue; // treated as removed below
@@ -280,7 +273,15 @@ export function diffEventsToActions(args: {
       data,
       ora,
     });
+    candidates.push({ key, sendAt, text, name, phone: extracted.phone });
+  }
 
+  // Pass 2 (anti-ban): three appointments at 10:00 must not become three sends
+  // at the same second (5-parallel batch, same IP). Deterministic 90 s slots
+  // per shared instant, ordered by key, so a re-sync recomputes the SAME
+  // instants (no UPDATE churn) — see spreadCoTimed in app/lib/anti-ban.ts.
+  for (const c of spreadCoTimed(candidates)) {
+    const { key, sendAt, text, name, phone } = c;
     const existing = rowByKey.get(key);
     if (!existing) {
       if (inserts.length >= MAX_INSERTS_PER_SYNC) {
@@ -289,7 +290,7 @@ export function diffEventsToActions(args: {
       }
       inserts.push({
         instance_phone: connection.user_phone,
-        recipient_number: extracted.phone,
+        recipient_number: phone,
         recipient_name: name,
         parsed_message: text,
         caption: text,

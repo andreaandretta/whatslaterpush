@@ -7,6 +7,7 @@ const PUBLIC_PATHS = [
   '/login',
   '/privacy',
   '/terms',
+  '/cookie',
   '/monitoring',
   // PWA artifacts. The matcher below already excludes them so they never
   // hit this function in practice, but listing them here is a safety net
