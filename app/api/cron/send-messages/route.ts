@@ -277,7 +277,7 @@ export async function GET(req: NextRequest) {
 
     const { data: pendingPool, error: queryErr } = await supabase
       .from('scheduled_messages')
-      .select('*, user_instances!inner(id, phone_number, instance_name, trial_ends_at, subscription_plan, connection_status, messages_sent_today, upsell_sent_today, connected_at)')
+      .select('*, user_instances!inner(id, phone_number, instance_name, trial_ends_at, subscription_plan, connection_status, messages_sent_today, upsell_sent_today, paired_at)')
       .eq('status', 'pending')
       .lte('scheduled_at', new Date().toISOString())
       .order('scheduled_at', { ascending: true })
@@ -459,7 +459,7 @@ export async function GET(req: NextRequest) {
         // restrizioni progressive e ban). WARMUP_RAMP_DISABLED=true la spegne.
         const dailyLimit = process.env.WARMUP_RAMP_DISABLED === 'true'
           ? planLimits.dailyLimit
-          : effectiveDailyLimit(planLimits.dailyLimit, msg.user_instances.connected_at, new Date());
+          : effectiveDailyLimit(planLimits.dailyLimit, msg.user_instances.paired_at, new Date());
         const inWarmup = dailyLimit < planLimits.dailyLimit;
         const sentToday = msg.user_instances.messages_sent_today || 0;
         if (sentToday >= dailyLimit) {
