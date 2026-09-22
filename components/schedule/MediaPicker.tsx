@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { Paperclip, Image as ImageIcon, Video, FileText, Mic, X, Loader2, AlertCircle } from 'lucide-react';
+import { pickUploadRoute, shouldCompressImage, fitWithin, uploadErrorMessage, IMAGE_JPEG_QUALITY } from '../../app/lib/upload-limits';
 
 export interface MediaAttachment {
   media_url: string;          // Supabase Storage path returned by /api/messages/upload
@@ -17,6 +18,65 @@ interface Props {
 }
 
 const MAX_MB = 16;
+
+// Foto grandi (una foto del telefono pesa 3-8 MB) vengono ridotte nel browser a
+// 1600 px sul lato lungo e ricodificate JPEG: WhatsApp stesso le comprime così.
+// Se il browser non sa decodificare il file (HEIC, formati strani) si tiene
+// l'originale: mai bloccare l'invio per la compressione.
+async function compressImage(file: File): Promise<File> {
+  if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const { width, height } = fitWithin(bitmap.width, bitmap.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close?.();
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', IMAGE_JPEG_QUALITY));
+    if (!blob || blob.size === 0 || blob.size >= file.size) return file;
+    const name = file.name.replace(/\.(png|webp|jpeg|jpg)$/i, '') + '.jpg';
+    return new File([blob], name, { type: 'image/jpeg' });
+  } catch {
+    return file;
+  }
+}
+
+// La piattaforma (Vercel) risponde 413 in testo semplice ai corpi troppo grandi:
+// non è JSON e prima faceva esplodere res.json() con "Unexpected token 'R'".
+async function readJsonSafe(res: Response): Promise<any> {
+  try { return await res.json(); } catch { return null; }
+}
+
+/** Carica il file: multipart per i piccoli, URL firmata diretta su Storage per i grandi. */
+async function uploadFile(file: File, signal: AbortSignal): Promise<{ ok: true; att: MediaAttachment } | { ok: false; message: string }> {
+  if (pickUploadRoute(file.size) === 'multipart') {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch('/api/messages/upload', { method: 'POST', body: formData, signal });
+    const body = await readJsonSafe(res);
+    if (!res.ok) return { ok: false, message: uploadErrorMessage(res.status, body, MAX_MB) };
+    return { ok: true, att: { media_url: body.media_url, media_type: body.media_type, media_filename: body.media_filename, bytes: file.size } };
+  }
+  // Grande: chiedo una URL firmata e mando i byte direttamente a Supabase Storage.
+  const signRes = await fetch('/api/messages/upload/sign', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: file.name, mime: file.type, size: file.size }),
+    signal,
+  });
+  const sign = await readJsonSafe(signRes);
+  if (!signRes.ok || !sign?.signed_url) return { ok: false, message: uploadErrorMessage(signRes.status, sign, MAX_MB) };
+  const put = await fetch(sign.signed_url, {
+    method: 'PUT',
+    headers: { 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': 'false' },
+    body: file,
+    signal,
+  });
+  if (!put.ok) return { ok: false, message: put.status === 413 ? uploadErrorMessage(413, null, MAX_MB) : 'Errore upload' };
+  return { ok: true, att: { media_url: sign.media_url, media_type: sign.media_type, media_filename: sign.media_filename, bytes: file.size } };
+}
 
 const KIND_TO_ACCEPT: Record<string, string> = {
   image: 'image/jpeg,image/png,image/gif,image/webp',
@@ -73,38 +133,27 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
     setTimeout(() => fileRef.current?.click(), 0);
   }
 
-  async function onFile(file: File) {
+  async function onFile(original: File) {
     setErr(null);
-    if (file.size > MAX_MB * 1024 * 1024) {
-      setErr(`File troppo grande (max ${MAX_MB}MB).`);
-      return;
-    }
     setUploading(true);
     const ctrl = new AbortController();
     uploadRef.current = ctrl;
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await fetch('/api/messages/upload', {
-        method: 'POST',
-        body: formData,
-        signal: ctrl.signal,
-      });
-      const body = await res.json();
-      if (ctrl.signal.aborted) return; // picker chiuso nel frattempo: scarta il risultato
-      if (!res.ok) {
-        setErr(body.error === 'file_too_large' ? `Max ${body.limit_mb || MAX_MB}MB.` :
-                body.error === 'unsupported_mime' ? 'Tipo di file non supportato.' :
-                body.error || 'Errore upload');
+      const file = shouldCompressImage(original.type, original.size) ? await compressImage(original) : original;
+      if (ctrl.signal.aborted) return;
+      if (file.size > MAX_MB * 1024 * 1024) {
+        setErr(`File troppo grande (max ${MAX_MB}MB).`);
         setUploading(false);
         return;
       }
-      onAttached({
-        media_url: body.media_url,
-        media_type: body.media_type,
-        media_filename: body.media_filename,
-        bytes: body.bytes,
-      });
+      const result = await uploadFile(file, ctrl.signal);
+      if (ctrl.signal.aborted) return; // picker chiuso nel frattempo: scarta il risultato
+      if (!result.ok) {
+        setErr(result.message);
+        setUploading(false);
+        return;
+      }
+      onAttached(result.att);
       setUploading(false);
       onClose();
     } catch (e) {

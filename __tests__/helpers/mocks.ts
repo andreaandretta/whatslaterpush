@@ -14,9 +14,21 @@ export interface MockSupabaseCall {
 export function createMockSupabase() {
   const calls: MockSupabaseCall[] = [];
   const responseMap = new Map<string, any>();
+  // Handler dinamico per 'tabella:operazione': viene chiamato a ogni esecuzione
+  // della catena, quindi può rispondere in modo diverso alla 1ª e alla 2ª chiamata
+  // (serve ai test di retry). Ha la precedenza su setResponse.
+  const handlerMap = new Map<string, (call: MockSupabaseCall) => { data: any; error: any }>();
 
+  // Vince l'ultima impostazione: un setResponse cancella l'handler della stessa
+  // chiave e viceversa, così un handler messo da un test non contamina il successivo.
   function setResponse(key: string, data: any, error: any = null, extra: Record<string, any> = {}) {
+    handlerMap.delete(key);
     responseMap.set(key, { data, error, ...extra });
+  }
+
+  function setHandler(key: string, handler: (call: MockSupabaseCall) => { data: any; error: any }) {
+    responseMap.delete(key);
+    handlerMap.set(key, handler);
   }
 
   function makeChain(table: string, operation: string, args: any[]) {
@@ -30,7 +42,8 @@ export function createMockSupabase() {
 
     const originalResponse = () => {
       const key = `${table}:${operation}`;
-      const resp = responseMap.get(key) || defaultResponse;
+      const handler = handlerMap.get(key);
+      const resp = handler ? handler(call) : (responseMap.get(key) || defaultResponse);
       // .range(from, to) → come PostgREST: fetta dell'array (serve ai test di paginazione).
       const range = call.chain.find((m) => m.method === 'range');
       if (range && Array.isArray(resp.data)) {
@@ -131,7 +144,7 @@ export function createMockSupabase() {
     removeChannel: () => {},
   };
 
-  return { client, calls, setResponse, setRpcResponse, setRpcHandler, setStorageResponse };
+  return { client, calls, setResponse, setHandler, setRpcResponse, setRpcHandler, setStorageResponse };
 }
 
 // Fetch mock helper

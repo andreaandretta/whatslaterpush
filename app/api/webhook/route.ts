@@ -28,6 +28,11 @@ const supabase = createClient(
 // numbers and recipient names never reach `webhook_logs.data` in cleartext.
 // String payloads pass through (callers building free-form strings own their
 // own PII discipline) — the 2000-char cap is a last-resort safety net.
+// Ricevute (messages.update): tentativi di abbinamento con la riga inviata.
+const RECEIPT_MATCH_ATTEMPTS = 3;
+const RECEIPT_RETRY_DELAY_MS = 1200;
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 async function dbLog(tag: string, data: any) {
   try {
     let text: string;
@@ -1049,23 +1054,44 @@ export async function POST(req) {
 
         // delivered_at: set if missing for both DELIVERY_ACK and READ
         // (READ implies DELIVERED on WhatsApp).
-        const { data: delRows } = await supabase
-          .from('scheduled_messages')
-          .update({ delivered_at: nowIso })
-          .eq('evolution_message_id', msgId)
-          .is('delivered_at', null)
-          .select('id');
-        if (delRows?.length) touched += delRows.length;
-
-        if (status === 4) {
-          const { data: readRows } = await supabase
+        //
+        // Corsa con il cron (22 set 2026, primo messaggio dopo il fix delle
+        // stringhe): la ricevuta arriva nello stesso secondo dell'invio, PRIMA
+        // che il cron abbia scritto evolution_message_id → 0 righe. Se non
+        // troviamo nulla aspettiamo un attimo e riproviamo: entro 1-2 s l'id c'è.
+        let rowsForThis = 0;
+        for (let attempt = 0; attempt < RECEIPT_MATCH_ATTEMPTS; attempt++) {
+          if (attempt > 0) await sleep(RECEIPT_RETRY_DELAY_MS);
+          const { data: delRows } = await supabase
             .from('scheduled_messages')
-            .update({ read_at: nowIso })
+            .update({ delivered_at: nowIso })
             .eq('evolution_message_id', msgId)
-            .is('read_at', null)
+            .is('delivered_at', null)
             .select('id');
-          if (readRows?.length) touched += readRows.length;
+          if (delRows?.length) rowsForThis += delRows.length;
+
+          if (status === 4) {
+            const { data: readRows } = await supabase
+              .from('scheduled_messages')
+              .update({ read_at: nowIso })
+              .eq('evolution_message_id', msgId)
+              .is('read_at', null)
+              .select('id');
+            if (readRows?.length) rowsForThis += readRows.length;
+          }
+          if (rowsForThis > 0) break;
+          // 0 righe: o la spunta era già segnata (idempotenza) o la riga non ha
+          // ancora l'id. Si riprova solo nel secondo caso.
+          const { data: existing } = await supabase
+            .from('scheduled_messages')
+            .select('id')
+            .eq('evolution_message_id', msgId)
+            .limit(1);
+          if (existing && existing.length > 0) break;
         }
+        touched += rowsForThis;
+        // Diagnostica senza PII: solo stato e conteggio (niente id, numeri o testi).
+        void dbLog('MSG_STATUS', { status, matched: rowsForThis });
       }
       console.log('WEBHOOK: messages.update rows_touched=' + touched);
       return NextResponse.json({ ok: true, touched });

@@ -71,4 +71,50 @@ describe('MediaPicker', () => {
     rerender(<MediaPicker open={true} onClose={() => {}} onAttached={() => {}} />);
     expect(screen.queryByText(/Errore di rete/i)).not.toBeInTheDocument();
   });
+
+  // 22 set 2026: foto grandi → Vercel risponde 413 in testo semplice ("Request
+  // Entity Too Large"); res.json() esplodeva con "Unexpected token 'R'".
+  test('a platform 413 with a non-JSON body shows a clear message instead of crashing', async () => {
+    (global as any).fetch = jest.fn().mockResolvedValue({
+      ok: false, status: 413,
+      json: () => Promise.reject(new SyntaxError("Unexpected token 'R', \"Request En\"... is not valid JSON")),
+    });
+    const onAttached = jest.fn();
+    const { container } = render(<MediaPicker open={true} onClose={() => {}} onAttached={onAttached} />);
+    await act(async () => {
+      fireEvent.change(fileInput(container), { target: { files: [new File(['x'], 'y.pdf', { type: 'application/pdf' })] } });
+    });
+    await waitFor(() => expect(screen.getByText(/troppo grande/i)).toBeInTheDocument());
+    expect(onAttached).not.toHaveBeenCalled();
+  });
+
+  test('files above the Vercel body limit go through the signed URL and a direct PUT to Storage', async () => {
+    const calls: Array<{ url: string; method?: string }> = [];
+    (global as any).fetch = jest.fn((url: string, opts: any) => {
+      calls.push({ url: String(url), method: opts?.method });
+      if (String(url) === '/api/messages/upload/sign') {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({
+          signed_url: 'https://x.supabase.co/storage/v1/object/upload/sign/message-media/p?token=t',
+          media_url: '39333/uuid-big.pdf', media_type: 'document', media_filename: 'big.pdf',
+        }) });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+    });
+    const onAttached = jest.fn();
+    const { container } = render(<MediaPicker open={true} onClose={() => {}} onAttached={onAttached} />);
+    const big = new File([new Uint8Array(6 * 1024 * 1024)], 'big.pdf', { type: 'application/pdf' });
+    await act(async () => { fireEvent.change(fileInput(container), { target: { files: [big] } }); });
+    await waitFor(() => expect(onAttached).toHaveBeenCalledTimes(1));
+    expect(calls.map((c) => c.url)).toEqual(['/api/messages/upload/sign', 'https://x.supabase.co/storage/v1/object/upload/sign/message-media/p?token=t']);
+    expect(calls[1].method).toBe('PUT');
+    expect(onAttached.mock.calls[0][0]).toMatchObject({ media_url: '39333/uuid-big.pdf', media_type: 'document', bytes: 6 * 1024 * 1024 });
+  });
+
+  test('small files still use the multipart route', async () => {
+    const urls: string[] = [];
+    (global as any).fetch = jest.fn((url: string) => { urls.push(String(url)); return Promise.resolve({ ok: true, status: 200, json: async () => ({ media_url: 'p', media_type: 'document', media_filename: 's.pdf', bytes: 3 }) }); });
+    const { container } = render(<MediaPicker open={true} onClose={() => {}} onAttached={() => {}} />);
+    await act(async () => { fireEvent.change(fileInput(container), { target: { files: [new File(['abc'], 's.pdf', { type: 'application/pdf' })] } }); });
+    await waitFor(() => expect(urls).toEqual(['/api/messages/upload']));
+  });
 });

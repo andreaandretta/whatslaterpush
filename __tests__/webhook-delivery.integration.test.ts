@@ -80,6 +80,27 @@ describe('Webhook messages.update', () => {
     expect(mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'update')).toHaveLength(0);
   });
 
+  // 22 set 2026, primo messaggio dopo il fix: la ricevuta è arrivata nello stesso
+  // secondo dell'invio, PRIMA che il cron avesse salvato evolution_message_id →
+  // rows_touched=0 e spunta persa. Il webhook deve riprovare dopo una pausa.
+  test('receipt arriving before the cron stored the id: retries after a pause and matches', async () => {
+    let calls = 0;
+    mockSupa.setHandler('scheduled_messages:update', () => {
+      calls += 1;
+      return calls === 1 ? { data: [], error: null } : { data: [{ id: 'late-row' }], error: null };
+    });
+    // al primo giro la riga non ha ancora l'id (il cron non l'ha scritto)
+    mockSupa.setHandler('scheduled_messages:select', () => ({ data: [], error: null }));
+    const res = await postWebhook({
+      event: 'messages.update',
+      instance: 'user_393331112222',
+      data: { keyId: 'EVO_LATE', remoteJid: '393401234567@s.whatsapp.net', fromMe: true, status: 'DELIVERY_ACK' },
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).touched).toBe(1);
+    expect(calls).toBe(2);
+  });
+
   test('Evolution v2 payload: status "READ" sets delivered_at and read_at', async () => {
     mockSupa.setResponse('scheduled_messages:update', [{ id: 'row-evo-2' }]);
     const res = await postWebhook({
@@ -167,6 +188,8 @@ describe('Webhook messages.update', () => {
   test('idempotent: .is(field, null) prevents overwriting already-set timestamps', async () => {
     // Simulate: row already has delivered_at set → .is('delivered_at', null) → 0 rows updated.
     mockSupa.setResponse('scheduled_messages:update', []);
+    // la riga ESISTE (spunta già segnata): nessun retry
+    mockSupa.setResponse('scheduled_messages:select', [{ id: 'EXISTS' }]);
 
     const res = await postWebhook(makeUpdatePayload({
       instance: 'X',
