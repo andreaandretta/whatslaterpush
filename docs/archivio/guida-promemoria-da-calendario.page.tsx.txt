@@ -1,0 +1,195 @@
+// ARCHIVIATA il 21 set 2026 — guida pubblica mai andata online.
+// Motivo: Andrea ha deciso di ritirare Google Calendar sync (flag CALENDAR_SYNC_ENABLED).
+// Contiene la tabella di confronto dei concorrenti italiani (dati letti il 15 set 2026).
+// Per riusarla: riportarla in app/<slug>/page.tsx e rimettere la voce in app/lib/site.ts.
+// Estensione .txt di proposito: come .tsx fuori da app/ romperebbe tsc.
+
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import GuideLayout, { GuideCta } from '../components/GuideLayout';
+import { GUIDE_PAGES, siteUrl, type FaqItem } from '../lib/site';
+
+const page = GUIDE_PAGES[0];
+
+export const metadata: Metadata = {
+  title: `${page.title} — WhatsLater`,
+  description: page.description,
+  alternates: { canonical: `${siteUrl()}${page.path}` },
+  openGraph: { title: page.title, description: page.description, type: 'article', locale: 'it_IT' },
+};
+
+// Dati letti sui siti pubblici dei servizi il 15 settembre 2026 (schede in
+// AndreaVault/Projects/WhatsLater/dati/concorrenti-italiani-2026-09-15.json).
+// Solo caratteristiche strutturali, niente prezzi: invecchiano e non servono al
+// confronto. Ricontrollo trimestrale; se un dato cambia va corretto qui e nella
+// data in testa alla tabella.
+const COMPARISON_DATE = '15 settembre 2026';
+const comparison: { name: string; free: string; waInFree: string; gcalInFree: string; number: string; self?: boolean }[] = [
+  {
+    name: 'WhatsLater',
+    free: 'Sì, per sempre',
+    waInFree: '3 al giorno',
+    gcalInFree: 'Sì',
+    number: 'Dal tuo numero: personale, WhatsApp Business o fisso',
+    self: true,
+  },
+  {
+    name: 'RicordamiApp',
+    free: 'No (prova 14 giorni)',
+    waInFree: '—',
+    gcalInFree: '—',
+    number: 'Numero dedicato del servizio',
+  },
+  {
+    name: 'PrenotaLink',
+    free: 'Sì, ma senza WhatsApp',
+    waInFree: 'No (solo email)',
+    gcalInFree: 'No',
+    number: 'Numero dedicato del servizio',
+  },
+  {
+    name: 'NotifAI',
+    free: 'Sì',
+    waInFree: 'Solo 50 "inviti" al mese, senza promemoria automatici',
+    gcalInFree: 'Non verificato nel gratuito',
+    number: 'Non dichiarato',
+  },
+  {
+    name: 'StudioReminder',
+    free: 'No (prova 15 giorni)',
+    waInFree: '—',
+    gcalInFree: '—',
+    number: 'Non dichiarato',
+  },
+  {
+    name: 'SendApp',
+    free: 'No (prova 7 giorni)',
+    waInFree: '—',
+    gcalInFree: '—',
+    number: 'Dal tuo numero, via API Meta o WhatsApp Web',
+  },
+  {
+    name: 'Nibax GARC',
+    free: 'Prova di un mese su richiesta, con firma pubblicitaria in ogni messaggio',
+    waInFree: 'Fino a 10 appuntamenti al giorno',
+    gcalInFree: 'Sì',
+    number: 'Dal tuo numero, da un programma Windows',
+  },
+];
+
+const faqs: FaqItem[] = [
+  {
+    q: 'Dove scrivo il numero di telefono nell\'evento di Google Calendar?',
+    a: 'Nel titolo, nella descrizione o nel luogo dell\'evento: il primo numero valido che troviamo diventa il destinatario. Il nome nel titolo, senza il numero, diventa il {nome} del messaggio.',
+  },
+  {
+    q: 'Quanto prima dell\'appuntamento parte il promemoria?',
+    a: 'Lo scegli tu: 30 minuti, 1 ora, 2 ore o 1 giorno prima. Se l\'evento si sposta, il promemoria si sposta con lui; se lo cancelli, il promemoria viene annullato.',
+  },
+  {
+    q: 'Il cliente da quale numero riceve il messaggio?',
+    a: 'Dal numero che hai collegato: il tuo personale, il tuo WhatsApp Business o anche un fisso. Vede la chat con te, con il tuo nome e la tua foto. Se ti risponde, ti risponde nella tua chat, non a un bot.',
+  },
+  {
+    q: 'È gratis davvero?',
+    a: 'Sì. Il piano gratuito è permanente e include 3 promemoria al giorno e il collegamento a Google Calendar. Durante la beta è tutto gratis, senza carta. I piani a pagamento arriveranno alla fine della beta; il piano gratuito resta.',
+  },
+  {
+    q: 'Posso mandare il promemoria a chi non mi ha mai scritto?',
+    a: 'Il prodotto lo scoraggia apposta: ai numeri che non ti conoscono scrive pochissimo e con calma, perché è il primo motivo per cui WhatsApp blocca un numero. Funziona bene con i tuoi clienti, che hanno già il tuo numero in rubrica.',
+  },
+  {
+    q: 'Serve WhatsApp Business o l\'API ufficiale di Meta?',
+    a: 'No. Il collegamento è quello di "Dispositivi collegati" di WhatsApp, lo stesso di WhatsApp Web. Niente verifica aziendale, niente template da approvare, niente costo a messaggio. Non è l\'API ufficiale di Meta e WhatsLater non è un servizio di Meta: il rischio di blocco non è azzerabile, e nella pagina "Come proteggiamo il tuo numero" spieghiamo cosa facciamo per tenerlo basso.',
+  },
+];
+
+export default function Page() {
+  return (
+    <GuideLayout
+      title={page.title}
+      lead="Scrivi il numero del cliente nell'evento di Google Calendar. All'ora che scegli, il promemoria parte dal tuo WhatsApp, quello che il cliente ha già in rubrica. Senza carta, senza numero sconosciuto, senza API a pagamento."
+      updated={page.updated}
+      faqs={faqs}
+    >
+      <section>
+        <h2 className="text-2xl font-bold mb-4">Come funziona, in tre passi</h2>
+        <ol className="list-decimal pl-6 space-y-3">
+          <li>
+            <strong>Collega il tuo WhatsApp.</strong> Dalla schermata &ldquo;Dispositivi collegati&rdquo; del telefono inserisci il codice a 8 cifre. Vale per il numero personale, per WhatsApp Business e anche per un numero fisso.
+          </li>
+          <li>
+            <strong>Collega Google Calendar.</strong> Un clic, con il tuo account Google. Scegli con quanto anticipo mandare il promemoria: 30 minuti, 1 ora, 2 ore o 1 giorno prima.
+          </li>
+          <li>
+            <strong>Metti il numero nell&apos;evento.</strong> Per esempio: &ldquo;Lezione Marco 333 1234567&rdquo;. Il promemoria si crea da solo, con il nome, la data e l&apos;ora dell&apos;appuntamento. Se sposti l&apos;evento, si sposta anche lui.
+          </li>
+        </ol>
+        <p className="mt-4 text-text-secondary">
+          Messaggio di esempio: <em>&ldquo;Ciao Marco, ti ricordo l&apos;appuntamento &lsquo;Lezione&rsquo; di venerdì 18 settembre alle 18:00. A presto!&rdquo;</em> Il testo lo puoi cambiare come vuoi.
+        </p>
+      </section>
+
+      <section>
+        <h2 className="text-2xl font-bold mb-4">Cosa include il gratis, servizio per servizio</h2>
+        <p className="mb-4 text-text-secondary">
+          Cercando &ldquo;promemoria appuntamenti WhatsApp Google Calendar gratis&rdquo; si trovano diversi servizi italiani. Abbiamo letto cosa include davvero il piano gratuito di ciascuno, sui rispettivi siti, il {COMPARISON_DATE}.
+        </p>
+        <div className="overflow-x-auto rounded-2xl border border-[#E9EDEF] bg-white">
+          <table className="min-w-[640px] w-full text-sm">
+            <thead className="bg-[#F0F2F5] text-left text-[#54656F]">
+              <tr>
+                <th className="px-4 py-3 font-semibold">Servizio</th>
+                <th className="px-4 py-3 font-semibold">Piano gratuito per sempre</th>
+                <th className="px-4 py-3 font-semibold">Promemoria WhatsApp nel gratis</th>
+                <th className="px-4 py-3 font-semibold">Google Calendar nel gratis</th>
+                <th className="px-4 py-3 font-semibold">Da quale numero parte</th>
+              </tr>
+            </thead>
+            <tbody>
+              {comparison.map((row) => (
+                <tr key={row.name} className={`border-t border-[#E9EDEF] align-top ${row.self ? 'bg-[#F4FBF7] font-medium' : ''}`}>
+                  <td className="px-4 py-3 whitespace-nowrap">{row.name}</td>
+                  <td className="px-4 py-3">{row.free}</td>
+                  <td className="px-4 py-3">{row.waInFree}</td>
+                  <td className="px-4 py-3">{row.gcalInFree}</td>
+                  <td className="px-4 py-3">{row.number}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-xs text-gray-500">
+          I nomi dei servizi appartengono ai rispettivi proprietari. Il confronto riguarda solo informazioni pubbliche e verificabili; se qualcosa è cambiato o è impreciso, scrivici a supporto@whatslater.it e lo correggiamo.
+        </p>
+      </section>
+
+      <section>
+        <h2 className="text-2xl font-bold mb-4">Perché dal tuo numero e non da un numero del servizio</h2>
+        <p className="mb-3">
+          Diversi servizi mandano i promemoria da un numero dedicato, fornito da loro. Il cliente riceve un messaggio da un numero che non ha in rubrica, con dentro il nome della tua attività. Funziona, ma è un&apos;altra cosa: non è la tua chat.
+        </p>
+        <p className="mb-3">
+          Con WhatsLater il promemoria parte dal numero che il cliente ha già in rubrica. Vede il tuo nome e la tua foto, e se risponde &ldquo;ok grazie&rdquo; o &ldquo;posso spostare?&rdquo; ti risponde a te, nella chat di sempre. Se preferisci tenere i promemoria separati dalle conversazioni, colleghi il tuo WhatsApp Business o un secondo numero: la scelta resta tua.
+        </p>
+        <p>
+          Il rovescio della medaglia lo diciamo chiaro: il numero è il tuo, quindi il rischio di blocco è tuo. Per questo il prodotto applica da solo delle regole di cortesia, spiegate nella pagina{' '}
+          <Link href="/come-proteggiamo-il-tuo-numero" className="text-primary hover:underline">Come proteggiamo il tuo numero</Link>.
+        </p>
+      </section>
+
+      <section>
+        <h2 className="text-2xl font-bold mb-4">Non solo appuntamenti: i promemoria che si ripetono</h2>
+        <p className="mb-3">
+          Un appuntamento è una data. Ma molti promemoria sono un&apos;abitudine: l&apos;allenamento del martedì, la lezione del giovedì, la quota del mese. In WhatsLater li programmi una volta e scegli &ldquo;Ripeti&rdquo;: ogni giorno, ogni settimana o ogni mese, senza limite di durata, in una coda sola.
+        </p>
+        <p>
+          Vuoi vedere come si fa passo per passo, e cosa si può fare oggi con WhatsApp da solo?{' '}
+          <Link href="/come-programmare-messaggi-whatsapp" className="text-primary hover:underline">Come programmare messaggi WhatsApp su iPhone, Android e Business</Link>.
+        </p>
+      </section>
+
+      <GuideCta note="In 2 minuti · Niente carta · Il numero resta il tuo" />
+    </GuideLayout>
+  );
+}

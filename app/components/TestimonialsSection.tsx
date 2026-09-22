@@ -12,12 +12,12 @@ export default function TestimonialsSection({ billingEnabled = true }: { billing
     <section id="testimonial" className="py-20 sm:py-24 bg-[#ECE5DD] wa-pattern">
       <div className="max-w-3xl mx-auto px-6 text-center">
         <h2 className="font-heading text-3xl sm:text-4xl font-bold text-text-primary tracking-tight">
-          In beta, con persone vere
+          In beta, senza recensioni inventate
         </h2>
         <p className="mt-4 text-[15px] sm:text-base leading-relaxed text-text-primary">
-          WhatsLater è usato ogni settimana da un piccolo gruppo di professionisti reali che ci
-          aiutano a sistemarlo. Le prime recensioni arriveranno da loro, con nome e città.
-          Niente stelle finte: se qui non vedi citazioni è perché non le abbiamo ancora chieste.
+          WhatsLater è in beta. Niente stelle finte e niente citazioni inventate: le prime
+          recensioni arriveranno da chi lo usa davvero, con nome e città. Se qui non ne vedi,
+          è perché non ce ne sono ancora.
         </p>
         <p className="mt-6 text-sm text-text-secondary">
           {billingEnabled ? 'Vuoi provarlo? Il piano gratuito non scade.' : 'Vuoi far parte dei primi? Durante la beta è tutto gratis.'}{' '}

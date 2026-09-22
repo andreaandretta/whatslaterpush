@@ -48,6 +48,50 @@ async function postWebhook(body: any) {
 }
 
 describe('Webhook messages.update', () => {
+  // Evolution API v2 real shape: flat object, id in `keyId`, status as a STRING.
+  test('Evolution v2 payload: status "DELIVERY_ACK" sets delivered_at', async () => {
+    mockSupa.setResponse('scheduled_messages:update', [{ id: 'row-evo-1' }]);
+    const res = await postWebhook({
+      event: 'messages.update',
+      instance: 'user_393331112222',
+      data: { messageId: 'db-1', keyId: 'EVO_V2_A', remoteJid: '393401234567@s.whatsapp.net', fromMe: true, status: 'DELIVERY_ACK' },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.touched).toBe(1);
+    const upd = mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'update');
+    expect(upd).toHaveLength(1);
+    expect(upd[0].args[0].delivered_at).toBeDefined();
+    const eqCall = upd[0].chain.find(c => c.method === 'eq' && c.args[0] === 'evolution_message_id');
+    expect(eqCall?.args[1]).toBe('EVO_V2_A');
+  });
+
+  // Same message id on both sides: when sender AND recipient are connected, the
+  // recipient's instance reports READ with fromMe:false. It must not touch our row.
+  test('receipt for a message we RECEIVED (fromMe:false) is ignored', async () => {
+    mockSupa.setResponse('scheduled_messages:update', [{ id: 'should-not-be-touched' }]);
+    const res = await postWebhook({
+      event: 'messages.update',
+      instance: 'user_393339998888',
+      data: { messageId: 'db-3', keyId: 'EVO_V2_C', remoteJid: '393331112222@s.whatsapp.net', fromMe: false, status: 'READ' },
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).touched).toBe(0);
+    expect(mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'update')).toHaveLength(0);
+  });
+
+  test('Evolution v2 payload: status "READ" sets delivered_at and read_at', async () => {
+    mockSupa.setResponse('scheduled_messages:update', [{ id: 'row-evo-2' }]);
+    const res = await postWebhook({
+      event: 'messages.update',
+      instance: 'user_393331112222',
+      data: { messageId: 'db-2', keyId: 'EVO_V2_B', remoteJid: '393401234567@s.whatsapp.net', fromMe: true, status: 'READ' },
+    });
+    expect(res.status).toBe(200);
+    const upd = mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'update');
+    expect(upd.map(c => Object.keys(c.args[0])[0]).sort()).toEqual(['delivered_at', 'read_at']);
+  });
+
   test('status=3 (DELIVERY_ACK) sets delivered_at on matched row', async () => {
     mockSupa.setResponse('scheduled_messages:update', [{ id: 'sm-1' }]);
 

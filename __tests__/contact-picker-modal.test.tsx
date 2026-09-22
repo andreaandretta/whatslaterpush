@@ -12,6 +12,7 @@ import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import ContactPickerModal from '../components/ContactPickerModal';
+import { clearContactsSnapshots } from '../app/lib/contacts-client-cache';
 
 function mockFetchContacts(contacts: any[], recents: any[] = []) {
   const body = { contacts, recents };
@@ -26,6 +27,8 @@ function mockFetchContacts(contacts: any[], recents: any[] = []) {
 
 afterEach(() => {
   jest.restoreAllMocks();
+  // La cache SWR è a livello di modulo: senza questo lo stato trapela da un test all'altro.
+  clearContactsSnapshots();
 });
 
 describe('ContactPickerModal — photo wiring', () => {

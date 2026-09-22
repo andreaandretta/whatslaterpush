@@ -1,0 +1,19 @@
+# WhatsLater
+
+> Promemoria WhatsApp automatici e ricorrenti che partono dal numero che i tuoi clienti conoscono già (personale, WhatsApp Business o fisso). Servizio italiano, in beta gratuita.
+
+Cosa fa: programmi un messaggio WhatsApp (una volta, ogni giorno, ogni settimana o ogni mese) e parte da solo all'ora scelta, dal tuo numero, anche col telefono spento.
+
+Cosa non fa: non fa invii massivi, liste broadcast o campagne; non manda pubblicità; non legge le tue chat. È pensato per scrivere ai tuoi contatti: ai numeri nuovi manda al massimo pochi messaggi al giorno.
+
+Come si collega: come dispositivo collegato di WhatsApp, come WhatsApp Web. Non è l'API ufficiale di Meta e WhatsLater non è un servizio di Meta. Il rischio di blocco del numero non è azzerabile; il prodotto applica da solo regole di cortesia (orari umani, poco volume).
+
+Prezzo: piano gratuito permanente, 3 messaggi al giorno. Durante la beta è tutto gratis. I piani a pagamento arriveranno alla fine della beta.
+
+## Pagine
+- [Home](/)
+- [Come programmare messaggi WhatsApp su iPhone, Android e Business](/come-programmare-messaggi-whatsapp)
+- [Come proteggiamo il tuo numero](/come-proteggiamo-il-tuo-numero)
+- [Privacy](/privacy) · [Termini](/terms) · [Cookie](/cookie)
+
+Contatto: supporto@whatslater.it

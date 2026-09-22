@@ -10,16 +10,16 @@ interface FAQSectionProps {
 
 const faqs = [
   {
-    q: 'Il messaggio parte dal mio numero personale o da un numero aziendale?',
-    a: 'Dal tuo numero personale, quello che hai collegato in fase di setup. Chi riceve vede la chat con te — niente bot, niente sender "WhatsLater". Per loro è come se l\'avessi scritto manualmente in quel momento.',
+    q: 'Il messaggio parte dal mio numero o da un numero del servizio?',
+    a: 'Dal numero che colleghi tu: il tuo personale, il tuo WhatsApp Business o anche un numero fisso. Chi riceve vede la chat con te, con il tuo nome e la tua foto — niente numeri sconosciuti, niente sender "WhatsLater". Se preferisci tenere separati promemoria e conversazioni, collega un secondo numero o il tuo WhatsApp Business.',
   },
   {
     q: "Cosa significa \"senza broker\"?",
-    a: 'Altri servizi (Wati, Respond.io, Twilio) usano la WhatsApp Business API: i messaggi passano per server intermedi e i tuoi contatti vedono un numero generico. WhatsLater usa il TUO numero personale via Evolution API: i messaggi partono come se li scrivessi tu, e nessun broker ha accesso alle conversazioni.',
+    a: 'Altri servizi (Wati, Respond.io, Twilio) usano la WhatsApp Business API: i messaggi passano per server intermedi e i tuoi contatti vedono un numero generico. WhatsLater usa il TUO numero, collegato come dispositivo collegato (come WhatsApp Web): i messaggi partono come se li scrivessi tu, e nessun broker ha accesso alle conversazioni.',
   },
   {
     q: 'È contro i termini di WhatsApp? Rischio il ban?',
-    a: 'Nessuno può garantirti il contrario, e diffida di chi lo fa. WhatsApp blocca soprattutto chi scrive a persone che non lo conoscono o che lo segnalano come spam. WhatsLater è costruito per tenerti lontano da lì: scrivi solo a contatti con cui hai già una chat, pochi promemoria mirati al giorno (20-30, non liste), con limiti automatici che ti fermano prima di esagerare. Il collegamento è lo stesso di WhatsApp Web (dispositivi collegati). Le regole che seguiamo sono scritte nei Termini, non nascoste.',
+    a: 'Nessuno può garantirti il contrario, e diffida di chi lo fa. WhatsApp blocca soprattutto chi scrive a persone che non lo conoscono o che lo segnalano come spam. WhatsLater è costruito per tenerti lontano da lì: è pensato per i contatti con cui hai già una chat (ai numeri nuovi scrive pochissimo al giorno), pochi promemoria mirati al giorno (20-30, non liste), con limiti automatici che ti fermano prima di esagerare. Il collegamento è lo stesso di WhatsApp Web (dispositivi collegati). Le regole che seguiamo sono scritte nei Termini, non nascoste.',
   },
   {
     q: "In cosa è diverso da WhatsApp Business o dallo scheduling nativo?",
@@ -35,7 +35,7 @@ const faqs = [
   },
   {
     q: 'I miei messaggi e contatti sono al sicuro?',
-    a: "I messaggi programmati sono cifrati a riposo su server nell'Unione Europea (Germania e Irlanda). Una volta inviati, vengono eliminati dopo il periodo di storico previsto dal piano (7/30/60/90 giorni). Non leggiamo le tue chat, non analizziamo il contenuto, non usiamo tracker né pubblicità, non condividiamo nulla con terze parti.",
+    a: "I messaggi programmati sono cifrati a riposo su server nell'Unione Europea (Germania e Irlanda). Una volta inviati, restano visibili nell'app per il periodo di storico previsto dal piano (7/30/60/90 giorni) e vengono cancellati del tutto quando elimini l'account. Non leggiamo le tue chat, non analizziamo il contenuto, non usiamo tracker né pubblicità, non condividiamo nulla con terze parti.",
   },
   {
     q: 'Posso programmare messaggi ricorrenti tipo "ogni lunedì alle 7 alla squadra"?',
@@ -51,8 +51,8 @@ export default function FAQSection({ theme = 'light', billingEnabled = true }: F
     : faqs.map((f) => ({
         ...f,
         a: f.a.replace(
-          'dopo il periodo di storico previsto dal piano (7/30/60/90 giorni)',
-          'dopo il periodo di storico della beta (90 giorni)'
+          'per il periodo di storico previsto dal piano (7/30/60/90 giorni)',
+          'per il periodo di storico della beta (90 giorni)'
         ),
       }));
   const [openIndex, setOpenIndex] = useState<number | null>(0);

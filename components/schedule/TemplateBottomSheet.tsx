@@ -168,7 +168,7 @@ function MineTab({ mine, onPick }: { mine: UserTemplate[]; onPick: (t: UserTempl
         <Star className="w-10 h-10 text-gray-600 mx-auto mb-2" />
         <div className="text-gray-300 text-base mb-1">Nessun template personale</div>
         <div className="text-gray-500 text-sm">
-          Quando schedulerai un messaggio editato, ti chiederemo se vuoi salvarlo qui.
+          Spunta «Salva come mio template» prima di inviare: lo ritrovi qui.
         </div>
       </div>
     );

@@ -28,7 +28,7 @@ export default function TermsPage() {
       {/* Content */}
       <main className="max-w-4xl mx-auto px-6 py-16">
         <h1 className="text-4xl font-bold text-text-primary mb-2">Termini di Servizio</h1>
-        <p className="text-gray-500 mb-12">Ultimo aggiornamento: 7 luglio 2026</p>
+        <p className="text-gray-500 mb-12">Ultimo aggiornamento: 21 settembre 2026</p>
 
         <div className="prose prose-gray max-w-none space-y-10 text-[15px] leading-relaxed">
 
@@ -191,7 +191,7 @@ export default function TermsPage() {
               <li><strong>Cool-down per destinatario:</strong> massimo 3 messaggi allo stesso numero nelle 24 ore.</li>
               <li><strong>Rate limiting:</strong> massimo 15 messaggi al minuto e 100 al giorno per utente; superate le soglie, gli invii sono sospesi fino alla mezzanotte successiva.</li>
               <li><strong>Avviso automatico:</strong> all&apos;80% del limite giornaliero, l&apos;utente riceve un avviso.</li>
-              <li><strong>Solo contatti noti:</strong> i messaggi possono essere inviati solo a contatti salvati (nessun invio a numeri sconosciuti).</li>
+              <li><strong>Numeri nuovi:</strong> il Servizio &egrave; pensato per scrivere a persone che conoscono l&apos;utente. Ai numeri che non sono tra i suoi contatti e non hanno mai ricevuto un suo messaggio dal Servizio vengono inviati al massimo pochi messaggi al giorno; gli altri vengono rimandati al giorno successivo.</li>
             </ul>
           </section>
 

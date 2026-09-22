@@ -8,14 +8,11 @@ import { DarkCalendarDialog } from './schedule/DarkCalendarDialog';
 import { AnalogClockDialog } from './schedule/AnalogClockDialog';
 import { ReminderBottomSheet, ReminderValue } from './schedule/ReminderBottomSheet';
 import { RecurrenceBottomSheet, RecurrenceValue, buildRRule, recurrenceLabel } from './schedule/RecurrenceBottomSheet';
-import { TemplateBottomSheet, SaveTemplateDialog, TemplatePick } from './schedule/TemplateBottomSheet';
+import { TemplateBottomSheet, TemplatePick } from './schedule/TemplateBottomSheet';
 import { MediaPicker, MediaAttachmentChip, MediaAttachment } from './schedule/MediaPicker';
 import { SendFab } from './schedule/SendFab';
-import { levenshteinRatio } from '../app/lib/levenshtein';
 import { applyTemplateVariables, hasTemplateVariables, firstNameOf } from '../app/lib/template-variables';
 import { formatSendCta, quickDateChips, isSameDay, courtesyHint } from '../app/lib/schedule-quick';
-
-const TEMPLATE_DIFF_THRESHOLD = 0.3;
 
 // Feature flag: "Richiedi approvazione" e "Promemoria" sono raccolti dalla UI
 // ma NON ancora consegnati end-to-end (handleSubmit non li invia, non c'è cron
@@ -80,11 +77,16 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const [recurrence, setRecurrence] = useState<RecurrenceValue>('none');
   const [approval, setApproval] = useState(false);
 
-  // Template selection state. selectedSeedId/Body are set when user picks a
-  // seed template (so we can diff-check on submit). selectedSeedTitle/Emoji
-  // are passed to SaveTemplateDialog as defaults.
+  // Template selection state. selectedSeedId is set when the user picks a seed
+  // template: it drives the "Modificato" label and is sent as
+  // source_template_id when the user opts in to "Salva come mio template".
   const [selectedSeedId, setSelectedSeedId] = useState<string | null>(null);
-  const [selectedSeedBody, setSelectedSeedBody] = useState<string | null>(null);
+
+  // "Salva come mio template": opt-in esplicito PRIMA dell'invio (casella
+  // spenta di default). Sostituisce il popup automatico post-invio: il
+  // prodotto non interrompe l'utente, è lui a spuntare se vuole il template.
+  const [saveTemplateChecked, setSaveTemplateChecked] = useState(false);
+  const [templateTitle, setTemplateTitle] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,7 +96,6 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false);
   const [recurrenceSheetOpen, setRecurrenceSheetOpen] = useState(false);
   const [templateSheetOpen, setTemplateSheetOpen] = useState(false);
-  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
   const [media, setMedia] = useState<MediaAttachment | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -109,7 +110,8 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       setRecurrence('none');
       setApproval(false);
       setSelectedSeedId(null);
-      setSelectedSeedBody(null);
+      setSaveTemplateChecked(false);
+      setTemplateTitle('');
       setError(null);
       setSubmitting(false);
       setCalendarOpen(false);
@@ -117,7 +119,6 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       setReminderSheetOpen(false);
       setRecurrenceSheetOpen(false);
       setTemplateSheetOpen(false);
-      setSaveDialogOpen(false);
       setMediaPickerOpen(false);
       setMedia(null);
       setAdvancedOpen(false);
@@ -135,6 +136,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const canSubmit = isValidDate && isValidMessage && !submitting;
 
   const contactLabel = contact.name || `+${contact.number}`;
+  const defaultTemplateTitle = contact.name ? `Per ${contact.name}` : 'Mio template';
   const dateLabel = format(scheduledDate, 'EEE d MMM', { locale: it });
 
   const hasReminder = reminder !== 'never';
@@ -153,31 +155,20 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
 
   function pickTemplate(pick: TemplatePick) {
     setMessage(pick.body);
-    if (pick.kind === 'seed') {
-      setSelectedSeedId(pick.id);
-      setSelectedSeedBody(pick.body);
-    } else {
-      // Personal template — no diff check needed on submit.
-      setSelectedSeedId(null);
-      setSelectedSeedBody(null);
-    }
+    // Seed → remember the id (source_template_id on opt-in save).
+    // Personal template → no source.
+    setSelectedSeedId(pick.kind === 'seed' ? pick.id : null);
   }
 
-  function shouldOfferSave(editedBody: string): boolean {
-    // Pragmatic lower bound: don't pester users to save throw-away one-liners
-    // like "Ciao". Worth saving as a template only when it carries enough
-    // structure to be reused.
-    if (editedBody.length < 20) return false;
-    if (selectedSeedId === null || selectedSeedBody === null) {
-      // User started from blank textarea (or picked a personal template,
-      // which clears selectedSeedId). Either way, offer to save.
-      return true;
-    }
-    return levenshteinRatio(editedBody, selectedSeedBody) > TEMPLATE_DIFF_THRESHOLD;
-  }
-
+  // Salvataggio silenzioso del template personale, SOLO se l'utente ha spuntato
+  // la casella. Best-effort: l'invio è già riuscito, quindi errori e timeout
+  // vengono ingoiati e non bloccano mai la chiusura della modale.
   async function saveAsTemplate(title: string) {
     const editedBody = message.trim();
+    // Invio solo-media (testo vuoto): niente da salvare, l'API darebbe invalid_body.
+    if (editedBody.length === 0) return;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
     try {
       await fetch('/api/templates/personal', {
         method: 'POST',
@@ -187,19 +178,14 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           body: editedBody,
           source_template_id: selectedSeedId,
         }),
+        signal: ctrl.signal,
+        keepalive: true,
       });
     } catch {
       // Save is best-effort. The schedule already succeeded — swallow errors.
+    } finally {
+      clearTimeout(timer);
     }
-    setSaveDialogOpen(false);
-    onScheduled();
-    onClose();
-  }
-
-  function dismissSaveDialog() {
-    setSaveDialogOpen(false);
-    onScheduled();
-    onClose();
   }
 
   async function handleSubmit() {
@@ -246,14 +232,15 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       }
 
       if (res.ok) {
-        if (!editMsgId && shouldOfferSave(message.trim())) {
-          // 200ms grace as per spec — gives the implicit success feedback
-          // a beat before the save dialog jumps in.
-          setTimeout(() => setSaveDialogOpen(true), 200);
-        } else {
-          onScheduled();
-          onClose();
+        // Niente popup dopo l'invio: il template si salva solo se l'utente
+        // ha spuntato "Salva come mio template" prima di inviare.
+        // Fire-and-forget: i valori sono già nella closure, la modale chiude subito
+        // (keepalive fa arrivare la POST anche se la pagina cambia).
+        if (!editMsgId && saveTemplateChecked && message.trim().length > 0) {
+          void saveAsTemplate(templateTitle.trim() || defaultTemplateTitle);
         }
+        onScheduled();
+        onClose();
         return;
       }
 
@@ -450,17 +437,6 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                 <div className="text-primary text-base">{selectedSeedId ? 'Modificato' : 'Scegli…'}</div>
                 <ChevronRight className="w-5 h-5 text-gray-500" />
               </button>
-
-              <button
-                type="button"
-                onClick={() => setMediaPickerOpen(true)}
-                className="w-full flex items-center gap-4 py-3 hover:bg-white/5 text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                <Paperclip className="w-5 h-5 text-gray-400 shrink-0" />
-                <div className="flex-1 text-white text-base">Allega media</div>
-                <div className="text-primary text-base">{media ? 'Allegato' : 'Aggiungi…'}</div>
-                <ChevronRight className="w-5 h-5 text-gray-500" />
-              </button>
             </div>
           )}
 
@@ -471,14 +447,36 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           )}
 
           <div className="px-4 pt-4">
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder="Scrivi il messaggio…"
-              rows={5}
-              maxLength={3500}
-              className="w-full bg-[#1F2C33] text-white placeholder-gray-500 rounded-xl px-3 py-2 outline-none resize-none focus:ring-2 focus:ring-primary/30"
-            />
+            {/* Campo stile WhatsApp: la graffetta vive DENTRO il bordo del campo,
+                sempre a vista (prima era una riga sepolta in "Opzioni avanzate").
+                In modifica è nascosta: il PATCH non accetta media. */}
+            <div className="flex items-end bg-[#1F2C33] rounded-xl pl-1 focus-within:ring-2 focus-within:ring-primary/30">
+              {!editMsgId && (
+                <button
+                  type="button"
+                  onClick={() => setMediaPickerOpen(true)}
+                  aria-label="Allega"
+                  aria-haspopup="dialog"
+                  title="Allega foto, video, documento o audio"
+                  className={`relative shrink-0 w-11 h-11 mb-0.5 rounded-full inline-flex items-center justify-center hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-primary/30 ${
+                    media ? 'text-primary' : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <Paperclip className="w-5 h-5" />
+                  {media && (
+                    <span aria-hidden="true" className="absolute top-2 right-2 w-2 h-2 rounded-full bg-primary" />
+                  )}
+                </button>
+              )}
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Scrivi il messaggio…"
+                rows={5}
+                maxLength={3500}
+                className="flex-1 min-w-0 bg-transparent text-white placeholder-gray-500 px-2 py-2 outline-none resize-none"
+              />
+            </div>
             <div className="flex items-center justify-between mt-1">
               <button
                 type="button"
@@ -496,6 +494,38 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                   <>Anteprima per {firstNameOf(contact.name)}: <span className="text-gray-300">{applyTemplateVariables(message, contact.name)}</span></>
                 ) : (
                   <>Questo contatto non ha un nome salvato: {'{nome}'} verrà rimosso dal messaggio.</>
+                )}
+              </div>
+            )}
+            {!editMsgId && (
+              <div className="mt-2">
+                <label className="flex items-center gap-3 min-h-[44px] cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={saveTemplateChecked && message.trim().length > 0}
+                    disabled={message.trim().length === 0}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      setSaveTemplateChecked(on);
+                      if (on && templateTitle.trim().length === 0) setTemplateTitle(defaultTemplateTitle);
+                    }}
+                    className="w-5 h-5 shrink-0 accent-primary"
+                  />
+                  <span className={`text-sm ${message.trim().length === 0 ? 'text-gray-500' : 'text-gray-300'}`}>
+                    Salva come mio template
+                    {message.trim().length === 0 && <span className="block text-xs text-gray-500">Scrivi un testo per salvarlo come template</span>}
+                  </span>
+                </label>
+                {saveTemplateChecked && message.trim().length > 0 && (
+                  <input
+                    type="text"
+                    value={templateTitle}
+                    onChange={(e) => setTemplateTitle(e.target.value)}
+                    maxLength={200}
+                    aria-label="Titolo template"
+                    placeholder={defaultTemplateTitle}
+                    className="w-full bg-[#1F2C33] text-white placeholder-gray-500 rounded-xl px-3 py-2 text-base outline-none focus:ring-2 focus:ring-primary/30"
+                  />
                 )}
               </div>
             )}
@@ -561,13 +591,6 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           open={templateSheetOpen}
           onClose={() => setTemplateSheetOpen(false)}
           onSelect={pickTemplate}
-        />
-        <SaveTemplateDialog
-          open={saveDialogOpen}
-          defaultTitle={contact.name ? `Per ${contact.name}` : 'Mio template'}
-          defaultEmoji={null}
-          onCancel={dismissSaveDialog}
-          onSave={saveAsTemplate}
         />
         <MediaPicker
           open={mediaPickerOpen}

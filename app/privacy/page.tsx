@@ -28,7 +28,7 @@ export default function PrivacyPage() {
       {/* Content */}
       <main className="max-w-4xl mx-auto px-6 py-16">
         <h1 className="text-4xl font-bold text-text-primary mb-2">Informativa sulla Privacy</h1>
-        <p className="text-gray-500 mb-12">Ultimo aggiornamento: 7 settembre 2026</p>
+        <p className="text-gray-500 mb-12">Ultimo aggiornamento: 21 settembre 2026</p>
 
         <div className="prose prose-gray max-w-none space-y-10 text-[15px] leading-relaxed">
 
@@ -58,6 +58,7 @@ export default function PrivacyPage() {
             <ul className="list-disc pl-6 space-y-1 mb-4">
               <li><strong>Dati di connessione:</strong> stato della connessione WhatsApp (connesso/disconnesso), timestamp dell&apos;ultima connessione.</li>
               <li><strong>Log di invio:</strong> stato dei messaggi (programmato, inviato, fallito), timestamp di invio, eventuali errori.</li>
+              <li><strong>Contatti WhatsApp:</strong> al primo collegamento sincronizziamo nome, numero e, quando disponibile, foto del profilo dei contatti e delle chat del tuo WhatsApp. Li usiamo solo per farti scegliere i destinatari senza riscriverli e per riconoscere i numeri che ti conoscono gi&agrave;.</li>
               <li><strong>Dati di navigazione:</strong> informazioni tecniche standard (browser, dispositivo) tramite cookie tecnici strettamente necessari.</li>
             </ul>
 
@@ -65,7 +66,6 @@ export default function PrivacyPage() {
             <ul className="list-disc pl-6 space-y-1">
               <li>Non leggiamo n&eacute; archiviamo i messaggi WhatsApp ricevuti dall&apos;utente (ad eccezione dei messaggi inviati a s&eacute; stessi per la programmazione).</li>
               <li>Non archiviamo i messaggi WhatsApp ricevuti dai contatti dell&apos;utente. Per rispettare chi non vuole pi&ugrave; ricevere promemoria, il testo di un messaggio ricevuto in una chat individuale pu&ograve; essere confrontato in memoria con poche parole chiave (ad esempio &ldquo;stop&rdquo;, &ldquo;basta&rdquo;): in tal caso i promemoria verso quel numero vengono sospesi. Il testo non viene salvato, registrato n&eacute; trasmesso a terzi; conserviamo solo la data dell&apos;ultimo messaggio ricevuto per ciascun numero.</li>
-              <li>Non accediamo alla rubrica completa dell&apos;utente.</li>
               <li>Non utilizziamo cookie di profilazione o tracciamento di terze parti.</li>
               <li>Non raccogliamo dati di geolocalizzazione.</li>
             </ul>
@@ -264,7 +264,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-2xl font-bold text-text-primary mb-4">10. Conservazione dei Dati</h2>
             <ul className="list-disc pl-6 space-y-1">
-              <li><strong>Messaggi inviati:</strong> conservati per 90 giorni dopo l&apos;invio, poi cancellati automaticamente.</li>
+              <li><strong>Messaggi inviati:</strong> visibili nell&apos;app per il periodo di storico del piano; conservati fino all&apos;eliminazione dell&apos;account, che li cancella tutti.</li>
               <li><strong>Contatti salvati:</strong> conservati per la durata dell&apos;account.</li>
               <li><strong>Log di servizio:</strong> conservati per 30 giorni.</li>
               <li><strong>Dati di fatturazione:</strong> conservati per 10 anni come richiesto dalla normativa fiscale italiana.</li>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Paperclip, Image as ImageIcon, Video, FileText, Mic, X, Loader2, AlertCircle } from 'lucide-react';
 
 export interface MediaAttachment {
@@ -46,6 +46,24 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Upload in volo: va annullato quando il picker si chiude o si smonta. Senza,
+  // un file pesante caricato per Mario poteva finire allegato alla modale aperta
+  // subito dopo per Luigi (ScheduleModal resta montata tra un contatto e l'altro).
+  const uploadRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      // Riapertura pulita: niente schermata d'errore rimasta dall'ultima volta.
+      setErr(null);
+      setKind(null);
+      return;
+    }
+    uploadRef.current?.abort();
+    uploadRef.current = null;
+    setUploading(false);
+  }, [open]);
+
+  useEffect(() => () => { uploadRef.current?.abort(); }, []);
 
   if (!open) return null;
 
@@ -62,14 +80,18 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
       return;
     }
     setUploading(true);
+    const ctrl = new AbortController();
+    uploadRef.current = ctrl;
     try {
       const formData = new FormData();
       formData.append('file', file);
       const res = await fetch('/api/messages/upload', {
         method: 'POST',
         body: formData,
+        signal: ctrl.signal,
       });
       const body = await res.json();
+      if (ctrl.signal.aborted) return; // picker chiuso nel frattempo: scarta il risultato
       if (!res.ok) {
         setErr(body.error === 'file_too_large' ? `Max ${body.limit_mb || MAX_MB}MB.` :
                 body.error === 'unsupported_mime' ? 'Tipo di file non supportato.' :
@@ -86,6 +108,7 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
       setUploading(false);
       onClose();
     } catch (e) {
+      if (ctrl.signal.aborted) return; // annullato da noi: nessun errore da mostrare
       setErr((e as Error)?.message || 'Errore di rete');
       setUploading(false);
     }
@@ -103,7 +126,7 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
         <div aria-hidden="true" className="w-12 h-1 bg-gray-600 rounded-full mx-auto mb-4" />
         <div className="flex items-center justify-between mb-3 px-1">
           <h3 className="text-white font-semibold">Allega media</h3>
-          <button type="button" onClick={onClose} aria-label="Chiudi" className="p-1 rounded-full hover:bg-white/10 text-white">
+          <button type="button" onClick={onClose} aria-label="Chiudi" className="w-11 h-11 -mr-2 inline-flex items-center justify-center rounded-full hover:bg-white/10 text-white focus:outline-none focus:ring-2 focus:ring-primary/30">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -153,6 +176,9 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
+            // Azzera il campo: riselezionare lo STESSO file dopo un errore deve
+            // far ripartire l'upload (i browser non emettono change a valore invariato).
+            e.target.value = '';
             if (f) onFile(f);
           }}
         />
@@ -181,7 +207,7 @@ export function MediaAttachmentChip({ media, onClear }: { media: MediaAttachment
         type="button"
         onClick={onClear}
         aria-label="Rimuovi media"
-        className="p-1.5 rounded-full hover:bg-white/10 text-gray-400"
+        className="w-11 h-11 -mr-2 shrink-0 inline-flex items-center justify-center rounded-full hover:bg-white/10 text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary/30"
       >
         <X className="w-4 h-4" />
       </button>

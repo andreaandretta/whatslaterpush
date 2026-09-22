@@ -25,13 +25,13 @@ export default function HeroSection() {
           </h1>
 
           <p className="mt-3 text-[15px] sm:text-base lg:text-lg text-[#5A6573] leading-relaxed">
-            Partono <strong className="text-[#1A1F2C]">dal tuo numero</strong>, all&apos;ora che scegli tu.
+            Partono <strong className="text-[#1A1F2C]">dal numero che i tuoi clienti conoscono già</strong>, all&apos;ora che scegli tu.
           </p>
 
           <ul className="mt-4 space-y-2 text-sm sm:text-base font-medium">
             {[
               'Scrivi oggi, parte quando vuoi tu',
-              'Dal tuo numero, non da un mittente strano',
+              'Dal tuo numero (personale, WhatsApp Business o fisso), non da un mittente sconosciuto',
               'Pronto in 2 minuti, senza installare niente',
             ].map((b) => (
               <li key={b} className="flex items-center gap-2.5">

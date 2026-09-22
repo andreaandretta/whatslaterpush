@@ -137,7 +137,8 @@ l'orario scelto a mano dall'utente non viene mai toccato.
   (08:00 + jitter) invece che a mezzanotte. Nella modale solo un avviso soft.
 - **Spread co-orari**: tre promemoria allo stesso istante → +0/+90/+180 s, deterministico.
 - **Rampa warm-up**: numero appena collegato → 5/5/10/15/25/35 al giorno nei primi 6 giorni
-  (`user_instances.connected_at`). `WARMUP_RAMP_DISABLED=true` la spegne.
+  (`user_instances.paired_at`; `connected_at` NON esiste in prod, `schema.sql` è uno snapshot
+  legacy: l'8 set 2026 ha rotto il cron per 15 ore). `WARMUP_RAMP_DISABLED=true` la spegne.
 - **Corsia lenta numeri nuovi**: a chi non ha mai ricevuto un nostro messaggio e non è in
   rubrica (whatsapp_contacts con sorgente non manuale) si scrive max `NEW_RECIPIENTS_PER_DAY`
   (default 5) al giorno; il resto slitta a domattina col motivo in chiaro. Fail-open.

@@ -69,6 +69,22 @@ export default function Footer({ theme = 'light' }: FooterProps) {
                   Inizia gratis
                 </a>
               </li>
+              <li>
+                <a
+                  href="/come-programmare-messaggi-whatsapp"
+                  className="text-white/70 hover:text-white transition-colors inline-flex items-center min-h-[40px]"
+                >
+                  Come programmare messaggi WhatsApp
+                </a>
+              </li>
+              <li>
+                <a
+                  href="/come-proteggiamo-il-tuo-numero"
+                  className="text-white/70 hover:text-white transition-colors inline-flex items-center min-h-[40px]"
+                >
+                  Come proteggiamo il tuo numero
+                </a>
+              </li>
             </ul>
           </div>
 

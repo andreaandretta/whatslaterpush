@@ -11,6 +11,7 @@ import { extractPairingCode, syncPairingCode, syncConnState } from '../../lib/pa
 import { contactActiveCutoffIso } from '../../lib/contact-window';
 import { handleInboundOptOut } from '../../lib/opt-out';
 import { recordCustodyAck } from '../../lib/custody-ack';
+import { extractStatusUpdate } from '../../lib/message-status';
 export const dynamic = 'force-dynamic';
 // The self-chat path chains askAI (8s) + verifyAndFixMessage (6s) + notify;
 // the Hobby default ~10s kills it mid-insert, orphaning the dedup claim (#4).
@@ -1023,11 +1024,12 @@ export async function POST(req) {
       let touched = 0;
       const nowIso = new Date().toISOString();
       for (const upd of updates) {
-        const msgId = upd?.key?.id || upd?.keyId;
-        const status = typeof upd?.update?.status === 'number'
-          ? upd.update.status
-          : (typeof upd?.status === 'number' ? upd.status : null);
+        // Evolution v2 sends the status as a string ('DELIVERY_ACK'), raw
+        // Baileys as a number: extractStatusUpdate understands both.
+        const { msgId, status, fromMe } = extractStatusUpdate(upd);
         if (!msgId || status === null) continue;
+        // Ricevuta di un messaggio RICEVUTO da questa istanza: non è un nostro invio.
+        if (fromMe === false) continue;
 
         // Custody ack (pattern #1, CLAUDE.md): SERVER_ACK(2) = WhatsApp ha
         // preso in carico il messaggio; ERROR(0) = lo ha rifiutato dopo che

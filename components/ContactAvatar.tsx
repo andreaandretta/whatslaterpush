@@ -67,6 +67,7 @@ export function ContactAvatar({ name, number, size = 'md', className = '', photo
           src={photoSrc}
           alt=""
           loading="lazy"
+          decoding="async"
           onLoad={() => setLoaded(true)}
           onError={() => setFailed(true)}
           className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'}`}

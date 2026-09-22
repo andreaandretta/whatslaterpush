@@ -51,7 +51,7 @@ beforeEach(() => {
 
 afterEach(() => { process.env = ORIGINAL_ENV; });
 
-async function callGet(opts: { authed?: boolean; label?: string } = {}) {
+async function callGet(opts: { authed?: boolean; label?: string; prefetch?: boolean } = {}) {
   const authed = opts.authed !== false; // default true
   jest.resetModules();
   jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
@@ -65,8 +65,21 @@ async function callGet(opts: { authed?: boolean; label?: string } = {}) {
   }
   const req: any = mockRequest({}, {});
   if (opts.label) req.url = 'https://whatslaterpush.vercel.app/api/contacts?label=' + opts.label;
+  if (opts.prefetch) req.url = 'https://whatslaterpush.vercel.app/api/contacts?prefetch=1';
   req.cookies = { get: (name: string) => cookies[name] ? { value: cookies[name] } : undefined };
   return GET(req);
+}
+
+// Con i fake timer: callGet() fa lavoro async VERO (import dinamico, firma del cookie)
+// prima che la route armi i suoi setTimeout, quindi si avanza a passi finché non chiude.
+async function settleWithFakeTimers<T>(p: Promise<T>): Promise<T> {
+  let done = false;
+  const wrapped = p.finally(() => { done = true; });
+  for (let i = 0; i < 50 && !done; i++) {
+    await new Promise((r) => setImmediate(r));
+    await jest.advanceTimersByTimeAsync(1000);
+  }
+  return wrapped;
 }
 
 describe('GET /api/contacts', () => {
@@ -249,6 +262,113 @@ describe('GET /api/contacts', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.contacts.length).toBe(25);
+    expect(findContactsMock).not.toHaveBeenCalled();
+    expect(findChatsMock).not.toHaveBeenCalled();
+    expect(fetchAllGroupsMock).not.toHaveBeenCalled();
+  });
+
+  test('rubrica > 1000 righe: pagina con .range() e NON tronca (plan.md Task 48)', async () => {
+    const rows = Array.from({ length: 2300 }, (_, i) => ({
+      contact_number: '3934' + String(10000000 + i),
+      name: 'Contact ' + String(i).padStart(4, '0'), push_name: null, profile_pic_url: null, added_manually: false,
+    }));
+    mockSupa.setResponse('whatsapp_contacts:select', rows);
+
+    const res = await callGet();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.contacts.length).toBe(2300);
+    expect(new Set(body.contacts.map((c: any) => c.number)).size).toBe(2300); // niente doppioni
+    const pages = mockSupa.calls.filter((c) => c.table === 'whatsapp_contacts' && c.operation === 'select');
+    // pagina 0 da sola, poi un'ondata da 3 (1,2,3): 4 select, tutte con order+range
+    expect(pages.length).toBe(4);
+    for (const p of pages) {
+      expect(p.chain.find((m) => m.method === 'order')!.args[0]).toBe('contact_number');
+      expect(p.chain.find((m) => m.method === 'range')).toBeDefined();
+    }
+    expect(pages[0].chain.find((m) => m.method === 'range')!.args).toEqual([0, 999]);
+    expect(findChatsMock).not.toHaveBeenCalled();
+  });
+
+  test('rubrica piccola: UNA sola select su whatsapp_contacts (nessun costo in più)', async () => {
+    const rows = Array.from({ length: 30 }, (_, i) => ({
+      contact_number: '39340000' + String(1000 + i), name: 'Contact ' + i, push_name: null, profile_pic_url: null, added_manually: false,
+    }));
+    mockSupa.setResponse('whatsapp_contacts:select', rows);
+    await callGet();
+    const pages = mockSupa.calls.filter((c) => c.table === 'whatsapp_contacts' && c.operation === 'select');
+    expect(pages.length).toBe(1);
+  });
+
+  test('espone Server-Timing e X-Contacts-Source per misurare senza strumenti esterni', async () => {
+    const rows = Array.from({ length: 25 }, (_, i) => ({
+      contact_number: '39340000' + String(1000 + i), name: 'Contact ' + i, push_name: null, profile_pic_url: null, added_manually: false,
+    }));
+    mockSupa.setResponse('whatsapp_contacts:select', rows);
+    const res = await callGet();
+    expect(res.headers.get('x-contacts-source')).toBe('cache-only');
+    expect(res.headers.get('x-contacts-count')).toBe('25');
+    expect(res.headers.get('server-timing')).toMatch(/db;dur=[\d.]+, total;dur=[\d.]+/);
+  });
+
+  test('percorso live: X-Contacts-Source=live+seed e Server-Timing con la voce evo', async () => {
+    mockSupa.setResponse('whatsapp_contacts:select', []);
+    findChatsMock.mockResolvedValue([{ remoteJid: '393404444444@s.whatsapp.net', pushName: 'Sara', name: null }]);
+    const res = await callGet();
+    expect(res.headers.get('x-contacts-source')).toBe('live+seed');
+    expect(res.headers.get('server-timing')).toMatch(/evo;dur=/);
+  });
+
+  test('recenti arricchiti anche se il contatto è FUORI dall\'etichetta attiva', async () => {
+    const rows = Array.from({ length: 30 }, (_, i) => ({
+      contact_number: '39340000' + String(1000 + i), name: 'Contact ' + i, push_name: null, profile_pic_url: 'https://pps.whatsapp.net/p' + i + '.jpg', added_manually: false,
+    }));
+    mockSupa.setResponse('whatsapp_contacts:select', rows);
+    mockSupa.setResponse('contact_label_assignments:select', [{ contact_number: '393400001000' }]);
+    mockSupa.setResponse('scheduled_messages:select', [{ recipient_number: '393400001005', recipient_name: 'vecchio nome' }]);
+    const res = await callGet({ label: 'label-uuid-1' });
+    const body = await res.json();
+    expect(body.contacts.map((c: any) => c.number)).toEqual(['393400001000']);
+    expect(body.recents).toEqual([{ number: '393400001005', name: 'Contact 5', photoUrl: 'https://pps.whatsapp.net/p5.jpg' }]);
+  });
+
+  test('percorso live: una chiamata Evolution appesa NON blocca la risposta oltre il budget', async () => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'performance'] });
+    try {
+      mockSupa.setResponse('whatsapp_contacts:select', []);
+      findChatsMock.mockResolvedValue([{ remoteJid: '393404444444@s.whatsapp.net', pushName: 'Sara', name: null }]);
+      fetchAllGroupsMock.mockReturnValue(new Promise(() => {})); // appesa per sempre
+      const res = await settleWithFakeTimers(callGet());
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.contacts).toEqual([{ number: '393404444444', name: 'Sara', pushName: 'Sara' }]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('percorso live: findContacts E findChats appese + cache vuota → 504 evolution_timeout', async () => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'performance'] });
+    try {
+      mockSupa.setResponse('whatsapp_contacts:select', []);
+      findContactsMock.mockReturnValue(new Promise(() => {}));
+      findChatsMock.mockReturnValue(new Promise(() => {}));
+      const res = await settleWithFakeTimers(callGet());
+      expect(res.status).toBe(504);
+      expect((await res.json()).error).toBe('evolution_timeout');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('?prefetch=1 con cache sottile: serve la cache e NON chiama Evolution', async () => {
+    mockSupa.setResponse('whatsapp_contacts:select', [
+      { contact_number: '393401111111', name: 'Mario', push_name: 'Mario', profile_pic_url: null, added_manually: false },
+    ]);
+    const res = await callGet({ prefetch: true });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-contacts-source')).toBe('cache-only-prefetch');
+    expect((await res.json()).contacts).toEqual([{ number: '393401111111', name: 'Mario', pushName: 'Mario' }]);
     expect(findContactsMock).not.toHaveBeenCalled();
     expect(findChatsMock).not.toHaveBeenCalled();
     expect(fetchAllGroupsMock).not.toHaveBeenCalled();

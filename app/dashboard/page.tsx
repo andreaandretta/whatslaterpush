@@ -6,6 +6,7 @@ import {
   Calendar, CheckCircle2, CreditCard, Loader2, LogOut, Send, X,
 } from 'lucide-react';
 import ContactPickerModal from '@/components/ContactPickerModal';
+import { prefetchContacts, setContactsCacheOwner } from '@/app/lib/contacts-client-cache';
 import ScheduleModal from '@/components/ScheduleModal';
 import { ContactAvatar } from '@/components/ContactAvatar';
 import PricingSection from '../components/PricingSection';
@@ -99,6 +100,13 @@ export default function DashboardPage() {
         setUserPhone(data.phone);
         setInstanceName(data.instanceName);
         setSessionValidated(true);
+        // La cache della rubrica appartiene a questo numero: se la sessione è cambiata
+        // (altra scheda, bfcache) si svuota prima di qualunque lettura.
+        setContactsCacheOwner(data.phone || null);
+        // Scalda la rubrica a pagina ferma: alla prima apertura del picker la lista c'è già.
+        const idle: (cb: () => void) => void =
+          (window as any).requestIdleCallback || ((cb: () => void) => setTimeout(cb, 1500));
+        idle(() => { void prefetchContacts(); });
       } catch {
         if (!cancelled) window.location.href = '/connect';
       }

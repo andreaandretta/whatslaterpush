@@ -26,11 +26,17 @@ export function createMockSupabase() {
     const defaultResponse = { data: null, error: null };
 
     const chain: any = {};
-    const chainMethods = ['select', 'eq', 'neq', 'in', 'not', 'ilike', 'like', 'or', 'lt', 'lte', 'gte', 'gt', 'order', 'limit', 'filter', 'is'];
+    const chainMethods = ['select', 'eq', 'neq', 'in', 'not', 'ilike', 'like', 'or', 'lt', 'lte', 'gte', 'gt', 'order', 'limit', 'range', 'filter', 'is'];
 
     const originalResponse = () => {
       const key = `${table}:${operation}`;
-      return responseMap.get(key) || defaultResponse;
+      const resp = responseMap.get(key) || defaultResponse;
+      // .range(from, to) → come PostgREST: fetta dell'array (serve ai test di paginazione).
+      const range = call.chain.find((m) => m.method === 'range');
+      if (range && Array.isArray(resp.data)) {
+        return { ...resp, data: resp.data.slice(range.args[0], range.args[1] + 1) };
+      }
+      return resp;
     };
 
     // Create proxy first so chain methods can return it

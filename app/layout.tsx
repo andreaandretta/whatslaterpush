@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Inter, Space_Grotesk } from 'next/font/google'
 import './globals.css'
 import ServiceWorkerRegistrar from './components/ServiceWorkerRegistrar'
+import { siteUrl } from './lib/site'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -14,9 +15,13 @@ const spaceGrotesk = Space_Grotesk({
 })
 
 export const metadata: Metadata = {
-  title: 'WhatsLater - Programma messaggi WhatsApp dal tuo numero',
-  description: 'Programma messaggi WhatsApp dal tuo numero personale. Per chi coordina squadre, fornitori e clienti ogni giorno.',
-  keywords: ['WhatsApp', 'programmare messaggi', 'schedulare WhatsApp', 'allenatori', 'site manager', 'parroci', 'scout', 'istruttori sportivi', 'scuola guida', 'facility manager', 'coordinare squadra'],
+  metadataBase: new URL(siteUrl()),
+  title: 'WhatsLater - Promemoria WhatsApp dal numero che i tuoi clienti conoscono già',
+  description: 'Promemoria WhatsApp automatici e ricorrenti, dal tuo numero (personale, WhatsApp Business o fisso). Gratis: 3 al giorno, per sempre.',
+  keywords: ['promemoria WhatsApp', 'promemoria appuntamenti WhatsApp', 'programmare messaggi WhatsApp', 'messaggi ricorrenti WhatsApp', 'promemoria WhatsApp Business', 'promemoria clienti WhatsApp'],
+  // './' = ogni pagina è canonical di sé stessa. Con '/' le pagine senza un proprio
+  // alternates (/privacy, /terms, /cookie) dichiaravano come canonical la home.
+  alternates: { canonical: './' },
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
@@ -28,8 +33,8 @@ export const metadata: Metadata = {
     apple: '/icons/icon-180.png',
   },
   openGraph: {
-    title: 'WhatsLater - Programma messaggi WhatsApp dal tuo numero',
-    description: 'Programma messaggi WhatsApp dal tuo numero personale. Per chi coordina squadre, fornitori e clienti ogni giorno.',
+    title: 'WhatsLater - Promemoria WhatsApp dal numero che i tuoi clienti conoscono già',
+    description: 'Promemoria WhatsApp automatici e ricorrenti, dal tuo numero (personale, WhatsApp Business o fisso). Gratis: 3 al giorno, per sempre.',
     locale: 'it_IT',
     type: 'website',
   },

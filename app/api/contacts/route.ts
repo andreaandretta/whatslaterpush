@@ -68,6 +68,22 @@ function isVisibleInPicker(c: OutContact): boolean {
 //   the picker on the live call.
 const CACHE_ONLY_MIN = 25;
 
+// Budget del percorso live (cache sottile). Il client abortisce a 8 s e mostra
+// "Sto sincronizzando…"; la lambda Vercel Hobby muore a ~10 s. Senza un tetto le tre
+// chiamate Evolution non avevano NESSUN timeout e l'arricchimento nomi poteva
+// aggiungere altri 10 s + 15 s: il picker non si apriva mai. Meglio una lista con
+// qualche nome in meno ENTRO il budget che nessuna lista.
+const LIVE_CALL_TIMEOUT_MS = 5000;  // findContacts / findChats / fetchAllGroups (in parallelo)
+const LIVE_TOTAL_BUDGET_MS = 7000;  // oltre, whatsappNumbers e findMessages si saltano
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(label + ' timeout after ' + ms + 'ms')), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => { if (timer) clearTimeout(timer); });
+}
+
 type CachedContactRow = { contact_number: string; name: string | null; push_name: string | null; profile_pic_url: string | null; added_manually: boolean | null };
 
 // whatsapp_contacts rows -> picker contacts (+ visibility filter). Shared by the
@@ -89,23 +105,81 @@ function cachedRowsToContacts(rows: CachedContactRow[], phone: string): OutConta
   return out.filter(isVisibleInPicker);
 }
 
-// ?label=<uuid> → intersect with that label's assignment list; no-op without ?label.
-async function applyLabelFilter(supabase: any, phone: string, url: URL, out: OutContact[]): Promise<OutContact[]> {
-  const labelId = url.searchParams.get('label');
-  if (!labelId) return out;
+// Tetto PostgREST: una select senza .range() torna al massimo ~1000 righe (default
+// "Max rows" di Supabase) e SENZA errore — la rubrica veniva troncata in silenzio
+// (plan.md Task 48). Si legge a pagine ordinate per contact_number: l'indice unico
+// (user_phone, contact_number) rende l'ordinamento gratuito e le pagine stabili.
+const CONTACTS_PAGE = 1000;
+const CONTACTS_MAX_PAGES = 10; // 10.000 righe; oltre ci si ferma e si logga
+
+// Una pagina che fallisce NON è "fine rubrica": si ritenta una volta; se fallisce
+// ancora la lettura è PARZIALE (header X-Contacts-Partial: il client la mostra ma
+// non la mette in cache). Prima un errore transitorio troncava la lista in silenzio.
+// Il flag viaggia nel valore di ritorno, MAI in una variabile di modulo: la stessa
+// istanza serverless può servire più richieste insieme.
+async function fetchAllCachedRows(supabase: any, phone: string): Promise<{ rows: CachedContactRow[]; partial: boolean }> {
+  let partial = false;
+  const query = (i: number) => supabase
+    .from('whatsapp_contacts')
+    .select('contact_number, name, push_name, profile_pic_url, added_manually')
+    .eq('user_phone', phone)
+    .order('contact_number', { ascending: true })
+    .range(i * CONTACTS_PAGE, (i + 1) * CONTACTS_PAGE - 1);
+  const page = async (i: number): Promise<{ rows: CachedContactRow[]; failed: boolean }> => {
+    let r: any = await query(i);
+    if (r?.error) r = await query(i); // un solo retry
+    if (r?.error) {
+      console.error('CONTACTS:GET page ' + i + ' failed:', r.error?.message || r.error);
+      return { rows: [], failed: true };
+    }
+    return { rows: (r?.data || []) as CachedContactRow[], failed: false };
+  };
+
+  // Caso normale (rubrica < 1000): UNA sola richiesta, come prima.
+  const first = await page(0);
+  if (first.failed) return { rows: [], partial: true };
+  if (first.rows.length < CONTACTS_PAGE) return { rows: first.rows, partial: false };
+
+  // Prima pagina piena → le successive a ondate di 3 in parallelo. La Map toglie i
+  // doppioni se una riga scivola tra due pagine per un upsert concorrente del webhook.
+  const byNumber = new Map<string, CachedContactRow>();
+  first.rows.forEach((r) => byNumber.set(r.contact_number, r));
+  let next = 1;
+  let exhausted = false;
+  while (!exhausted && next < CONTACTS_MAX_PAGES) {
+    const wave = [next, next + 1, next + 2].filter((i) => i < CONTACTS_MAX_PAGES);
+    const results = await Promise.all(wave.map((i) => page(i)));
+    results.forEach((res) => {
+      if (res.failed) { partial = true; return; } // non è la fine: si prosegue
+      res.rows.forEach((row) => byNumber.set(row.contact_number, row));
+      if (res.rows.length < CONTACTS_PAGE) exhausted = true;
+    });
+    next += wave.length;
+  }
+  if (!exhausted) console.warn('CONTACTS:GET page cap hit rows=' + byNumber.size + ' max_pages=' + CONTACTS_MAX_PAGES);
+  return { rows: Array.from(byNumber.values()), partial };
+}
+
+// ?label=<uuid> → numeri assegnati a quell'etichetta; null = nessun filtro.
+// Solo la QUERY: così parte in parallelo con le altre. Il filtro vero è applyLabel().
+async function fetchLabelAllowed(supabase: any, phone: string, labelId: string | null): Promise<Set<string> | null> {
+  if (!labelId) return null;
   const { data: assignments } = await supabase
     .from('contact_label_assignments')
     .select('contact_number')
     .eq('user_phone', phone)
     .eq('label_id', labelId);
-  const allowed = new Set((assignments || []).map((a: any) => a.contact_number));
-  return out.filter(c => allowed.has(c.number));
+  return new Set<string>((assignments || []).map((a: any) => a.contact_number));
 }
 
-// Recenti: up to 10 distinct most-recent recipients (excl. cancelled). first-wins =
-// latest (query is ORDER BY created_at DESC). Enriches from `byNumber` so a recent
-// that's also a known contact keeps its name/photo. Computed for BOTH paths.
-async function computeRecents(supabase: any, phone: string, byNumber: Map<string, OutContact>): Promise<OutContact[]> {
+function applyLabel(out: OutContact[], allowed: Set<string> | null): OutContact[] {
+  return allowed ? out.filter((c) => allowed.has(c.number)) : out;
+}
+
+type RecentRow = { recipient_number: string; recipient_name: string | null };
+
+// Recenti, parte QUERY (parallelizzabile): ultimi 50 invii non cancellati, DESC.
+async function fetchRecentRows(supabase: any, phone: string): Promise<RecentRow[]> {
   const { data: recentRows } = await supabase
     .from('scheduled_messages')
     .select('recipient_number, recipient_name')
@@ -113,9 +187,16 @@ async function computeRecents(supabase: any, phone: string, byNumber: Map<string
     .neq('status', 'cancelled')
     .order('created_at', { ascending: false })
     .limit(50);
+  return (recentRows || []) as RecentRow[];
+}
+
+// Recenti, parte PURA: up to 10 distinct most-recent recipients. first-wins = latest
+// (rows are ORDER BY created_at DESC). Enriches from `byNumber` so a recent that's
+// also a known contact keeps its name/photo. Computed for BOTH paths.
+function buildRecents(recentRows: RecentRow[], phone: string, byNumber: Map<string, OutContact>): OutContact[] {
   const recents: OutContact[] = [];
   const seen = new Set<string>();
-  for (const row of (recentRows || []) as Array<{ recipient_number: string; recipient_name: string | null }>) {
+  for (const row of recentRows) {
     const num = row.recipient_number;
     if (!num || num === phone) continue;
     if (seen.has(num)) continue;
@@ -126,21 +207,36 @@ async function computeRecents(supabase: any, phone: string, byNumber: Map<string
   return recents;
 }
 
+// Risposta JSON + header di misura. Server-Timing si legge in DevTools → Network →
+// Timing, oppure da JS con performance.getEntriesByType('resource')[i].serverTiming.
+function respond(body: { contacts: OutContact[]; recents: OutContact[] }, source: string, t0: number, dbMs: number, evoMs: number, partial = false) {
+  const total = performance.now() - t0;
+  const timing = [`db;dur=${dbMs.toFixed(1)}`];
+  if (evoMs > 0) timing.push(`evo;dur=${evoMs.toFixed(1)}`);
+  timing.push(`total;dur=${total.toFixed(1)}`);
+  return NextResponse.json(body, {
+    headers: {
+      'Server-Timing': timing.join(', '),
+      'X-Contacts-Source': source,
+      'X-Contacts-Count': String(body.contacts.length),
+      ...(partial ? { 'X-Contacts-Partial': '1' } : {}),
+    },
+  });
+}
+
 export async function GET(req: NextRequest) {
   const raw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
   const payload = await verifyCookie(raw);
   if (!payload?.phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  const t0 = performance.now();
   const phone = payload.phone;
   const supabase = getSupabaseAdmin();
-
-  const { data: user } = await supabase
-    .from('user_instances')
-    .select('instance_name')
-    .eq('phone_number', phone)
-    .single();
-
-  if (!user?.instance_name) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const reqUrl = new URL(req.url);
+  const labelId = reqUrl.searchParams.get('label');
+  // ?prefetch=1 = riscaldamento a pagina ferma dal dashboard: MAI Evolution, solo cache
+  // (un utente con cache sottile non deve far partire la pipeline live a ogni visita).
+  const prefetchOnly = reqUrl.searchParams.get('prefetch') === '1';
 
   // ── Cache-first: read from whatsapp_contacts populated by webhook ──
   // The webhook persists CONTACTS_SET / CONTACTS_UPSERT / CONTACTS_UPDATE /
@@ -148,28 +244,42 @@ export async function GET(req: NextRequest) {
   // On cache-hit we skip the entire Evolution pipeline (findContacts +
   // findChats + fetchAllGroups + whatsappNumbers + findMessages) — saves
   // 5-15s and avoids Evolution timeouts.
-  const { data: cached } = await supabase
-    .from('whatsapp_contacts')
-    .select('contact_number, name, push_name, profile_pic_url, added_manually')
-    .eq('user_phone', phone);
-  const cachedContacts = cachedRowsToContacts((cached || []) as CachedContactRow[], phone);
+  //
+  // Le 4 letture sono indipendenti → partono INSIEME (prima erano 3-4 round-trip
+  // in fila verso Supabase: utente → rubrica → etichetta → recenti).
+  const [userRes, cachedRead, allowed, recentRows] = await Promise.all([
+    supabase.from('user_instances').select('instance_name').eq('phone_number', phone).single(),
+    fetchAllCachedRows(supabase, phone),
+    fetchLabelAllowed(supabase, phone, labelId),
+    fetchRecentRows(supabase, phone),
+  ]);
+  const dbMs = performance.now() - t0;
+  const cached = cachedRead.rows;
+  const cachedPartial = cachedRead.partial;
+  const user = (userRes as any)?.data;
+
+  if (!user?.instance_name) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+
+  const cachedContacts = cachedRowsToContacts(cached, phone);
   // Sync-completeness signal = the TOTAL synced rows for this instance, BEFORE the
   // visibility AND label filters. We gate cache-only on THIS (the instance's cache
   // size), not on what the user is currently viewing — so a fully-synced user who
   // filters by a small label (e.g. 5 contacts) still takes the fast cache path
   // instead of a useless live Evolution call.
-  const syncedCount = cached?.length || 0;
+  const syncedCount = cached.length;
 
   // Fast cache-only path: a substantial synced cache is trusted as the full address
   // book, so we skip the entire Evolution pipeline (saves 5-15s, immune to reconnect
   // flakiness). #3a: gated on the instance's synced-row count >= CACHE_ONLY_MIN — no
   // longer a bare ">0", which let a 1-row cache shadow the real address book forever.
-  if (syncedCount >= CACHE_ONLY_MIN) {
-    const out = [...await applyLabelFilter(supabase, phone, new URL(req.url), cachedContacts)]
+  if (syncedCount >= CACHE_ONLY_MIN || prefetchOnly) {
+    const out = [...applyLabel(cachedContacts, allowed)]
       .sort((a, b) => a.name.localeCompare(b.name, 'it'));
-    const recents = await computeRecents(supabase, phone, new Map(out.map((c) => [c.number, c])));
-    console.log('CONTACTS:GET source=cache-only count=' + out.length + ' recents=' + recents.length + ' raw=' + (cached?.length || 0));
-    return NextResponse.json({ contacts: out, recents });
+    // Arricchimento dai contatti NON filtrati: un recente fuori dall'etichetta attiva
+    // tiene comunque nome e foto.
+    const recents = buildRecents(recentRows, phone, new Map(cachedContacts.map((c) => [c.number, c])));
+    console.log('CONTACTS:GET source=cache-only count=' + out.length + ' recents=' + recents.length + ' raw=' + syncedCount + ' db_ms=' + Math.round(dbMs));
+    return respond({ contacts: out, recents }, syncedCount >= CACHE_ONLY_MIN ? 'cache-only' : 'cache-only-prefetch', t0, dbMs, 0, cachedPartial);
   }
 
   // Thin/empty cache (< CACHE_ONLY_MIN) → consult the live Evolution source AND seed
@@ -181,14 +291,17 @@ export async function GET(req: NextRequest) {
   const byNumber = new Map<string, OutContact>();
   for (const c of cachedContacts) byNumber.set(c.number, c);
 
+  const tEvo = performance.now();
   let rawFromContacts: any[] = [];
   let rawFromChats: any[] = [];
   let rawGroups: any[] = [];
   const [contactsRes, chatsRes, groupsRes] = await Promise.allSettled([
-    evolutionClient.findContacts(user.instance_name),
-    evolutionClient.findChats(user.instance_name),
-    evolutionClient.fetchAllGroups(user.instance_name, true),
+    withTimeout(evolutionClient.findContacts(user.instance_name), LIVE_CALL_TIMEOUT_MS, 'findContacts'),
+    withTimeout(evolutionClient.findChats(user.instance_name), LIVE_CALL_TIMEOUT_MS, 'findChats'),
+    withTimeout(evolutionClient.fetchAllGroups(user.instance_name, true), LIVE_CALL_TIMEOUT_MS, 'fetchAllGroups'),
   ]);
+  // Millisecondi rimasti prima di LIVE_TOTAL_BUDGET_MS (misurati dall'inizio della GET).
+  const remainingMs = () => LIVE_TOTAL_BUDGET_MS - (performance.now() - t0);
   if (contactsRes.status === 'fulfilled') rawFromContacts = contactsRes.value || [];
   if (chatsRes.status === 'fulfilled') rawFromChats = chatsRes.value || [];
   if (groupsRes.status === 'fulfilled') rawGroups = groupsRes.value || [];
@@ -205,10 +318,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'evolution_unavailable' }, { status: 502 });
     }
     console.log('CONTACTS:GET evolution down — serving seeded cache only count=' + byNumber.size);
-    const out = [...await applyLabelFilter(supabase, phone, new URL(req.url), Array.from(byNumber.values()).filter(isVisibleInPicker))]
+    const out = [...applyLabel(Array.from(byNumber.values()).filter(isVisibleInPicker), allowed)]
       .sort((a, b) => a.name.localeCompare(b.name, 'it'));
-    const recents = await computeRecents(supabase, phone, byNumber);
-    return NextResponse.json({ contacts: out, recents });
+    const recents = buildRecents(recentRows, phone, byNumber);
+    return respond({ contacts: out, recents }, 'seed-only-evolution-down', t0, dbMs, performance.now() - tEvo, cachedPartial);
   }
 
   // Prefer findChats (richer for Baileys-synced instances), fall back to
@@ -283,15 +396,16 @@ export async function GET(req: NextRequest) {
     if (entry.name === `+${num}`) unnamed.push(num);
   }
 
-  if (unnamed.length > 0) {
+  if (unnamed.length > 0 && remainingMs() > 1500) {
     const BATCH_SIZE = 100;
     const batches: string[][] = [];
     for (let i = 0; i < unnamed.length; i += BATCH_SIZE) {
       batches.push(unnamed.slice(i, i + BATCH_SIZE));
     }
 
+    const enrichBudget = remainingMs() - 500;
     const results = await Promise.allSettled(
-      batches.map((b) => evolutionClient.whatsappNumbers(user.instance_name, b))
+      batches.map((b) => withTimeout(evolutionClient.whatsappNumbers(user.instance_name, b), enrichBudget, 'whatsappNumbers'))
     );
 
     for (const r of results) {
@@ -317,7 +431,8 @@ export async function GET(req: NextRequest) {
   // from the WhatsApp envelope, even when Chat.pushName is null. One bulk
   // call covers every contact the user has actually chatted with.
   try {
-    const msgRes: any = await evolutionClient.findMessages(user.instance_name, 2000);
+    if (remainingMs() <= 1500) throw new Error('live budget exhausted — name backfill skipped');
+    const msgRes: any = await withTimeout(evolutionClient.findMessages(user.instance_name, 2000), remainingMs() - 500, 'findMessages');
     const messages: any[] =
       msgRes?.messages?.records ||
       msgRes?.records ||
@@ -363,9 +478,9 @@ export async function GET(req: NextRequest) {
 
   const merged: OutContact[] = Array.from(byNumber.values()).filter(isVisibleInPicker);
   merged.sort((a, b) => a.name.localeCompare(b.name, 'it'));
-  const out = await applyLabelFilter(supabase, phone, new URL(req.url), merged);
+  const out = applyLabel(merged, allowed);
   // Recents computed here too (was hardcoded []): a thin-cache user can still have
   // send history, and #3a serves this live+seed path for them.
-  const recents = await computeRecents(supabase, phone, byNumber);
-  return NextResponse.json({ contacts: out, recents });
+  const recents = buildRecents(recentRows, phone, byNumber);
+  return respond({ contacts: out, recents }, 'live+seed', t0, dbMs, performance.now() - tEvo, cachedPartial);
 }

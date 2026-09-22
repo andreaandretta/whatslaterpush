@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { verifyCookie, signCookie, shouldRefresh, AUTH_COOKIE_NAME, AUTH_COOKIE_MAX_AGE } from './app/lib/auth-cookie';
+import { GUIDE_PATHS, SEO_FILE_PATHS } from './app/lib/site';
 
 const PUBLIC_PATHS = [
   '/',
@@ -16,6 +17,11 @@ const PUBLIC_PATHS = [
   '/manifest.json',
   '/sw.js',
   '/offline',
+  // Public guide pages + SEO files (app/lib/site.ts is the single list).
+  // Without this the metadata routes (sitemap.xml, robots.txt) and the
+  // guides would answer 401 JSON to crawlers: not in the matcher exclusions.
+  ...GUIDE_PATHS,
+  ...SEO_FILE_PATHS,
 ];
 
 const PUBLIC_PREFIXES = [

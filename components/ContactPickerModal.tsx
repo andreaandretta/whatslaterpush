@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { X, Search, UserPlus, ChevronDown, ChevronUp, AlertCircle, Loader2, Upload, Settings2 } from 'lucide-react';
 import { validatePhone } from '../app/lib/phone';
 import { pickerStateForResponseStatus } from '../app/lib/contacts-picker-state';
+import { getContactsSnapshot, setContactsSnapshot, clearContactsSnapshots } from '../app/lib/contacts-client-cache';
 import { Button } from './Button';
 import { ContactAvatar } from './ContactAvatar';
 import { LabelPicker } from './LabelPicker';
@@ -25,6 +26,54 @@ function formatPhone(digits: string): string {
   }
   return `+${digits}`;
 }
+
+// Quante righe si montano per volta. La ricerca lavora SEMPRE sull'intera lista:
+// è solo il render a essere a finestra.
+const PAGE_SIZE = 60;
+
+// Misure a richiesta: in console `localStorage.setItem('wl_perf','1')`, poi riapri la rubrica.
+function perfEnabled(): boolean {
+  try { return typeof window !== 'undefined' && window.localStorage.getItem('wl_perf') === '1'; } catch { return false; }
+}
+
+// Riga memoizzata: digitare in "Cerca" / "Nome" / "Numero" non riconcilia più tutte le righe.
+const ContactRow = React.memo(function ContactRow({
+  contact: c,
+  onPick,
+}: {
+  contact: Contact;
+  onPick: (contact: { number: string; name?: string }) => void;
+}) {
+  const formattedPhone = formatPhone(c.number);
+  const hasRealName = !!c.name && c.name.trim() !== '' && c.name !== `+${c.number}`;
+  // When there's no real name, send name=undefined so downstream
+  // (ScheduleModal, avatar) shows the formatted phone instead of
+  // a confusing "+digits" string.
+  const onSelectName = hasRealName ? c.name : undefined;
+  return (
+    <button
+      type="button"
+      onClick={() => onPick({ number: c.number, name: onSelectName })}
+      className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-[#1F2C34]"
+    >
+      <ContactAvatar
+        name={hasRealName ? c.name : undefined}
+        number={c.number}
+        photoSrc={c.photoUrl}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="font-semibold text-white truncate">
+          {hasRealName ? c.name : formattedPhone}
+        </div>
+        {hasRealName && (
+          <div className="text-xs truncate" style={{ color: '#AEBAC1' }}>
+            {formattedPhone}
+          </div>
+        )}
+      </div>
+    </button>
+  );
+});
 
 interface ContactPickerModalProps {
   open: boolean;
@@ -56,6 +105,18 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   // when the user creates or deletes a label from the manager.
   const [labelManagerOpen, setLabelManagerOpen] = useState(false);
   const [labelRefetchKey, setLabelRefetchKey] = useState(0);
+  // Render incrementale: quante righe della lista filtrata sono montate.
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  // onSelect arriva come arrow inline dal dashboard: il ref tiene stabile handlePick
+  // (altrimenti React.memo su ContactRow non servirebbe a niente).
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const handlePick = useCallback(
+    (contact: { number: string; name?: string }) => onSelectRef.current(contact),
+    [],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -68,47 +129,144 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     setLabelFilterId(null);
   }, [open]);
 
+  // Il filtro etichetta si azzera anche alla CHIUSURA: così alla riapertura
+  // labelFilterId è già null e parte UN solo fetch (prima: un fetch ?label=X
+  // subito abortito + quello vero, e l'abort finiva nel catch → "Sto sincronizzando…").
+  useEffect(() => {
+    if (!open) setLabelFilterId(null);
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
+    // `cancelled` distingue l'abort del cleanup (chiusura / cambio etichetta / refetch)
+    // dal timeout vero: solo il secondo deve portare a "syncing".
+    let cancelled = false;
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), 8000);
+    const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
+
+    // Stale-while-revalidate: se per questo filtro c'è già una lista, mostrala subito.
+    const snap = getContactsSnapshot(labelFilterId);
+    if (snap) setState({ kind: 'list', contacts: snap.contacts, recents: snap.recents });
+    // `shown` = c'è DAVVERO una lista a schermo per questo effetto. Non si guarda lo
+    // store globale nei rami d'errore: il prefetch del dashboard può scriverlo mentre
+    // questo fetch è in volo, e lo stato resterebbe 'loading' per sempre.
+    let shown = !!snap;
+    const showLateSnapshotOr = (fallback: PickerState) => {
+      if (shown) return;
+      const late = getContactsSnapshot(labelFilterId);
+      if (late) { setState({ kind: 'list', contacts: late.contacts, recents: late.recents }); shown = true; }
+      else setState(fallback);
+    };
 
     const qs = labelFilterId ? `?label=${encodeURIComponent(labelFilterId)}` : '';
     fetch('/api/contacts' + qs, { signal: abort.signal })
       .then(async (res) => {
         clearTimeout(timer);
+        if (cancelled) return;
         // #3b: 401 → hard auth error; any other non-2xx (notably 502/504 = fresh
         // instance, contacts not synced yet + Evolution unreachable) → transient
         // "syncing…" state with a retry, not a broken picker.
         const errState = pickerStateForResponseStatus(res.status);
-        if (errState) { setState(errState); return; }
+        if (errState) {
+          if (errState.kind === 'error') { clearContactsSnapshots(); setState(errState); return; }
+          // Errore transitorio: se c'è già una lista a schermo, meglio vecchia che niente.
+          showLateSnapshotOr(errState);
+          return;
+        }
+        const tHeaders = typeof performance !== 'undefined' ? performance.now() : 0;
         const body = await res.json();
+        if (cancelled) return;
         const contacts: Contact[] = Array.isArray(body.contacts) ? body.contacts : [];
         const recents: Contact[] = Array.isArray(body.recents) ? body.recents : [];
+        // Una lettura parziale (una pagina della rubrica è fallita lato server) si
+        // mostra ma non si mette in cache: alla prossima apertura si rilegge tutto.
+        if (res.headers?.get?.('x-contacts-partial') !== '1') setContactsSnapshot(labelFilterId, contacts, recents);
         setState({ kind: 'list', contacts, recents });
+        shown = true;
         if (contacts.length === 0 && !labelFilterId) setManualOpen(true);
+        if (perfEnabled() && typeof requestAnimationFrame !== 'undefined') {
+          const tParsed = performance.now();
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            const entries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+            const e = entries.filter((r) => r.name.includes('/api/contacts')).pop();
+            console.log('[wl_perf] rubrica', {
+              da_cache: !!snap,
+              contatti: contacts.length,
+              header_ms: Math.round(tHeaders - t0),
+              json_ms: Math.round(tParsed - tHeaders),
+              render_ms: Math.round(performance.now() - tParsed),
+              totale_ms: Math.round(performance.now() - t0),
+              rete_kb: e ? Math.round(e.transferSize / 1024) : null,
+              json_kb: e ? Math.round(e.decodedBodySize / 1024) : null,
+              server_timing: res.headers?.get?.('server-timing') || null,
+              sorgente: res.headers?.get?.('x-contacts-source') || null,
+            });
+          }));
+        }
       })
       .catch(() => {
         clearTimeout(timer);
-        // Timeout/network blip while the address book is still syncing → syncing + retry.
-        setState({ kind: 'syncing' });
+        if (cancelled) return; // abort del cleanup: NON è "sincronizzazione"
+        // Timeout/network blip. Con una lista già a schermo la teniamo; senza, syncing + retry.
+        showLateSnapshotOr({ kind: 'syncing' });
       });
 
-    return () => { clearTimeout(timer); abort.abort(); };
+    return () => { cancelled = true; clearTimeout(timer); abort.abort(); };
   }, [open, labelFilterId, refetchKey]);
 
   useEffect(() => {
     if (state.kind === 'error') setManualOpen(true);
   }, [state.kind]);
 
+  // Ciò che si DISEGNA. Se lo stato è ancora 'loading' ma in cache c'è una lista per
+  // questo filtro, si disegna quella: alla riapertura lo spinner non compare nemmeno
+  // per un frame (l'effetto qui sopra riallinea lo stato subito dopo).
+  const view: PickerState = useMemo(() => {
+    if (state.kind !== 'loading') return state;
+    const snap = getContactsSnapshot(labelFilterId);
+    return snap ? { kind: 'list', contacts: snap.contacts, recents: snap.recents } : state;
+  }, [state, labelFilterId]);
+
+  // Nomi in minuscolo calcolati UNA volta per lista, non a ogni tasto.
+  const lowerNames = useMemo(
+    () => (view.kind === 'list' ? view.contacts.map((c) => c.name.toLowerCase()) : []),
+    [view],
+  );
+
+  // La ricerca gira sull'INTERA lista (anche sulle righe non ancora montate).
   const filtered = useMemo(() => {
-    if (state.kind !== 'list') return [];
+    if (view.kind !== 'list') return [];
     const q = search.trim().toLowerCase();
-    if (!q) return state.contacts;
-    return state.contacts.filter((c) =>
-      c.name.toLowerCase().includes(q) || c.number.includes(q)
+    if (!q) return view.contacts;
+    return view.contacts.filter((c, i) => lowerNames[i].includes(q) || c.number.includes(q));
+  }, [view, lowerNames, search]);
+
+  // Finestra di render: prime N righe, le altre arrivano scorrendo (o col bottone).
+  const visible = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
+  const hasMore = filtered.length > visibleCount;
+
+  // Nuova ricerca / nuovo filtro / riapertura → si riparte dalla prima pagina, in cima.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [open, search, labelFilterId]);
+
+  // Scroll infinito. Senza IntersectionObserver (jsdom, browser vecchi) resta il bottone.
+  useEffect(() => {
+    if (!open || !hasMore) return;
+    if (typeof IntersectionObserver === 'undefined') return;
+    const node = sentinelRef.current;
+    if (!node) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setVisibleCount((n) => n + PAGE_SIZE);
+      },
+      { root: scrollRef.current, rootMargin: '800px 0px' },
     );
-  }, [state, search]);
+    io.observe(node);
+    return () => io.disconnect();
+  }, [open, hasMore, visibleCount]);
 
   function handleManualSubmit() {
     setManualError(null);
@@ -118,39 +276,6 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
       return;
     }
     onSelect({ number: normalized, name: manualName.trim() || undefined });
-  }
-
-  function renderContactButton(c: Contact, keyPrefix: string) {
-    const formattedPhone = formatPhone(c.number);
-    const hasRealName = !!c.name && c.name.trim() !== '' && c.name !== `+${c.number}`;
-    // When there's no real name, send name=undefined so downstream
-    // (ScheduleModal, avatar) shows the formatted phone instead of
-    // a confusing "+digits" string.
-    const onSelectName = hasRealName ? c.name : undefined;
-    return (
-      <button
-        key={`${keyPrefix}${c.number}`}
-        type="button"
-        onClick={() => onSelect({ number: c.number, name: onSelectName })}
-        className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-[#1F2C34]"
-      >
-        <ContactAvatar
-          name={hasRealName ? c.name : undefined}
-          number={c.number}
-          photoSrc={c.photoUrl}
-        />
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold text-white truncate">
-            {hasRealName ? c.name : formattedPhone}
-          </div>
-          {hasRealName && (
-            <div className="text-xs truncate" style={{ color: '#AEBAC1' }}>
-              {formattedPhone}
-            </div>
-          )}
-        </div>
-      </button>
-    );
   }
 
   if (!open) return null;
@@ -190,7 +315,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
         <CsvImportDialog
           open={csvOpen}
           onClose={() => setCsvOpen(false)}
-          onImported={() => setRefetchKey(k => k + 1)}
+          onImported={() => { clearContactsSnapshots(); setRefetchKey(k => k + 1); }}
         />
 
         <div className="flex items-center gap-1 border-b border-[#2A3942]">
@@ -236,6 +361,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
         </div>
 
         <div
+          ref={scrollRef}
           className="flex-1 overflow-y-auto"
           style={{ backgroundColor: '#111B21' }}
         >
@@ -289,7 +415,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             </div>
           )}
 
-          {state.kind === 'list' && !search.trim() && state.recents.length > 0 && (
+          {view.kind === 'list' && !search.trim() && view.recents.length > 0 && (
             <>
               <div
                 className="px-4 pt-3 pb-1 text-xs font-semibold uppercase"
@@ -297,36 +423,38 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
               >
                 Recenti
               </div>
-              {state.recents.map((c) => renderContactButton(c, 'r:'))}
+              {view.recents.map((c) => (
+                <ContactRow key={`r:${c.number}`} contact={c} onPick={handlePick} />
+              ))}
             </>
           )}
 
-          {state.kind === 'list' && state.contacts.length > 0 && (
+          {view.kind === 'list' && view.contacts.length > 0 && (
             <div
               className="px-4 pt-3 pb-1 text-xs font-semibold uppercase"
               style={{ color: '#25D366' }}
             >
-              Contatti su WhatsApp ({state.contacts.length})
+              Contatti su WhatsApp ({view.contacts.length})
             </div>
           )}
 
-          {state.kind === 'loading' && (
+          {view.kind === 'loading' && (
             <div className="p-8 text-center">
               <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" style={{ color: '#25D366' }} />
               <p className="text-sm" style={{ color: '#AEBAC1' }}>Caricamento contatti…</p>
             </div>
           )}
 
-          {state.kind === 'error' && (
+          {view.kind === 'error' && (
             <div
               className="p-4 mx-4 my-3 rounded-xl text-sm flex items-start gap-2"
               style={{ backgroundColor: '#2A3942', color: '#F87171' }}
             >
               <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>
-                {state.reason === 'timeout' && 'Caricamento contatti scaduto. '}
-                {state.reason === 'unavailable' && 'Impossibile caricare i contatti. '}
-                {state.reason === 'unauthorized' && 'Sessione scaduta. '}
+                {view.reason === 'timeout' && 'Caricamento contatti scaduto. '}
+                {view.reason === 'unavailable' && 'Impossibile caricare i contatti. '}
+                {view.reason === 'unauthorized' && 'Sessione scaduta. '}
                 Puoi inserire il numero manualmente.
               </span>
             </div>
@@ -336,7 +464,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
               in progress). Not an error — a transient state with a Retry, so a
               just-registered user never sees a broken/empty picker. "Nuovo contatto"
               above stays available the whole time. */}
-          {state.kind === 'syncing' && (
+          {view.kind === 'syncing' && (
             <div className="p-6 mx-4 my-3 rounded-xl text-center" style={{ backgroundColor: '#2A3942' }}>
               <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" style={{ color: '#25D366' }} />
               <p className="text-sm font-medium text-white mb-1">Sto sincronizzando i tuoi contatti…</p>
@@ -355,19 +483,35 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             </div>
           )}
 
-          {state.kind === 'list' && filtered.length === 0 && state.contacts.length > 0 && (
+          {view.kind === 'list' && filtered.length === 0 && view.contacts.length > 0 && (
             <div className="p-8 text-center text-sm" style={{ color: '#AEBAC1' }}>
               Nessun risultato per &quot;{search}&quot;.
             </div>
           )}
 
-          {state.kind === 'list' && state.contacts.length === 0 && (
+          {view.kind === 'list' && view.contacts.length === 0 && (
             <div className="p-8 text-center text-sm" style={{ color: '#AEBAC1' }}>
               Nessun contatto in rubrica.
             </div>
           )}
 
-          {state.kind === 'list' && filtered.map((c) => renderContactButton(c, 'a:'))}
+          {view.kind === 'list' && visible.map((c) => (
+            <ContactRow key={`a:${c.number}`} contact={c} onPick={handlePick} />
+          ))}
+
+          {view.kind === 'list' && hasMore && (
+            <>
+              <div ref={sentinelRef} aria-hidden="true" style={{ height: 1 }} />
+              <button
+                type="button"
+                onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}
+                className="w-full px-4 py-3 text-sm font-medium hover:bg-[#1F2C34]"
+                style={{ color: '#25D366' }}
+              >
+                Mostra altri ({filtered.length - visibleCount})
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
