@@ -1,6 +1,6 @@
 'use client';
 import React, { useMemo, useState, useEffect } from 'react';
-import { Search, X, MoreVertical, Calendar, Inbox, Clock, AlertCircle, RotateCcw, Plug, Loader2 } from 'lucide-react';
+import { Search, X, MoreVertical, Calendar, Inbox, Clock, AlertCircle, RotateCcw, Plug, Loader2, Paperclip } from 'lucide-react';
 import { ContactAvatar } from '../../components/ContactAvatar';
 import { StatusBadge, formatCountdown, formatRelativePast } from './StatusBadge';
 import { MessageActionsSheet } from './MessageActionsSheet';
@@ -21,6 +21,30 @@ export interface ScheduledMessage {
   sent_at?: string | null;
   delivered_at?: string | null;
   read_at?: string | null;
+  // Allegato (GET /api/messages fa select('*'): i campi c'erano già, la lista li ignorava)
+  media_type?: 'image' | 'video' | 'document' | 'audio' | string | null;
+  media_url?: string | null;
+  media_filename?: string | null;
+}
+
+const MEDIA_LABEL: Record<string, string> = { image: 'Foto', video: 'Video', document: 'Documento', audio: 'Audio' };
+
+// Chip dell'allegato nella lista: prima un messaggio in attesa con una foto
+// dentro era indistinguibile da uno senza (22 set 2026, segnalato da Andrea).
+export function AttachmentChip({ msg }: { msg: Pick<ScheduledMessage, 'media_type' | 'media_filename'> }) {
+  if (!msg.media_type) return null;
+  const label = MEDIA_LABEL[msg.media_type] || 'Allegato';
+  return (
+    <span
+      className="inline-flex items-center gap-1 max-w-full text-[11px] font-medium text-emerald-300 bg-emerald-500/10 rounded-full px-2 py-0.5"
+      aria-label={`Allegato: ${label}`}
+      title={msg.media_filename || label}
+      data-testid="attachment-chip"
+    >
+      <Paperclip className="w-3 h-3 shrink-0" aria-hidden="true" />
+      <span className="truncate">{label}{msg.media_filename ? ` · ${msg.media_filename}` : ''}</span>
+    </span>
+  );
 }
 
 interface Props {
@@ -390,9 +414,10 @@ function MessageRow({ msg, tab, onOpenActions }: {
           <p className="text-sm text-gray-400 mt-0.5 mb-2 line-clamp-2 leading-snug">{text}</p>
         )}
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <StatusBadge status={msg.status} countdown={countdown} />
           <DeliveryStatusIcon msg={msg} />
+          <AttachmentChip msg={msg} />
         </div>
       </div>
 
@@ -455,6 +480,9 @@ function FailedMessageCard({ msg, connected, onRetry, onOpenActions }: {
 
         {text && (
           <p className="text-sm text-gray-400 mt-0.5 mb-1.5 line-clamp-2 leading-snug">{text}</p>
+        )}
+        {msg.media_type && (
+          <div className="mb-1.5"><AttachmentChip msg={msg} /></div>
         )}
 
         <p className="text-[12px] text-red-400/80 mb-2.5">{reason.label}</p>

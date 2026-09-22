@@ -250,7 +250,7 @@ export function MediaAttachmentChip({ media, onClear }: { media: MediaAttachment
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-sm text-white truncate font-medium">{media.media_filename}</div>
-        <div className="text-xs text-gray-400">{KIND_LABELS[media.media_type].label} · {sizeLabel}</div>
+        <div className="text-xs text-gray-400">{KIND_LABELS[media.media_type].label}{media.bytes > 0 ? ` · ${sizeLabel}` : ''}</div>
       </div>
       <button
         type="button"

@@ -74,6 +74,7 @@ export default function DashboardPage() {
   const [prefillText, setPrefillText] = useState<string>('');
   // When editing a message in-place, track its id so ScheduleModal calls PATCH.
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+  const [editingMedia, setEditingMedia] = useState<{ media_type: 'image' | 'video' | 'document' | 'audio'; media_url: string; media_filename: string; bytes: number } | null>(null);
   // Onboarding hints — gated on localStorage. Resolved post-mount to avoid
   // SSR hydration mismatch on localStorage access.
   const [showOnboardingHints, setShowOnboardingHints] = useState(false);
@@ -251,6 +252,13 @@ export default function DashboardPage() {
     });
     setPrefillText(msg.parsed_message || msg.caption || "");
     setEditingMsgId(msg.id);
+    // Allegato esistente: la modale lo mostra e permette di toglierlo o sostituirlo.
+    const mt = msg.media_type;
+    setEditingMedia(
+      msg.media_url && (mt === 'image' || mt === 'video' || mt === 'document' || mt === 'audio')
+        ? { media_type: mt, media_url: msg.media_url, media_filename: msg.media_filename || '', bytes: 0 }
+        : null,
+    );
     setScheduleOpen(true);
   }, []);
 
@@ -480,12 +488,13 @@ export default function DashboardPage() {
 
         <ScheduleModal
           open={scheduleOpen}
-          onClose={() => { setScheduleOpen(false); setSelectedContact(null); setPrefillText(''); setEditingMsgId(null); }}
-          onBack={() => { setScheduleOpen(false); setContactPickerOpen(true); setPrefillText(''); setEditingMsgId(null); }}
+          onClose={() => { setScheduleOpen(false); setSelectedContact(null); setPrefillText(''); setEditingMsgId(null); setEditingMedia(null); }}
+          onBack={() => { setScheduleOpen(false); setContactPickerOpen(true); setPrefillText(''); setEditingMsgId(null); setEditingMedia(null); }}
           contact={selectedContact}
           onScheduled={fetchMessages}
           initialMessage={prefillText}
           editMsgId={editingMsgId}
+          initialMedia={editingMedia}
         />
 
         {showShareToast && (

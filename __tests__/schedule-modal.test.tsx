@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import ScheduleModal from '../components/ScheduleModal';
 
@@ -333,11 +333,57 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
       expect(screen.queryByText(/Allega media/i)).not.toBeInTheDocument();
     });
 
-    test('in modifica la graffetta è nascosta (il PATCH non accetta media)', () => {
+    // 22 set 2026: in modifica l'allegato si vede, si toglie e si sostituisce.
+    test('in modifica la graffetta è visibile', () => {
       render(
         <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} initialMessage="Ciao" editMsgId="msg-1" />
       );
-      expect(screen.queryByRole('button', { name: 'Allega' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Allega' })).toBeInTheDocument();
+    });
+
+    test('in modifica l\'allegato esistente compare come chip e il PATCH non lo tocca se invariato', async () => {
+      (global as any).fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+      const initialMedia = { media_type: 'image' as const, media_url: '39333/uuid-foto.jpg', media_filename: 'foto.jpg', bytes: 0 };
+      render(
+        <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} initialMessage="Ciao" editMsgId="msg-1" initialMedia={initialMedia} />
+      );
+      expect(screen.getByText('foto.jpg')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
+      await waitFor(() => expect((global as any).fetch).toHaveBeenCalledTimes(1));
+      const body = JSON.parse((global as any).fetch.mock.calls[0][1].body);
+      expect((global as any).fetch.mock.calls[0][1].method).toBe('PATCH');
+      expect(body).not.toHaveProperty('media');
+    });
+
+    test('in modifica "Rimuovi media" toglie il chip e il PATCH manda media: null', async () => {
+      (global as any).fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+      const initialMedia = { media_type: 'document' as const, media_url: '39333/uuid-orari.pdf', media_filename: 'orari.pdf', bytes: 0 };
+      render(
+        <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} initialMessage="Ciao" editMsgId="msg-1" initialMedia={initialMedia} />
+      );
+      fireEvent.click(screen.getByRole('button', { name: /Rimuovi media/i }));
+      expect(screen.queryByText('orari.pdf')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
+      await waitFor(() => expect((global as any).fetch).toHaveBeenCalledTimes(1));
+      const body = JSON.parse((global as any).fetch.mock.calls[0][1].body);
+      expect(body.media).toBeNull();
+    });
+
+    test('in modifica un nuovo allegato dalla graffetta finisce nel PATCH come media', async () => {
+      (global as any).fetch = jest.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ media_url: '39333/uuid-new.pdf', media_type: 'document', media_filename: 'new.pdf', bytes: 2048 }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) });
+      const { container } = render(
+        <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} initialMessage="Ciao" editMsgId="msg-1" />
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Allega' }));
+      const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => { fireEvent.change(input, { target: { files: [new File(['x'], 'new.pdf', { type: 'application/pdf' })] } }); });
+      await waitFor(() => expect(screen.getByText('new.pdf')).toBeInTheDocument());
+      fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
+      await waitFor(() => expect((global as any).fetch).toHaveBeenCalledTimes(2));
+      const body = JSON.parse((global as any).fetch.mock.calls[1][1].body);
+      expect(body.media).toEqual({ media_type: 'document', media_url: '39333/uuid-new.pdf', media_filename: 'new.pdf' });
     });
 
     test('allegato dalla graffetta: chip sopra il campo, invio solo-media consentito, campi media nel POST', async () => {

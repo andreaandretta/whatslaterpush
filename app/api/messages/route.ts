@@ -9,6 +9,9 @@ import { isValidRule } from '../../lib/recurrence';
 import { logAuditEvent, clientIpFromHeaders, hashContactRef } from '../../lib/audit';
 import { getSupabaseAdmin } from '../../lib/supabase-admin';
 
+// Tipi di allegato accettati (POST e PATCH). Il CHECK in DB è identico.
+const ALLOWED_MEDIA = ['image', 'video', 'document', 'audio', 'sticker', 'location', 'contact'];
+
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
 // (bug storico stress-index/reset-quote). force-no-store la disattiva. (Task 42)
@@ -149,13 +152,13 @@ export async function PATCH(req: NextRequest) {
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
-  const { id, status, scheduled_at, message, recurrence_rule, action } = body || {};
+  const { id, status, scheduled_at, message, recurrence_rule, action, media } = body || {};
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
   const supabase = getSupabaseAdmin();
   const { data: existing } = await supabase
     .from('scheduled_messages')
-    .select('id, instance_phone, status, media_type, media_url, recurrence_rule')
+    .select('id, instance_phone, status, media_type, media_url, media_filename, recurrence_rule, parsed_message, caption')
     .eq('id', id)
     .eq('instance_phone', phone)
     .single();
@@ -241,11 +244,45 @@ export async function PATCH(req: NextRequest) {
     update.scheduled_at = applyJitter(d.toISOString());
   }
 
+  // Allegato in modifica (22 set 2026): `media: null` lo toglie, `media: {...}`
+  // lo sostituisce con un file già caricato (stesso contratto del POST).
+  // Prima il PATCH ignorava i media: dalla modale non si poteva né vedere né
+  // togliere l'allegato di un messaggio in attesa.
+  let nextHasMedia = typeof existing.media_type === 'string' && typeof existing.media_url === 'string' && existing.media_url.length > 0;
+  let oldMediaToDrop: string | null = null;
+  if (media !== undefined) {
+    if (media === null) {
+      if (nextHasMedia) oldMediaToDrop = existing.media_url as string;
+      update.media_type = null;
+      update.media_url = null;
+      update.media_filename = null;
+      update.media_caption = null;
+      nextHasMedia = false;
+    } else {
+      const mt = media?.media_type;
+      const mu = media?.media_url;
+      if (typeof mt !== 'string' || !ALLOWED_MEDIA.includes(mt)) {
+        return NextResponse.json({ error: 'invalid_media_type' }, { status: 400 });
+      }
+      // IDOR guard, come nel POST: solo file sotto il prefisso di QUESTO utente.
+      if (typeof mu !== 'string' || mu.length === 0 || mu.includes('..') || !mu.startsWith(phone + '/')) {
+        return NextResponse.json({ error: 'invalid_media_url' }, { status: 400 });
+      }
+      if (nextHasMedia && existing.media_url !== mu) oldMediaToDrop = existing.media_url as string;
+      update.media_type = mt;
+      update.media_url = mu;
+      update.media_filename = typeof media?.media_filename === 'string' && media.media_filename.length > 0
+        ? media.media_filename.slice(0, 200)
+        : null;
+      nextHasMedia = true;
+    }
+  }
+
   if (message !== undefined) {
     if (typeof message !== 'string') {
       return NextResponse.json({ error: 'invalid_message' }, { status: 400 });
     }
-    const hasMedia = typeof existing.media_type === 'string' && typeof existing.media_url === 'string' && existing.media_url.length > 0;
+    const hasMedia = nextHasMedia;
     const clean = message.trim();
     if (!hasMedia) {
       if (clean.length === 0 || clean.length > 3500) {
@@ -259,6 +296,12 @@ export async function PATCH(req: NextRequest) {
     update.parsed_message = clean;
     update.caption = clean;
     if (hasMedia) update.media_caption = clean.length > 0 ? clean : null;
+  } else if (media === null) {
+    // Tolto l'allegato senza toccare il testo: il messaggio non può restare vuoto.
+    const curText = (((existing as any).parsed_message || (existing as any).caption || '') as string).trim();
+    if (curText.length === 0) {
+      return NextResponse.json({ error: 'invalid_message', reason: 'text_required_without_media' }, { status: 400 });
+    }
   }
 
   if (recurrence_rule !== undefined) {
@@ -303,6 +346,23 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'message_not_editable' }, { status: 409 });
     }
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Il vecchio allegato viene tolto dallo Storage SOLO se nessun'altra riga lo
+  // usa: le occorrenze di una ricorrenza condividono lo stesso file
+  // (vedi cleanup-media). Best-effort: un errore qui non annulla la modifica.
+  if (oldMediaToDrop) {
+    try {
+      const { count } = await supabase
+        .from('scheduled_messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('media_url', oldMediaToDrop);
+      if ((count || 0) === 0) {
+        await supabase.storage.from('message-media').remove([oldMediaToDrop]);
+      }
+    } catch (e) {
+      console.error('PATCH: old media cleanup failed', (e as any)?.message || e);
+    }
   }
 
   await logAuditEvent({
@@ -359,7 +419,6 @@ export async function POST(req: NextRequest) {
     if (messageStr.length > 3500) {
       return NextResponse.json({ error: 'invalid_message' }, { status: 400 });
     }
-    const ALLOWED_MEDIA = ['image', 'video', 'document', 'audio', 'sticker', 'location', 'contact'];
     if (!ALLOWED_MEDIA.includes(media_type)) {
       return NextResponse.json({ error: 'invalid_media_type' }, { status: 400 });
     }

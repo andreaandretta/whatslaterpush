@@ -29,6 +29,8 @@ interface ScheduleModalProps {
   onScheduled: () => void;
   /** Pre-fill the message body — used by Duplica/Modifica from the dashboard. */
   initialMessage?: string;
+  // Allegato già presente sul messaggio che si sta modificando (edit mode).
+  initialMedia?: MediaAttachment | null;
   /** When set, the modal is in edit mode: handleSubmit calls PATCH instead of POST. */
   editMsgId?: string | null;
 }
@@ -40,6 +42,12 @@ const REMINDER_LABELS: Record<ReminderValue, string> = {
   '1day': '1 giorno prima',
   'never': 'Mai',
 };
+
+function mediaChanged(a: MediaAttachment | null, b: MediaAttachment | null): boolean {
+  if (!a && !b) return false;
+  if (!a || !b) return true;
+  return a.media_url !== b.media_url;
+}
 
 function defaultDateTime(): { date: Date; time: string } {
   const d = new Date();
@@ -68,7 +76,7 @@ function translateError(code: string): string {
   }
 }
 
-export default function ScheduleModal({ open, onClose, onBack, contact, onScheduled, initialMessage = '', editMsgId = null }: ScheduleModalProps) {
+export default function ScheduleModal({ open, onClose, onBack, contact, onScheduled, initialMessage = '', editMsgId = null, initialMedia = null }: ScheduleModalProps) {
   const init = defaultDateTime();
   const [selectedDate, setSelectedDate] = useState<Date>(init.date);
   const [selectedTime, setSelectedTime] = useState<string>(init.time);
@@ -120,7 +128,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       setRecurrenceSheetOpen(false);
       setTemplateSheetOpen(false);
       setMediaPickerOpen(false);
-      setMedia(null);
+      setMedia(editMsgId ? initialMedia : null);
       setAdvancedOpen(false);
     }
   }, [open]);
@@ -198,9 +206,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
 
       if (editMsgId) {
         // Edit-in-place: PATCH the existing message instead of creating a new one.
-        // Fields accepted by PATCH: message, scheduled_at, recurrence_rule.
-        // Media edits are not supported via PATCH (backend guards it); if the
-        // user attached new media in edit mode we fall back to POST.
+        // Fields accepted by PATCH: message, scheduled_at, recurrence_rule, media.
         res = await fetch('/api/messages', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -209,6 +215,11 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
             message: message.trim(),
             scheduled_at: scheduledDate.toISOString(),
             recurrence_rule: buildRRule(recurrence, scheduledDate) ?? null,
+            // Allegato: solo se è cambiato rispetto a quello con cui si è aperta
+            // la modale (null = tolto, oggetto = nuovo file già caricato).
+            ...(mediaChanged(initialMedia, media) ? {
+              media: media ? { media_type: media.media_type, media_url: media.media_url, media_filename: media.media_filename } : null,
+            } : {}),
           }),
         });
       } else {
@@ -449,9 +460,9 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           <div className="px-4 pt-4">
             {/* Campo stile WhatsApp: la graffetta vive DENTRO il bordo del campo,
                 sempre a vista (prima era una riga sepolta in "Opzioni avanzate").
-                In modifica è nascosta: il PATCH non accetta media. */}
+                In modifica si può togliere o sostituire (PATCH con `media`). */}
             <div className="flex items-end bg-[#1F2C33] rounded-xl pl-1 focus-within:ring-2 focus-within:ring-primary/30">
-              {!editMsgId && (
+              {(
                 <button
                   type="button"
                   onClick={() => setMediaPickerOpen(true)}
