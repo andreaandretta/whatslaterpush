@@ -166,6 +166,8 @@ export function buildQuotaRequeueUpdate(rescheduleTo?: string): RequeueUpdate {
  * (rescheduled +retry*5min from now); retry >= 3 → terminal 'failed' keeping the
  * original scheduled_at. Always clears send_attempted_at (see RequeueUpdate).
  */
+export { isNotOnWhatsAppError } from './message-error';
+
 export function buildFailureRequeueUpdate(args: {
   newRetryCount: number;
   errorMessage: string;

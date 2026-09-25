@@ -708,4 +708,85 @@ describe('GET /api/contacts', () => {
       expect(res.status).toBe(502);
     });
   });
+  // 25 set 2026: 3 messages failed with "Numero non su WhatsApp" because the
+  // picker offered WhatsApp's internal code (Linked ID, 14-15 digits) stored
+  // as if it were the phone number.
+  describe('Linked IDs stored as numbers', () => {
+    const PIC = 'https://pps.whatsapp.net/v/t61/sara.jpg';
+    test('a LID row never reaches the picker; its name moves to the phone row with the same photo', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '123456789012345', name: 'Ostetrica Sara', push_name: null, profile_pic_url: PIC + '?oh=1', added_manually: false },
+        { contact_number: '393401111111', name: '+39 340 111 1111', push_name: null, profile_pic_url: PIC + '?oh=2', added_manually: false },
+      ]);
+      const body = await (await callGet()).json();
+      expect(body.contacts.map((c: any) => c.number)).toEqual(['393401111111']);
+      expect(body.contacts[0].name).toBe('Ostetrica Sara');
+    });
+
+    test('two phone rows with the same photo: no guess, the name is not moved', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '123456789012345', name: 'Dr. Rossi', push_name: null, profile_pic_url: PIC, added_manually: false },
+        { contact_number: '393401111111', name: '+39 340 111 1111', push_name: null, profile_pic_url: PIC, added_manually: false },
+        { contact_number: '393402222222', name: '+39 340 222 2222', push_name: null, profile_pic_url: PIC, added_manually: false },
+      ]);
+      const body = await (await callGet()).json();
+      expect(body.contacts.map((c: any) => c.name).sort()).toEqual(['+39 340 111 1111', '+39 340 222 2222']);
+    });
+
+    test('a phone row with its own real name keeps it', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '123456789012345', name: 'Codice', push_name: null, profile_pic_url: PIC, added_manually: false },
+        { contact_number: '393401111111', name: 'Sara Pisu', push_name: null, profile_pic_url: PIC, added_manually: false },
+      ]);
+      const body = await (await callGet()).json();
+      expect(body.contacts).toEqual([expect.objectContaining({ number: '393401111111', name: 'Sara Pisu' })]);
+    });
+
+    test('a long number the user typed by hand stays visible', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '431234567890123', name: 'Hans', push_name: null, profile_pic_url: null, added_manually: true },
+      ]);
+      const body = await (await callGet()).json();
+      expect(body.contacts).toEqual([{ number: '431234567890123', name: 'Hans', addedManually: true }]);
+    });
+
+    test('a real long number synced after the fix is shown, also among the recents', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '62812345678901', name: 'Budi', push_name: null, profile_pic_url: null, added_manually: false, created_at: '2026-10-02T09:00:00Z' },
+      ]);
+      mockSupa.setResponse('scheduled_messages:select', [{ recipient_number: '62812345678901', recipient_name: 'Budi' }]);
+      const body = await (await callGet()).json();
+      expect(body.contacts).toEqual([{ number: '62812345678901', name: 'Budi' }]);
+      expect(body.recents.map((r: any) => r.number)).toEqual(['62812345678901']);
+    });
+
+    test('a digits-only name the user typed on purpose is kept', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393401111111', name: '118', push_name: 'Marco', profile_pic_url: null, added_manually: true },
+      ]);
+      const body = await (await callGet()).json();
+      expect(body.contacts[0].name).toBe('118');
+    });
+
+    test('a synced name that is just the number gives way to the WhatsApp name', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '393401111111', name: '+39 340 111 1111', push_name: 'Marco', profile_pic_url: null, added_manually: false },
+      ]);
+      const body = await (await callGet()).json();
+      expect(body.contacts[0].name).toBe('Marco');
+    });
+
+    test('a failed LID recipient does not come back among the recents', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '123456789012345', name: 'Ostetrica Sara', push_name: null, profile_pic_url: null, added_manually: false, created_at: '2026-09-20T10:00:00Z' },
+        { contact_number: '393401111111', name: 'Mario', push_name: 'Mario', profile_pic_url: null, added_manually: false },
+      ]);
+      mockSupa.setResponse('scheduled_messages:select', [
+        { recipient_number: '123456789012345', recipient_name: 'Ostetrica Sara' },
+        { recipient_number: '393401111111', recipient_name: 'Mario' },
+      ]);
+      const body = await (await callGet()).json();
+      expect(body.recents.map((r: any) => r.number)).toEqual(['393401111111']);
+    });
+  });
 });

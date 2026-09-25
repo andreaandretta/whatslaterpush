@@ -5,7 +5,7 @@ import { ContactAvatar } from '../../components/ContactAvatar';
 import { StatusBadge, formatCountdown, formatRelativePast } from './StatusBadge';
 import { MessageActionsSheet } from './MessageActionsSheet';
 import { DeliveryStatusIcon } from './DeliveryStatusIcon';
-import { mapErrorReason } from '../lib/message-error';
+import { mapErrorReason, isNotOnWhatsAppError } from '../lib/message-error';
 
 export interface ScheduledMessage {
   id: string;
@@ -447,6 +447,8 @@ function FailedMessageCard({ msg, connected, onRetry, onOpenActions }: {
   const text = msg.parsed_message || msg.caption || '';
   const displayName = msg.recipient_name || `+${msg.recipient_number || '?'}`;
   const reason = mapErrorReason(msg.error_message);
+  // Only WhatsApp's own "exists": false is permanent; any other 400 keeps Riprova.
+  const notOnWhatsApp = isNotOnWhatsAppError(msg.error_message);
   // Offer "Ricollega" when the failure looks like a dropped session OR the
   // Evolution link is currently down — a plain Riprova won't fix either.
   const showReconnect = reason.kind === 'disconnected' || !connected;
@@ -486,9 +488,14 @@ function FailedMessageCard({ msg, connected, onRetry, onOpenActions }: {
         )}
 
         <p className="text-[12px] text-red-400/80 mb-2.5">{reason.label}</p>
+        {notOnWhatsApp && (
+          <p className="text-[12px] text-gray-400 -mt-1.5 mb-2.5 leading-snug" data-testid="invalid-number-hint">
+            Riprovare non serve: WhatsApp non conosce questo numero. Spesso il contatto era salvato con un codice interno di WhatsApp invece del numero. Programma di nuovo il messaggio scegliendo la persona dalla rubrica, oppure scrivi il numero a mano.
+          </p>
+        )}
 
         <div className="flex items-center gap-2 flex-wrap">
-          <button
+          {!notOnWhatsApp && <button
             onClick={handleRetry}
             disabled={retrying}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -497,9 +504,9 @@ function FailedMessageCard({ msg, connected, onRetry, onOpenActions }: {
               ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
               : <RotateCcw className="w-3.5 h-3.5" />}
             {retrying ? 'Rimetto in coda…' : 'Riprova'}
-          </button>
+          </button>}
 
-          {showReconnect && (
+          {showReconnect && !notOnWhatsApp && (
             <a
               href="/connect"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold bg-white/[0.06] text-gray-200 hover:bg-white/10 transition-colors"

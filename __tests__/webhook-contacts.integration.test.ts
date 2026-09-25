@@ -300,3 +300,57 @@ describe('Webhook: profilePicUrl persistence', () => {
     expect(rows[0].profile_pic_url).toBe(null);
   });
 });
+
+describe('Webhook: WhatsApp Linked ID (@lid) JIDs are never phone numbers', () => {
+  // Evolution 2.3.7 forwards Baileys' `contact.id` verbatim as `remoteJid`.
+  // Since Baileys 7 that id is "either in lid or jid format", so
+  // contacts.update fires with `<14-15 digit LID>@lid`, name null and a
+  // profilePicUrl. Prod 2026-09-06: 1.008 of 3.724 whatsapp_contacts rows
+  // were such LIDs saved as phone numbers; sending to them targets
+  // `<lid>@s.whatsapp.net`, which does not exist.
+  test('CONTACTS_UPDATE with a 15-digit @lid JID is discarded (no rpc call)', async () => {
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 1);
+    const body = makeContactsUpdatePayload({
+      instance: INSTANCE,
+      contacts: [{ jid: '123456789012345@lid', profilePicUrl: 'https://pps.whatsapp.net/lid.jpg' }],
+    });
+    const res = await callWebhook(body);
+    expect(res.status).toBe(200);
+    expect(rpcUpsertRows()).toEqual([]);
+  });
+
+  test('CONTACTS_UPSERT keeps the phone JID and drops the 14-digit @lid one', async () => {
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 1);
+    const body = makeContactsUpsertPayload({
+      instance: INSTANCE,
+      contacts: [
+        { jid: '12345678901234@lid', pushName: 'Ghost' },
+        { jid: '393401111111@s.whatsapp.net', pushName: 'Mario' },
+      ],
+    });
+    const res = await callWebhook(body);
+    expect(res.status).toBe(200);
+    expect(rpcUpsertRows().map(r => r.contact_number)).toEqual(['393401111111']);
+  });
+
+  test('MESSAGING_HISTORY_SET contact addressed by @lid resolves through Baileys phoneNumber', async () => {
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 1);
+    // Raw Baileys Contact shape (Types/Contact.ts): `id` may be the LID while
+    // `phoneNumber` carries the @s.whatsapp.net form of the same person.
+    const body = {
+      event: 'MESSAGING_HISTORY_SET',
+      instance: INSTANCE,
+      data: {
+        contacts: [{ id: '12345678901234@lid', phoneNumber: '393402222222@s.whatsapp.net', name: 'Anna', notify: 'Anna' }],
+        chats: [],
+        messages: [],
+      },
+    };
+    const res = await callWebhook(body);
+    expect(res.status).toBe(200);
+    const rows = rpcUpsertRows();
+    expect(rows.length).toBe(1);
+    expect(rows[0].contact_number).toBe('393402222222');
+    expect(rows[0].name).toBe('Anna');
+  });
+});

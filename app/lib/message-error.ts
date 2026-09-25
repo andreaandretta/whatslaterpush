@@ -38,3 +38,13 @@ export function mapErrorReason(raw?: string | null): MappedError {
   if (RATE_LIMITED.test(s)) return { kind: 'rate_limited', label: REASONS.rate_limited };
   return { kind: 'generic', label: REASONS.generic };
 }
+
+/**
+ * Evolution's 400 for a recipient WhatsApp does not know:
+ * `{"jid":"…@s.whatsapp.net","exists":false,…}`. Permanent: retrying cannot
+ * help (typically a Linked ID stored as a phone number, see app/lib/jid.ts).
+ * Narrower than the 'invalid_number' kind above, which also covers any 400.
+ */
+export function isNotOnWhatsAppError(message: unknown): boolean {
+  return typeof message === 'string' && /"exists"\s*:\s*false/.test(message);
+}

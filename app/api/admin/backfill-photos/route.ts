@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { evolutionClient } from '../../../../lib/evolution/client';
 import { validatePhone } from '../../../lib/phone';
+import { phoneDigitsFromJid, phoneJidFromContact } from '../../../lib/jid';
 import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
@@ -34,17 +35,14 @@ export const dynamic = 'force-dynamic';
 
 // Mirror the jid→number normalisation used in /api/contacts/route.ts so
 // we don't drift on edge cases (device suffix, groups, broadcasts).
+// A LID (`@lid`) is never a phone number: see app/lib/jid.ts.
 function jidToNumber(jid: any): string | null {
-  if (typeof jid !== 'string' || !jid) return null;
-  if (jid.includes('@g.us') || jid.includes('@broadcast')) return null;
-  const numericPart = (jid.split('@')[0] || '').split(':')[0];
-  return validatePhone(numericPart) || null;
+  const digits = phoneDigitsFromJid(jid);
+  return digits ? (validatePhone(digits) || null) : null;
 }
 
 function extractJid(c: any): string | null {
-  if (typeof c?.remoteJid === 'string' && c.remoteJid.includes('@')) return c.remoteJid;
-  if (typeof c?.id === 'string' && c.id.includes('@')) return c.id;
-  return null;
+  return phoneJidFromContact(c);
 }
 
 function sleep(ms: number): Promise<void> {

@@ -283,3 +283,24 @@ describe('POST /api/admin/backfill-photos — failure isolation', () => {
     expect(rows[0].user_phone).toBe('393332222222');
   });
 });
+
+describe('POST /api/admin/backfill-photos — @lid JIDs', () => {
+  test('ignores @lid rows: a Linked ID is not a phone number even when its digits match a cached row', async () => {
+    mockSupa.setResponse('user_instances:select', [
+      { phone_number: '393331111111', instance_name: 'SchedWhats-393331111111' },
+    ]);
+    // A stale LID row (written before the @lid filter) still missing a photo…
+    mockSupa.setResponse('whatsapp_contacts:select', [
+      { contact_number: '12345678901234' },
+    ]);
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 1);
+    // …and Evolution reports a picture for that same Linked ID.
+    findChatsMock.mockResolvedValue([
+      { remoteJid: '12345678901234@lid', profilePicUrl: 'https://pps.whatsapp.net/lid.jpg' },
+    ]);
+
+    const res = await callBackfill('test-cron-secret');
+    expect(res.status).toBe(200);
+    expect(rpcUpsertCalls().length).toBe(0);
+  });
+});

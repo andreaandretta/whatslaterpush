@@ -3,6 +3,8 @@ import { getPlanLimits } from '../../lib/plans';
 import { isBillingEnabled, getEffectivePlan } from '../../lib/billing';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { validatePhone } from '../../lib/phone';
+import { looksLikeLidDigits, isLegacyLidRow } from '../../lib/jid';
+import { evolutionClient } from '../../../lib/evolution/client';
 import { applyJitter } from '../../lib/cron-utils';
 import { contactActiveCutoffIso, isRecipientActive } from '../../lib/contact-window';
 import { isValidRule } from '../../lib/recurrence';
@@ -17,6 +19,25 @@ export const dynamic = 'force-dynamic';
 // (bug storico stress-index/reset-quote). force-no-store la disattiva. (Task 42)
 export const fetchCache = 'force-no-store';
 
+
+// true unless WhatsApp explicitly answers "exists": false (4 s cap; any error,
+// missing instance or unclear answer counts as "don't block").
+async function whatsappKnowsNumber(supabase: any, phone: string, number: string): Promise<boolean> {
+  try {
+    const { data: inst } = await supabase.from('user_instances').select('instance_name').eq('phone_number', phone).maybeSingle();
+    const instanceName = (inst as any)?.instance_name;
+    if (!instanceName) return true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const res = await Promise.race([
+      evolutionClient.whatsappNumbers(instanceName, [number]),
+      new Promise<null>((r) => { timer = setTimeout(() => r(null), 4000); }),
+    ]).finally(() => clearTimeout(timer));
+    const hit = Array.isArray(res) ? res[0] : null;
+    return hit?.exists !== false;
+  } catch {
+    return true;
+  }
+}
 
 async function getAuthedPhone(req: NextRequest): Promise<string | null> {
   const raw = req.cookies.get(AUTH_COOKIE_NAME)?.value;
@@ -450,6 +471,27 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = getSupabaseAdmin();
+
+  // A Linked ID (WhatsApp's internal code, 14-15 digits) is not a phone number:
+  // sending to it always fails with "Numero non su WhatsApp". Only the LIDs
+  // the webhook stored in the address book before it learned to skip them are
+  // suspects, and WhatsApp itself has the last word: a real long number it
+  // knows goes through. If the check cannot run, nothing is blocked.
+  if (looksLikeLidDigits(normalized)) {
+    const { data: lidRow } = await supabase
+      .from('whatsapp_contacts')
+      .select('added_manually, created_at')
+      .eq('user_phone', phone)
+      .eq('contact_number', normalized)
+      .maybeSingle();
+    if (lidRow && isLegacyLidRow({ contact_number: normalized, ...(lidRow as any) }) && !(await whatsappKnowsNumber(supabase, phone, normalized))) {
+      return NextResponse.json({
+        error: 'recipient_is_lid',
+        message: 'Questo contatto è salvato con un codice interno di WhatsApp, non con il numero. Cercalo di nuovo in rubrica o scrivi il numero a mano.',
+      }, { status: 400 });
+    }
+  }
+
   const { data: user } = await supabase
     .from('user_instances')
     .select('id, subscription_plan')

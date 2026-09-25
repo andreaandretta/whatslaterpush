@@ -72,6 +72,7 @@ function translateError(code: string): string {
     case 'invalid_datetime': return 'Data/ora non valida (deve essere almeno 1 minuto nel futuro).';
     case 'invalid_recurrence_rule': return 'Ripetizione non valida.';
     case 'self_target': return 'Non puoi schedulare a te stesso.';
+    case 'recipient_is_lid': return 'Questo contatto è salvato con un codice interno di WhatsApp, non con il numero. Cercalo di nuovo in rubrica o scrivi il numero a mano.';
     default: return 'Errore: ' + code;
   }
 }

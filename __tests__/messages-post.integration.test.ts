@@ -10,12 +10,16 @@ jest.mock('@supabase/supabase-js', () => ({
   createClient: () => mockSupa.client,
 }));
 
+const whatsappNumbersMock = jest.fn();
+jest.mock('../lib/evolution/client', () => ({ evolutionClient: { whatsappNumbers: whatsappNumbersMock } }));
+
 const ORIGINAL_ENV = process.env;
 const USER_PHONE = '393331234567';
 const INSTANCE = 'SchedWhats-' + USER_PHONE;
 
 beforeEach(() => {
   mockSupa.calls.length = 0;
+  whatsappNumbersMock.mockReset();
   process.env = {
     ...ORIGINAL_ENV,
     SUPABASE_URL: 'https://test.supabase.co',
@@ -31,6 +35,7 @@ afterEach(() => {
 async function callPost(body: any, opts: { authed?: boolean } = { authed: true }) {
   jest.resetModules();
   jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupa.client }));
+  jest.mock('../lib/evolution/client', () => ({ evolutionClient: { whatsappNumbers: whatsappNumbersMock } }));
   const { POST } = await import('../app/api/messages/route');
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -85,6 +90,55 @@ describe('POST /api/messages', () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe('self_target');
+  });
+
+  describe('Linked ID stored as a number (25 set 2026)', () => {
+    const LID = '144392555855948';
+    const at = () => new Date(Date.now() + 3600_000).toISOString();
+    beforeEach(() => {
+      mockSupa.setResponse('user_instances:select', { id: 'user-uuid-1', subscription_plan: 'personal', connection_status: 'open', instance_name: INSTANCE });
+      mockInsertedRow();
+    });
+
+    test('400 recipient_is_lid when an old synced row holds it and WhatsApp says it does not exist', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', { added_manually: false, created_at: '2026-09-25T14:01:23Z' });
+      whatsappNumbersMock.mockResolvedValue([{ exists: false, jid: LID + '@s.whatsapp.net', number: LID }]);
+      const res = await callPost({ recipient_number: LID, message: 'hi', scheduled_at: at() });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe('recipient_is_lid');
+      expect(whatsappNumbersMock).toHaveBeenCalledWith(INSTANCE, [LID]);
+      expect(mockSupa.calls.some((c) => c.table === 'scheduled_messages' && c.operation === 'insert')).toBe(false);
+    });
+
+    test('a real long number WhatsApp knows goes through', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', { added_manually: false, created_at: '2026-09-01T00:00:00Z' });
+      whatsappNumbersMock.mockResolvedValue([{ exists: true, jid: '62812345678901@s.whatsapp.net' }]);
+      const res = await callPost({ recipient_number: '62812345678901', message: 'hi', scheduled_at: at() });
+      expect((await res.json()).error).not.toBe('recipient_is_lid');
+    });
+
+    test('if WhatsApp cannot be asked, nothing is blocked', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', { added_manually: false, created_at: '2026-09-01T00:00:00Z' });
+      whatsappNumbersMock.mockRejectedValue(new Error('Evolution API error: 500'));
+      const res = await callPost({ recipient_number: LID, message: 'hi', scheduled_at: at() });
+      expect((await res.json()).error).not.toBe('recipient_is_lid');
+    });
+
+    test('typed by hand, or synced after the fix: no check at all', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', { added_manually: true, created_at: '2026-09-01T00:00:00Z' });
+      let res = await callPost({ recipient_number: '431234567890123', message: 'hi', scheduled_at: at() });
+      expect((await res.json()).error).not.toBe('recipient_is_lid');
+      mockSupa.setResponse('whatsapp_contacts:select', { added_manually: false, created_at: '2026-10-02T09:00:00Z' });
+      res = await callPost({ recipient_number: '62812345678901', message: 'hi', scheduled_at: at() });
+      expect((await res.json()).error).not.toBe('recipient_is_lid');
+      expect(whatsappNumbersMock).not.toHaveBeenCalled();
+    });
+
+    test('a normal-length number never triggers the check', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', { added_manually: false, created_at: '2026-01-01T00:00:00Z' });
+      await callPost({ recipient_number: '393339998877', message: 'hi', scheduled_at: at() });
+      expect(whatsappNumbersMock).not.toHaveBeenCalled();
+    });
   });
 
   test('400 invalid_datetime when scheduled_at is in the past', async () => {

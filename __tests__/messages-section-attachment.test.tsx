@@ -48,3 +48,24 @@ describe('MessagesSection — pending row with attachment', () => {
     expect(screen.getByTestId('attachment-chip')).toHaveTextContent('Documento · orari.pdf');
   });
 });
+
+describe('MessagesSection — failed because the number is not on WhatsApp', () => {
+  test('no useless "Riprova"; a hint says what to do instead', () => {
+    render(<MessagesSection {...props} messages={[msg({ status: 'failed', error_message: 'Evolution API error: 400 - {"exists":false}' })]} />);
+    expect(screen.getByText('Numero non su WhatsApp')).toBeInTheDocument();
+    expect(screen.getByTestId('invalid-number-hint')).toBeInTheDocument();
+    expect(screen.queryByText('Riprova')).not.toBeInTheDocument();
+  });
+
+  test('any other 400 (e.g. a timeout wrapped as Bad Request) keeps "Riprova"', () => {
+    render(<MessagesSection {...props} messages={[msg({ status: 'failed', error_message: 'HTTP 400: {"status":400,"error":"Bad Request","response":{"message":["Error: Timed Out"]}}' })]} />);
+    expect(screen.getByText('Riprova')).toBeInTheDocument();
+    expect(screen.queryByTestId('invalid-number-hint')).not.toBeInTheDocument();
+  });
+
+  test('other failures keep "Riprova"', () => {
+    render(<MessagesSection {...props} messages={[msg({ status: 'failed', error_message: 'Evolution API error: 500 - boom' })]} />);
+    expect(screen.getByText('Riprova')).toBeInTheDocument();
+    expect(screen.queryByTestId('invalid-number-hint')).not.toBeInTheDocument();
+  });
+});

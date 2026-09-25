@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { validatePhone } from '../../lib/phone';
+import { phoneDigitsFromJid, phoneJidFromContact, isLegacyLidRow } from '../../lib/jid';
 import { evolutionClient } from '../../../lib/evolution/client';
 import { getSupabaseAdmin } from '../../lib/supabase-admin';
 
@@ -84,17 +85,70 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([p, timeout]).finally(() => { if (timer) clearTimeout(timer); });
 }
 
-type CachedContactRow = { contact_number: string; name: string | null; push_name: string | null; profile_pic_url: string | null; added_manually: boolean | null };
+type CachedContactRow = { contact_number: string; name: string | null; push_name: string | null; profile_pic_url: string | null; added_manually: boolean | null; created_at?: string | null };
+
+// Photo URL without the signed query string: the same person's picture has the
+// same path under their LID row and under their phone row.
+function photoKey(url: string | null | undefined): string | null {
+  const u = (url || '').trim();
+  return u ? u.split('?')[0] : null;
+}
+
+// A name made only of digits/punctuation (or no name at all).
+function isDigitsOnlyName(name: string | null): boolean {
+  return !name || /^[+\d\s().-]+$/.test(name);
+}
+
+// No real name: empty, or the contact's own number written out ("+39 340 …").
+// A digits-only name that is NOT the number (e.g. "118") was chosen on purpose.
+function isNoRealName(name: string | null, num: string): boolean {
+  if (!name) return true;
+  if (!isDigitsOnlyName(name)) return false;
+  const d = name.replace(/\D/g, '');
+  return d.length >= 6 && (num.endsWith(d) || d.endsWith(num.slice(-9)));
+}
+
+// Numbers of the LID rows (see isLegacyLidRow): hidden from picker and recents.
+function legacyLidNumbers(rows: CachedContactRow[]): Set<string> {
+  const out = new Set<string>();
+  for (const row of rows) if (isLegacyLidRow(row)) out.add(row.contact_number);
+  return out;
+}
 
 // whatsapp_contacts rows -> picker contacts (+ visibility filter). Shared by the
 // fast cache-only path and the live+seed path so the cache behaves identically.
 function cachedRowsToContacts(rows: CachedContactRow[], phone: string): OutContact[] {
+  // LID rows (14-15 digits, not typed by the user, stored before the webhook
+  // learned to skip them) are Linked IDs, not numbers: sending to them fails
+  // with "Numero non su WhatsApp". They never reach the picker. Their display
+  // name is carried over to the phone row with the SAME photo when that phone
+  // row has no real name (only when exactly one phone row matches: no guess).
+  const lidNameByPhoto = new Map<string, string>();
+  const phoneRowsByPhoto = new Map<string, number>();
+  for (const row of rows) {
+    const key = photoKey(row.profile_pic_url);
+    if (!key) continue;
+    if (isLegacyLidRow(row)) {
+      const label = (row.name && row.name.trim()) || (row.push_name && row.push_name.trim()) || '';
+      if (label && !isDigitsOnlyName(label)) lidNameByPhoto.set(key, label);
+    } else {
+      phoneRowsByPhoto.set(key, (phoneRowsByPhoto.get(key) || 0) + 1);
+    }
+  }
+
   const out: OutContact[] = [];
   for (const row of rows) {
     const num = row.contact_number;
     if (!num || num === phone) continue;
-    const name = (row.name && row.name.trim()) || null;
+    if (isLegacyLidRow(row)) continue;
+    let name = (row.name && row.name.trim()) || null;
     const pushName = (row.push_name && row.push_name.trim()) || null;
+    const key = photoKey(row.profile_pic_url);
+    if (key && lidNameByPhoto.has(key) && phoneRowsByPhoto.get(key) === 1 && isNoRealName(name, num) && isDigitsOnlyName(pushName)) {
+      name = lidNameByPhoto.get(key)!;
+    } else if (name && row.added_manually !== true && isNoRealName(name, num) && pushName && !isDigitsOnlyName(pushName)) {
+      name = null; // the synced name is just the number: show the WhatsApp name
+    }
     const entry: OutContact = { number: num, name: name || pushName || `+${num}` };
     if (pushName) entry.pushName = pushName;
     const photoUrl = (row.profile_pic_url && row.profile_pic_url.trim()) || null;
@@ -121,7 +175,7 @@ async function fetchAllCachedRows(supabase: any, phone: string): Promise<{ rows:
   let partial = false;
   const query = (i: number) => supabase
     .from('whatsapp_contacts')
-    .select('contact_number, name, push_name, profile_pic_url, added_manually')
+    .select('contact_number, name, push_name, profile_pic_url, added_manually, created_at')
     .eq('user_phone', phone)
     .order('contact_number', { ascending: true })
     .range(i * CONTACTS_PAGE, (i + 1) * CONTACTS_PAGE - 1);
@@ -193,7 +247,7 @@ async function fetchRecentRows(supabase: any, phone: string): Promise<RecentRow[
 // Recenti, parte PURA: up to 10 distinct most-recent recipients. first-wins = latest
 // (rows are ORDER BY created_at DESC). Enriches from `byNumber` so a recent that's
 // also a known contact keeps its name/photo. Computed for BOTH paths.
-function buildRecents(recentRows: RecentRow[], phone: string, byNumber: Map<string, OutContact>): OutContact[] {
+function buildRecents(recentRows: RecentRow[], phone: string, byNumber: Map<string, OutContact>, lidNumbers: Set<string>): OutContact[] {
   const recents: OutContact[] = [];
   const seen = new Set<string>();
   for (const row of recentRows) {
@@ -201,6 +255,9 @@ function buildRecents(recentRows: RecentRow[], phone: string, byNumber: Map<stri
     if (!num || num === phone) continue;
     if (seen.has(num)) continue;
     seen.add(num);
+    // A LID recipient (a message that failed with "Numero non su WhatsApp") must
+    // not come back as a "recent" contact: picking it would fail again.
+    if (lidNumbers.has(num)) continue;
     recents.push(byNumber.get(num) ?? { number: num, name: (row.recipient_name && row.recipient_name.trim()) || `+${num}` });
     if (recents.length >= 10) break;
   }
@@ -261,6 +318,7 @@ export async function GET(req: NextRequest) {
   if (!user?.instance_name) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
   const cachedContacts = cachedRowsToContacts(cached, phone);
+  const lidNumbers = legacyLidNumbers(cached);
   // Sync-completeness signal = the TOTAL synced rows for this instance, BEFORE the
   // visibility AND label filters. We gate cache-only on THIS (the instance's cache
   // size), not on what the user is currently viewing — so a fully-synced user who
@@ -277,7 +335,7 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => a.name.localeCompare(b.name, 'it'));
     // Arricchimento dai contatti NON filtrati: un recente fuori dall'etichetta attiva
     // tiene comunque nome e foto.
-    const recents = buildRecents(recentRows, phone, new Map(cachedContacts.map((c) => [c.number, c])));
+    const recents = buildRecents(recentRows, phone, new Map(cachedContacts.map((c) => [c.number, c])), lidNumbers);
     console.log('CONTACTS:GET source=cache-only count=' + out.length + ' recents=' + recents.length + ' raw=' + syncedCount + ' db_ms=' + Math.round(dbMs));
     return respond({ contacts: out, recents }, syncedCount >= CACHE_ONLY_MIN ? 'cache-only' : 'cache-only-prefetch', t0, dbMs, 0, cachedPartial);
   }
@@ -320,7 +378,7 @@ export async function GET(req: NextRequest) {
     console.log('CONTACTS:GET evolution down — serving seeded cache only count=' + byNumber.size);
     const out = [...applyLabel(Array.from(byNumber.values()).filter(isVisibleInPicker), allowed)]
       .sort((a, b) => a.name.localeCompare(b.name, 'it'));
-    const recents = buildRecents(recentRows, phone, byNumber);
+    const recents = buildRecents(recentRows, phone, byNumber, lidNumbers);
     return respond({ contacts: out, recents }, 'seed-only-evolution-down', t0, dbMs, performance.now() - tEvo, cachedPartial);
   }
 
@@ -333,8 +391,9 @@ export async function GET(req: NextRequest) {
   // must strip the `:N` before normalising, otherwise the digits get folded
   // into the phone number.
   const jidToNumber = (jid: string): string | null => {
-    if (!jid || jid.includes('@g.us') || jid.includes('@broadcast')) return null;
-    const numericPart = (jid.split('@')[0] || '').split(':')[0];
+    // Only phone JIDs: a LID (`@lid`) is not a number (app/lib/jid.ts).
+    const numericPart = phoneDigitsFromJid(jid);
+    if (!numericPart) return null;
     const normalized = validatePhone(numericPart);
     if (!normalized || normalized === phone) return null;
     return normalized;
@@ -344,10 +403,7 @@ export async function GET(req: NextRequest) {
   // puts the JID in `.id` instead — but `.id` may also be a Prisma UUID, so we
   // only accept strings that actually look like a JID.
   const extractJid = (c: any): string | null => {
-    if (typeof c?.remoteJid === 'string' && c.remoteJid.includes('@')) return c.remoteJid;
-    if (typeof c?.id === 'string' && c.id.includes('@')) return c.id;
-    if (typeof c?.key?.remoteJid === 'string' && c.key.remoteJid.includes('@')) return c.key.remoteJid;
-    return null;
+    return phoneJidFromContact(c);
   };
 
   for (const c of rawContacts || []) {
@@ -481,6 +537,6 @@ export async function GET(req: NextRequest) {
   const out = applyLabel(merged, allowed);
   // Recents computed here too (was hardcoded []): a thin-cache user can still have
   // send history, and #3a serves this live+seed path for them.
-  const recents = buildRecents(recentRows, phone, byNumber);
+  const recents = buildRecents(recentRows, phone, byNumber, lidNumbers);
   return respond({ contacts: out, recents }, 'live+seed', t0, dbMs, performance.now() - tEvo, cachedPartial);
 }

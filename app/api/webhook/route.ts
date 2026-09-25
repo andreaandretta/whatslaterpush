@@ -12,6 +12,7 @@ import { contactActiveCutoffIso } from '../../lib/contact-window';
 import { handleInboundOptOut } from '../../lib/opt-out';
 import { recordCustodyAck } from '../../lib/custody-ack';
 import { extractStatusUpdate } from '../../lib/message-status';
+import { phoneDigitsFromJid, phoneJidFromContact } from '../../lib/jid';
 export const dynamic = 'force-dynamic';
 // The self-chat path chains askAI (8s) + verifyAndFixMessage (6s) + notify;
 // the Hobby default ~10s kills it mid-insert, orphaning the dedup claim (#4).
@@ -62,16 +63,12 @@ function contactRowsFromPayload(
   const rows: Array<any> = [];
   const seen = new Set<string>();
   for (const c of rawList || []) {
-    // Evolution sometimes nulls remoteJid and puts the JID in `id`; mirror
-    // the extractJid logic from /api/contacts/route.ts.
-    const rawJid: string | undefined =
-      (typeof c?.remoteJid === 'string' && c.remoteJid.includes('@')) ? c.remoteJid :
-      (typeof c?.id === 'string' && c.id.includes('@')) ? c.id :
-      undefined;
-    if (!rawJid) continue;
-    if (rawJid.includes('@g.us') || rawJid.includes('@broadcast')) continue;
-    const numericPart = (rawJid.split('@')[0] || '').split(':')[0];
-    if (!/^\d{8,15}$/.test(numericPart)) continue;
+    // Only a PHONE JID becomes a row: a Baileys 7 contact addressed by LID
+    // (`<14-15 digits>@lid`) resolves through `phoneNumber` when present and is
+    // skipped otherwise — a LID stored as digits made the picker offer numbers
+    // that "are not on WhatsApp" (app/lib/jid.ts).
+    const numericPart = phoneDigitsFromJid(phoneJidFromContact(c));
+    if (!numericPart) continue;
     if (numericPart === userPhone) continue;
     if (seen.has(numericPart)) continue;
     seen.add(numericPart);

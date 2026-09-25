@@ -1,4 +1,4 @@
-import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, PendingMessage, UserInstance } from '../app/lib/cron-utils';
+import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, isNotOnWhatsAppError, PendingMessage, UserInstance } from '../app/lib/cron-utils';
 import { createMockSupabase } from './helpers/mocks';
 
 function makeMessage(overrides: { user_instances?: Partial<UserInstance> | null } & Partial<Omit<PendingMessage, 'user_instances'>> = {}): PendingMessage {
@@ -371,5 +371,18 @@ describe('claimSendAttempt — atomic point-of-no-return send gate (anti double-
     const isNull = call.chain.find((c) => c.method === 'is' && c.args[0] === 'send_attempted_at');
     expect(isNull).toBeDefined();
     expect(isNull!.args[1]).toBeNull();
+  });
+});
+
+describe('isNotOnWhatsAppError', () => {
+  test('recognises Evolution\'s "exists": false 400 body', () => {
+    const msg = 'Evolution API error: 400 - {"status":400,"error":"Bad Request","response":{"message":[{"jid":"123456789012345@s.whatsapp.net","exists":false,"number":"123456789012345"}]}}';
+    expect(isNotOnWhatsAppError(msg)).toBe(true);
+  });
+  test('other errors keep the normal retry path', () => {
+    expect(isNotOnWhatsAppError('Evolution API error: 500 - boom')).toBe(false);
+    expect(isNotOnWhatsAppError('fetch failed')).toBe(false);
+    expect(isNotOnWhatsAppError('{"exists":true}')).toBe(false);
+    expect(isNotOnWhatsAppError(undefined)).toBe(false);
   });
 });

@@ -2,7 +2,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { normalizeItalianPhone } from '../../../lib/phone';
-import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt } from '../../../lib/cron-utils';
+import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, isNotOnWhatsAppError } from '../../../lib/cron-utils';
 import { isBillingEnabled, getEffectivePlan } from '../../../lib/billing';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
@@ -861,7 +861,11 @@ export async function GET(req: NextRequest) {
           if (ownerPhone) {
             await supabase.rpc('refund_daily_quota', { p_phone: ownerPhone });
           }
-          const newRetry = (msg.retry_count || 0) + 1;
+          // WhatsApp said the number does not exist ("exists": false): retrying
+          // cannot help, so the row goes straight to 'failed' instead of burning
+          // two more attempts 5 and 10 minutes later.
+          const notOnWhatsApp = isNotOnWhatsAppError(err?.message);
+          const newRetry = notOnWhatsApp ? Math.max(3, (msg.retry_count || 0) + 1) : (msg.retry_count || 0) + 1;
           // Requeue/terminal: clear send_attempted_at on the way back to 'pending'
           // (and harmlessly on 'failed') so a retried row starts its next attempt
           // clean (see buildFailureRequeueUpdate).
@@ -876,7 +880,7 @@ export async function GET(req: NextRequest) {
               await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
                 method: 'POST',
                 headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ number: ownerPhone, text: '\u274c Impossibile inviare a ' + (msg.recipient_name || msg.recipient_number) + ' dopo 3 tentativi.' })
+                body: JSON.stringify({ number: ownerPhone, text: '\u274c Impossibile inviare a ' + (msg.recipient_name || msg.recipient_number) + (notOnWhatsApp ? ': il numero salvato non è su WhatsApp.' : ' dopo 3 tentativi.') })
               });
             } catch (e) {}
             failed++;
