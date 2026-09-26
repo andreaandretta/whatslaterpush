@@ -760,6 +760,18 @@ describe('GET /api/contacts', () => {
       expect(body.recents.map((r: any) => r.number)).toEqual(['62812345678901']);
     });
 
+    // Sara Pisu in prod: first message sent to her bare number (row added by
+    // hand, name = the number), WhatsApp name only in push_name; her name was
+    // visible only on the LID row, the one that could not receive messages.
+    test('a row typed by hand whose name is just its number shows the WhatsApp name', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '123456789012345', name: null, push_name: 'Ostetrica Sara', profile_pic_url: PIC + '?oh=1', added_manually: false, created_at: '2026-08-21T17:17:17Z' },
+        { contact_number: '393401112703', name: '3401112703', push_name: 'Ostetrica Sara', profile_pic_url: PIC + '?oh=2', added_manually: true, created_at: '2026-08-21T17:10:48Z' },
+      ]);
+      const body = await (await callGet()).json();
+      expect(body.contacts).toEqual([expect.objectContaining({ number: '393401112703', name: 'Ostetrica Sara', addedManually: true })]);
+    });
+
     test('a digits-only name the user typed on purpose is kept', async () => {
       mockSupa.setResponse('whatsapp_contacts:select', [
         { contact_number: '393401111111', name: '118', push_name: 'Marco', profile_pic_url: null, added_manually: true },

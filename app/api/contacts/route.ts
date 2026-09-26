@@ -146,8 +146,10 @@ function cachedRowsToContacts(rows: CachedContactRow[], phone: string): OutConta
     const key = photoKey(row.profile_pic_url);
     if (key && lidNameByPhoto.has(key) && phoneRowsByPhoto.get(key) === 1 && isNoRealName(name, num) && isDigitsOnlyName(pushName)) {
       name = lidNameByPhoto.get(key)!;
-    } else if (name && row.added_manually !== true && isNoRealName(name, num) && pushName && !isDigitsOnlyName(pushName)) {
-      name = null; // the synced name is just the number: show the WhatsApp name
+    } else if (name && isNoRealName(name, num) && pushName && !isDigitsOnlyName(pushName)) {
+      // The saved name is just the number (also when typed by hand, e.g. a first
+      // message sent to a bare number): show the WhatsApp name instead.
+      name = null;
     }
     const entry: OutContact = { number: num, name: name || pushName || `+${num}` };
     if (pushName) entry.pushName = pushName;
