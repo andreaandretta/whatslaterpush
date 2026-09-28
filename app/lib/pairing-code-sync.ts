@@ -1,3 +1,4 @@
+import { PENDING_SESSION_GRACE_MS } from './auth-session-grace';
 /**
  * Sincronizzazione del pairing code mostrato in /connect (incidente 23 ago:
  * "terno al lotto").
@@ -46,7 +47,9 @@ export async function syncPairingCode(
     })
     .eq('instance_name', instanceName)
     .eq('status', 'pending')
-    .gt('expires_at', new Date().toISOString());
+    // Anche nella grazia dopo expires_at (auth-session-grace.ts): la pagina
+    // continua a interrogare la sessione e deve vedere il codice vero.
+    .gt('expires_at', new Date(Date.now() - PENDING_SESSION_GRACE_MS).toISOString());
   if (error) console.error('[pairing-sync] update failed:', error.message);
 }
 
@@ -67,6 +70,8 @@ export async function syncConnState(
     .update({ conn_state: state })
     .eq('instance_name', instanceName)
     .eq('status', 'pending')
-    .gt('expires_at', new Date().toISOString());
+    // Anche nella grazia dopo expires_at (auth-session-grace.ts): la pagina
+    // continua a interrogare la sessione e deve vedere il codice vero.
+    .gt('expires_at', new Date(Date.now() - PENDING_SESSION_GRACE_MS).toISOString());
   if (error) console.error('[pairing-sync] conn_state update failed:', error.message);
 }

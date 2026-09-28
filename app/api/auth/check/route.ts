@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   // autenticata resta ritirabile più a lungo (monouso: si cancella al ritiro).
   const { data: session, error } = await supabase
     .from('pending_auth_sessions')
-    .select('id, phone, status, instance_name, expires_at, pairing_code, conn_state')
+    .select('id, phone, status, instance_name, expires_at, pairing_code, pairing_code_updated_at, conn_state')
     .eq('id', sessionId)
     .maybeSingle();
 
@@ -56,6 +56,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       authenticated: false,
       pairingCode: session.pairing_code || null,
+      // Quando è stato salvato: alla ripresa dopo un reload la pagina non deve
+      // mostrare come nuovo un codice già scaduto (revisione 28 set 2026).
+      pairingCodeUpdatedAt: session.pairing_code_updated_at || null,
       connState: session.conn_state || null,
     });
   }

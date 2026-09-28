@@ -196,7 +196,25 @@ export async function DELETE(req: NextRequest) {
     .select('id');
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  if (!updated || updated.length === 0) {
+
+  // "Tutta la serie": si ferma anche l'occorrenza successiva che il cron ha già
+  // creato (su una card rossa c'è quasi sempre, entro un minuto), altrimenti
+  // partiva lo stesso mentre il toast diceva "interrotto".
+  let seriesCancelled = 0;
+  if (m.recurrence_rule && scope === 'series') {
+    const chainId = m.parent_recurrence_id || m.id;
+    const { data: rest, error: restErr } = await supabase
+      .from('scheduled_messages')
+      .update({ status: 'cancelled' })
+      .eq('instance_phone', phone)
+      .or(`id.eq.${chainId},parent_recurrence_id.eq.${chainId}`)
+      .in('status', ['pending', 'paused'])
+      .select('id');
+    if (restErr) return NextResponse.json({ error: restErr.message }, { status: 500 });
+    seriesCancelled = Array.isArray(rest) ? rest.length : 0;
+  }
+
+  if ((!updated || updated.length === 0) && seriesCancelled === 0) {
     return NextResponse.json({ error: 'message_not_cancellable', message: 'Il messaggio è già in invio o inviato.' }, { status: 409 });
   }
   return NextResponse.json({ success: true });
@@ -220,20 +238,21 @@ async function skipRecurringOccurrence(supabase: any, phone: string, m: any): Pr
   });
   if (!decision.insert) return null;
 
-  if (m.status === 'failed') {
-    // Card rossa: se il cron ha già creato l'occorrenza successiva, la serie
-    // va avanti con quella e questa riga si cancella e basta.
-    const chainId = m.parent_recurrence_id || m.id;
-    const { data: live } = await supabase
-      .from('scheduled_messages')
-      .select('id')
-      .eq('instance_phone', phone)
-      .or(`id.eq.${chainId},parent_recurrence_id.eq.${chainId}`)
-      .in('status', LIVE_STATES)
-      .neq('id', m.id)
-      .limit(1);
-    if (Array.isArray(live) && live.length > 0) return null;
-  }
+  // Si fa saltare avanti solo l'ultima riga della serie. Se ne esiste una più
+  // nuova (in qualunque stato) la serie è già andata oltre questa riga: una
+  // card rossa vecchia si cancella e basta. Prima, eliminare una card rossa
+  // dopo aver fermato la serie ("Tutta la serie") la rimetteva in coda e la
+  // serie ripartiva (revisione 28 set 2026).
+  const chainId = m.parent_recurrence_id || m.id;
+  const { data: newer } = await supabase
+    .from('scheduled_messages')
+    .select('id')
+    .eq('instance_phone', phone)
+    .or(`id.eq.${chainId},parent_recurrence_id.eq.${chainId}`)
+    .gt('scheduled_at', m.scheduled_at)
+    .neq('id', m.id)
+    .limit(1);
+  if (Array.isArray(newer) && newer.length > 0) return null;
 
   // Una riga in pausa resta in pausa (l'utente la riprende quando vuole); una
   // fallita torna in coda per la prossima volta, con i contatori azzerati.

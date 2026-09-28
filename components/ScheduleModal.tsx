@@ -200,7 +200,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   // etichette, regola di ripetizione e avviso 08-21. scheduledDate: l'istante
   // vero, l'unico che va al server e che si confronta con adesso.
   const wallDate = combineDateTime(selectedDate, selectedTime);
-  const scheduledDate = instantFromRomeWallClock(wallDate);
+  const scheduledDate = instantFromRomeWallClock(wallDate, editMsgId && initialScheduledAt ? new Date(initialScheduledAt) : undefined);
   const romeNow = romeWallClock(new Date());
   const outsideRome = browserIsOutsideRome();
   const isValidDate = scheduledDate.getTime() >= Date.now() + 60_000;

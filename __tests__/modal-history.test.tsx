@@ -134,3 +134,20 @@ describe('useModalHistory', () => {
     back.mockRestore();
   });
 });
+
+describe('dopo un ricaricamento con la modale aperta (revisione 28 set 2026)', () => {
+  test('the stale marker left on the entry does not swallow the first Back', async () => {
+    __resetModalHistoryForTests();
+    window.history.replaceState({ __NA: true, __wlModal: 1 }, '');
+    function Fresh() {
+      const [open, setOpen] = useState(true);
+      useModalHistory(open, () => setOpen(false));
+      return open ? <div data-testid="fresh-modal" /> : null;
+    }
+    render(<Fresh />);
+    await flush();
+    expect(screen.getByTestId('fresh-modal')).toBeInTheDocument();
+    await pressBack();
+    expect(screen.queryByTestId('fresh-modal')).not.toBeInTheDocument();
+  });
+});

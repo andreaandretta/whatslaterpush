@@ -79,6 +79,23 @@ function onPopState(e: PopStateEvent) {
   }
 }
 
+// Dopo un ricaricamento con una modale aperta Next conserva il nostro segno
+// nella voce corrente, ma la pila qui riparte da zero: quella voce "vecchia"
+// assorbiva il primo Indietro (revisione 28 set 2026). Al primo strato aperto,
+// se la voce corrente porta un segno che non è nostro, lo si toglie tenendo il
+// resto dello stato di Next.
+function clearStaleMarker() {
+  try {
+    const st = window.history.state;
+    if (depthOf(st) > 0 && st && typeof st === 'object') {
+      const { [STATE_KEY]: _stale, ...rest } = st as Record<string, unknown>;
+      window.history.replaceState(rest, '');
+    }
+  } catch {
+    /* cronologia non accessibile: si continua senza */
+  }
+}
+
 function ensureListener() {
   if (listening || typeof window === 'undefined') return;
   window.addEventListener('popstate', onPopState);
@@ -110,6 +127,7 @@ function scheduleTrim() {
 
 function openLayer(layer: Layer) {
   ensureListener();
+  if (stack.length === 0 && pushed === 0) clearStaleMarker();
   stack.push(layer);
   const depth = stack.length;
   // Una voce a questa profondità c'è già (lasciata da uno strato appena chiuso):

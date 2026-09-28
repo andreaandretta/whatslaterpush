@@ -219,13 +219,30 @@ export type PairingNumberResult =
 export function readPairingNumber(raw: string): PairingNumberResult {
   const text = typeof raw === 'string' ? raw.trim() : '';
   const clean = text.replace(/\D/g, '');
-  let r = parsePhoneInput(text);
-  // Only 12 digits (39 + mobile) or "390…" (39 + landline, which always starts
-  // with 0): an 11-digit "393…" is a 393 mobile with a digit too many, and
-  // reading it as +39 would silently turn it into ANOTHER, shorter number.
-  if (!r.ok && !/^\s*(\+|00)/.test(text) && clean.startsWith('39') && (clean.length === 12 || (clean[2] === '0' && clean.length <= 13))) {
-    const withPrefix = parsePhoneInput('+' + clean);
-    if (withPrefix.ok && withPrefix.italian) r = withPrefix;
+  const explicitIntl = /^\s*(\+|00)/.test(text);
+  let r: PhoneInputResult;
+  if (explicitIntl) {
+    // Scritto col prefisso: si legge com'è (anche un cellulare di 9 cifre).
+    r = parsePhoneInput(text);
+  } else if (clean.startsWith('39') && clean.length >= 11) {
+    // "39" senza "+" (autofill, copia-incolla): solo 39 + cellulare di 10 cifre
+    // o 39 + fisso (che inizia sempre con 0). Un "393…" di 11 cifre è un
+    // cellulare con una cifra in più: libphonenumber toglierebbe il 39 e
+    // leggerebbe un numero più corto, di un'altra persona (revisione 28 set).
+    const mobile = clean.length === 12 && clean[2] === '3';
+    const landline = clean[2] === '0' && clean.length <= 13;
+    if (!mobile && !landline) return { ok: false, error: clean[2] === '3' ? 'extra_digit' : 'invalid' };
+    r = parsePhoneInput('+' + clean);
+    if (r.ok && !r.italian) return { ok: false, error: 'invalid' };
+  } else if (clean.startsWith('3')) {
+    // Il numero di chi si collega: un cellulare italiano senza prefisso deve
+    // avere esattamente 10 cifre. Con 9 cifre libphonenumber lo accetta (vecchi
+    // numeri TIM), ma quasi sempre è una cifra dimenticata e il codice di
+    // collegamento andrebbe a uno sconosciuto.
+    if (clean.length < 10) return { ok: false, error: 'invalid' };
+    r = parsePhoneInput(text);
+  } else {
+    r = parsePhoneInput(text);
   }
   if (!r.ok) return r;
   return {

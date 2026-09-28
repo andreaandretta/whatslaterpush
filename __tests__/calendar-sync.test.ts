@@ -546,3 +546,18 @@ describe('diffEventsToActions — gate di provenienza', () => {
     expect(r.updates).toEqual([]);
   });
 });
+
+describe('codici dopo "n." (revisione 28 set 2026)', () => {
+  test.each([
+    'Ritiro referto - Prenotazione n. 0612345678',
+    'Rif. n. 0612345678',
+    'Prot. n. 0612345678',
+    'Tessera n. 0612345678',
+    'Ricevuta n° 0612345678',
+  ])('%s → no recipient', (summary) => {
+    expect(extractEventPhone({ summary, description: null, location: null } as any)).toBeNull();
+  });
+  test('"Chiamare al n° 347…" is still a phone', () => {
+    expect(extractEventPhone({ summary: 'Chiamare al n° 3471234567', description: null, location: null } as any)?.phone).toBe('393471234567');
+  });
+});

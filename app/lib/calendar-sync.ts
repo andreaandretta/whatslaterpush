@@ -120,7 +120,10 @@ const TIME_RE = /(?<!\d\.)\b(?:[01]?\d|2[0-3])[:.][0-5]\d\b(?!\.\d)/g;
 // is a valid-looking Turin landline for the phone library). "n.", "n°", "Nr."
 // alone are NOT here: in Italian they mean "numero" ("Chiamare al n° 347…");
 // they count only after a code word ("Pratica n. 0123…", "Fattura nr. …").
-const NOT_A_PHONE_BEFORE = /(\biva|partita\s+iva|\bc\.?\s*f\.?|codice(\s+fiscale)?|\bcod\.?|fattura|pratica|ordine|iban)\s*(?:n[r°]?\.?|numero)?\s*[:.#]?\s*$/i;
+// Anche i codici più comuni negli appuntamenti (revisione 28 set 2026):
+// "Prenotazione n. 0612345678" è un fisso valido per la libreria, e senza
+// questa lista il calendario avrebbe scritto a uno sconosciuto.
+const NOT_A_PHONE_BEFORE = /(\biva|partita\s+iva|\bc\.?\s*f\.?|codice(\s+(fiscale|cliente))?|\bcod\.?|fattura|pratica|ordine|iban|\brif\.?|riferimento|\bprot\.?|protocollo|prenotazione|tessera|ricevuta|scontrino|\bpos\b|matricola|contratto|polizza|cliente|conto|\bc\/c|targa|telaio|lotto|ticket)\s*(?:n[r°]?\.?|numero)?\s*[:.#]?\s*$/i;
 
 // Default normalizer: E.164 digits of a real number, '' otherwise. An event is
 // written by a person and nobody confirms the reading before the automatic

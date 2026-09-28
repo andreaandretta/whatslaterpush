@@ -54,11 +54,22 @@ test('reload dopo aver inserito il codice sul telefono → la pagina riprende la
   expect(sessionStorage.getItem('wl_pairing_session')).toBeNull();
 });
 
-test('scheda ripristinata con #s= nell\'URL e pairing ancora in corso → torna al codice corrente', async () => {
-  window.history.replaceState(null, '', '/connect#s=' + SID);
-  (global as any).fetch = jest.fn(async () => resp({ authenticated: false, pairingCode: 'WXYZ-9876', connState: null }));
+test('reload con pairing ancora in corso → torna al codice corrente', async () => {
+  sessionStorage.setItem('wl_pairing_session', JSON.stringify({ sessionId: SID, phone: '393331234567' }));
+  (global as any).fetch = jest.fn(async () => resp({ authenticated: false, pairingCode: 'WXYZ-9876', pairingCodeUpdatedAt: new Date().toISOString(), connState: null }));
   await renderPage();
   expect(screen.getByTestId('codice')).toHaveTextContent('WXYZ-9876');
+});
+
+// Revisione 28 set 2026: il sessionId non sta più nell'indirizzo (cronologia,
+// Sentry, PC condivisi). Un #s= rimasto da prima si toglie e si ignora.
+test('un vecchio #s= nell\'URL viene tolto e ignorato → passo 1', async () => {
+  window.history.replaceState(null, '', '/connect#s=' + SID);
+  (global as any).fetch = jest.fn(async () => resp({ authenticated: true, redirect: '/dashboard' }));
+  await renderPage();
+  expect(screen.getByText('invia-numero')).toBeInTheDocument();
+  expect(window.location.hash).toBe('');
+  expect((global as any).fetch).not.toHaveBeenCalled();
 });
 
 test('sessione scaduta (410) al ripristino → passo 1 e memoria pulita', async () => {
@@ -69,7 +80,7 @@ test('sessione scaduta (410) al ripristino → passo 1 e memoria pulita', async 
   expect(sessionStorage.getItem('wl_pairing_session')).toBeNull();
 });
 
-test('init riuscito → sessionId salvato in sessionStorage e nel frammento (mai nella query)', async () => {
+test('init riuscito → sessionId salvato solo in sessionStorage (mai nell\'indirizzo)', async () => {
   (global as any).fetch = jest.fn(async (url: string) => {
     if (url === '/api/auth/init') return resp({ sessionId: SID, instanceName: 'X', pairingCode: 'ABCD-1234' });
     return resp({ authenticated: false });
@@ -78,7 +89,7 @@ test('init riuscito → sessionId salvato in sessionStorage e nel frammento (mai
   await act(async () => { fireEvent.click(screen.getByText('invia-numero')); });
   expect(screen.getByTestId('codice')).toHaveTextContent('ABCD-1234');
   expect(JSON.parse(sessionStorage.getItem('wl_pairing_session') || '{}').sessionId).toBe(SID);
-  expect(window.location.hash).toBe('#s=' + SID);
+  expect(window.location.hash).toBe('');
   expect(window.location.search).toBe('');
 });
 

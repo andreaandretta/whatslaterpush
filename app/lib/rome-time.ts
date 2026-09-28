@@ -42,10 +42,31 @@ export function romeWallClock(instant: Date): Date {
   return new Date(p.y, p.mo - 1, p.dd, p.h, p.mi, p.s, 0);
 }
 
-/** Date "fluttuante" (campi = ora di Roma) → istante vero. Inverso di romeWallClock. */
-export function instantFromRomeWallClock(wall: Date): Date {
-  const guess = Date.UTC(wall.getFullYear(), wall.getMonth(), wall.getDate(), wall.getHours(), wall.getMinutes(), wall.getSeconds());
-  const p = romeParts(new Date(guess));
-  const romeAsUtc = Date.UTC(p.y, p.mo - 1, p.dd, p.h, p.mi, p.s);
-  return new Date(guess - (romeAsUtc - guess));
+/**
+ * Date "fluttuante" (campi = ora di Roma) → istante vero. Inverso di romeWallClock.
+ * Lo scarto di Roma si misura all'istante cercato, non ai campi letti come UTC
+ * (revisione 28 set 2026: l'01:30 del 25 ottobre usciva un'ora dopo). Nell'ora
+ * che il 25 ottobre capita due volte vale `prefer` se è una delle due (modifica
+ * di un messaggio esistente: non lo sposta), altrimenti la prima.
+ */
+export function instantFromRomeWallClock(wall: Date, prefer?: Date): Date {
+  const target = Date.UTC(wall.getFullYear(), wall.getMonth(), wall.getDate(), wall.getHours(), wall.getMinutes(), wall.getSeconds());
+  const offsetAt = (t: number) => {
+    const p = romeParts(new Date(t));
+    return Date.UTC(p.y, p.mo - 1, p.dd, p.h, p.mi, p.s) - t;
+  };
+  const HOUR = 3600_000;
+  const cands = Array.from(new Set([target - offsetAt(target - 3 * HOUR), target - offsetAt(target + 3 * HOUR)]))
+    .filter((t) => t + offsetAt(t) === target)
+    .sort((a, b) => a - b);
+  if (cands.length === 0) {
+    // Ora che non esiste (salto in avanti di marzo): due passaggi.
+    const t1 = target - offsetAt(target);
+    return new Date(target - offsetAt(t1));
+  }
+  if (prefer && !isNaN(prefer.getTime())) {
+    const hit = cands.find((t) => Math.abs(t - prefer.getTime()) < 60_000);
+    if (hit !== undefined) return new Date(hit);
+  }
+  return new Date(cands[0]);
 }

@@ -157,11 +157,21 @@ function ConnectFlow() {
           handlePaired();
           return;
         }
-        if (stored.phone) setPhoneNumber(stored.phone);
+        // Senza il numero "Rigenera codice" non potrebbe funzionare: si riparte
+        // dal passo 1.
+        if (!stored.phone) {
+          clearPairingSession();
+          return;
+        }
+        setPhoneNumber(stored.phone);
         if (typeof data.pairingCode === 'string' && data.pairingCode) {
           pairingCodeRef.current = data.pairingCode;
           setPairingCode(data.pairingCode);
-          setCodeExpiresAt(Date.now() + 60 * 1000);
+          // Evolution rinnova il codice ogni ~45 s: uno salvato da più tempo è
+          // già morto e va mostrato scaduto (si tocca "Rigenera"), non con un
+          // conto alla rovescia nuovo (revisione 28 set 2026).
+          const savedAt = typeof data.pairingCodeUpdatedAt === 'string' ? Date.parse(data.pairingCodeUpdatedAt) : NaN;
+          setCodeExpiresAt(Number.isFinite(savedAt) && Date.now() - savedAt < 45_000 ? savedAt + 60 * 1000 : Date.now());
         }
         if (typeof data.connState === 'string') setConnState(data.connState);
         setSessionId(stored.sessionId);

@@ -108,6 +108,24 @@ describe('StepCodice — ripete il numero prima di andare su WhatsApp', () => {
   });
 });
 
+describe('readPairingNumber — cifra in più o in meno (revisione 28 set 2026)', () => {
+  test('an 11-digit 393… (one digit too many) is refused, never read as a shorter number', () => {
+    expect(readPairingNumber('39345100261').ok).toBe(false);
+    expect(readPairingNumber('393471234567')).toMatchObject({ ok: true, digits: '393471234567' });
+  });
+  test('a 9-digit mobile typed without prefix is refused (a digit is missing)', () => {
+    expect(readPairingNumber('347123456').ok).toBe(false);
+    expect(readPairingNumber('347 123 456').ok).toBe(false);
+    expect(readPairingNumber('3471234567')).toMatchObject({ ok: true, digits: '393471234567' });
+  });
+  test('with an explicit +39 the number is read as written', () => {
+    expect(readPairingNumber('+39 347 123 4567')).toMatchObject({ ok: true, digits: '393471234567' });
+  });
+  test('landlines keep their variable length', () => {
+    expect(readPairingNumber('081 555 5377')).toMatchObject({ ok: true, digits: '390815555377' });
+  });
+});
+
 describe('readPairingNumber', () => {
   test('letture', () => {
     expect(readPairingNumber('+39 347 123 4567')).toMatchObject({ ok: true, digits: '393471234567', national: '3471234567', italian: true });

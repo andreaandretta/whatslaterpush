@@ -50,6 +50,7 @@ function makeClient() {
       q.eq = () => q;
       q.neq = () => q;
       q.gte = () => q;
+      q.gt = () => q;
       q.order = () => q;
       q.limit = () => q;
       q.or = (f: string) => { q._or = f; return q; };
@@ -196,6 +197,27 @@ describe('Elimina su un promemoria ricorrente', () => {
     expect(res.status).toBe(200);
     expect(updates).toHaveLength(1);
     expect(updates[0].patch).toEqual({ status: 'cancelled' });
+  });
+
+  // Revisione 28 set 2026: serie fermata con "Tutta la serie", poi eliminata
+  // la vecchia card rossa con "Solo questa volta" → la serie ripartiva.
+  test('an old red card of a series stopped later is only cancelled, never re-queued', async () => {
+    weekly('failed', new Date(Date.now() - 20 * 86400_000).toISOString());
+    liveInChain = [{ id: 'occ-5-cancelled' }]; // una riga più nuova esiste (cancellata)
+    const { DELETE } = await import('../app/api/messages/route');
+    const res = await DELETE(makeReq('DELETE', { id: 'occ-2', scope: 'occurrence' }));
+    expect(res.status).toBe(200);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].patch).toEqual({ status: 'cancelled' });
+  });
+
+  test('"Tutta la serie" on a red card also cancels the next occurrence the cron already created', async () => {
+    weekly('failed', new Date(Date.now() - 3600_000).toISOString());
+    const { DELETE } = await import('../app/api/messages/route');
+    const res = await DELETE(makeReq('DELETE', { id: 'occ-2', scope: 'series' }));
+    expect(res.status).toBe(200);
+    expect(updates[0].patch).toEqual({ status: 'cancelled' });
+    expect(updates[1]).toEqual({ patch: { status: 'cancelled' }, inStatuses: ['pending', 'paused'] });
   });
 
   test('if the cron created the same occurrence meanwhile (23505), the row is cancelled instead', async () => {
