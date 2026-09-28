@@ -98,6 +98,27 @@ describe('extractEventPhone', () => {
     expect(extractEventPhone({ summary: 'Mario Rossi' })).toBeNull();
   });
 
+  // Audit 25 set 2026: date+ora, partite IVA e numeri col 00 diventavano
+  // destinatari (1009202618, 3901234567890, 390041791234567).
+  test('data seguita da ora NON è un telefono, e il numero dopo non si incolla alla data', () => {
+    expect(extractEventPhone({ summary: 'Lezione guida 10/09/2026 18:30' })).toBeNull();
+    expect(extractEventPhone({ summary: 'Guida 10/09/2026 ore 18.30' })).toBeNull();
+    expect(extractEventPhone({ summary: 'Guida 10/09/2026 3401234567' })?.phone).toBe('393401234567');
+  });
+
+  test('una partita IVA o un codice pratica non sono telefoni', () => {
+    expect(extractEventPhone({ summary: 'P.IVA 01234567890 - Mario' })).toBeNull();
+    expect(extractEventPhone({ summary: 'Pratica n. 01234567890' })).toBeNull();
+    // ...ma il telefono accanto sì
+    expect(extractEventPhone({ description: 'P.IVA 01234567890, cell 3401234567' })?.phone).toBe('393401234567');
+  });
+
+  test('"00" è prefisso internazionale; un cellulare con una cifra in più non diventa Spagna', () => {
+    expect(extractEventPhone({ summary: 'Hans 0041 79 123 45 67' })?.phone).toBe('41791234567');
+    expect(extractEventPhone({ summary: 'Luca 347 12345 678' })).toBeNull();
+    expect(extractEventPhone({ summary: 'Anna 393401234567' })?.phone).toBe('393401234567');
+  });
+
   test('normalizeFn iniettabile', () => {
     const r = extractEventPhone({ summary: 'x 3401234567' }, () => '11122233344');
     expect(r?.phone).toBe('11122233344');

@@ -100,14 +100,31 @@ describe('POST /api/messages', () => {
       mockInsertedRow();
     });
 
-    test('400 recipient_is_lid when an old synced row holds it and WhatsApp says it does not exist', async () => {
+    test('400 recipient_is_lid when an old synced row holds a LID that cannot be a number (no WhatsApp call needed)', async () => {
       mockSupa.setResponse('whatsapp_contacts:select', { added_manually: false, created_at: '2026-09-25T14:01:23Z' });
-      whatsappNumbersMock.mockResolvedValue([{ exists: false, jid: LID + '@s.whatsapp.net', number: LID }]);
       const res = await callPost({ recipient_number: LID, message: 'hi', scheduled_at: at() });
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toBe('recipient_is_lid');
-      expect(whatsappNumbersMock).toHaveBeenCalledWith(INSTANCE, [LID]);
+      const body = await res.json();
+      expect(body.error).toBe('recipient_is_lid');
+      expect(body.message).toMatch(/codice interno/);
+      expect(whatsappNumbersMock).not.toHaveBeenCalled();
       expect(mockSupa.calls.some((c) => c.table === 'scheduled_messages' && c.operation === 'insert')).toBe(false);
+    });
+
+    test('400 recipient_is_lid when an old synced 14-digit row looks like a number but WhatsApp says it does not exist', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', { added_manually: false, created_at: '2026-09-01T00:00:00Z' });
+      whatsappNumbersMock.mockResolvedValue([{ exists: false, jid: '62812345678901@s.whatsapp.net' }]);
+      const res = await callPost({ recipient_number: '62812345678901', message: 'hi', scheduled_at: at() });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe('recipient_is_lid');
+      expect(whatsappNumbersMock).toHaveBeenCalledWith(INSTANCE, ['62812345678901']);
+    });
+
+    test('13-digit LID (1542…) from an old synced row: recipient_is_lid, not "numero non valido"', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', { added_manually: false, created_at: '2026-09-21T10:00:00Z' });
+      const res = await callPost({ recipient_number: '1542123452503', message: 'hi', scheduled_at: at() });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe('recipient_is_lid');
     });
 
     test('a real long number WhatsApp knows goes through', async () => {
@@ -120,24 +137,76 @@ describe('POST /api/messages', () => {
     test('if WhatsApp cannot be asked, nothing is blocked', async () => {
       mockSupa.setResponse('whatsapp_contacts:select', { added_manually: false, created_at: '2026-09-01T00:00:00Z' });
       whatsappNumbersMock.mockRejectedValue(new Error('Evolution API error: 500'));
-      const res = await callPost({ recipient_number: LID, message: 'hi', scheduled_at: at() });
-      expect((await res.json()).error).not.toBe('recipient_is_lid');
+      const res = await callPost({ recipient_number: '62812345678901', message: 'hi', scheduled_at: at() });
+      expect(res.status).toBe(200);
     });
 
-    test('typed by hand, or synced after the fix: no check at all', async () => {
+    test('typed by hand, or synced after the fix: never the LID message', async () => {
+      whatsappNumbersMock.mockResolvedValue([{ exists: false }]);
       mockSupa.setResponse('whatsapp_contacts:select', { added_manually: true, created_at: '2026-09-01T00:00:00Z' });
       let res = await callPost({ recipient_number: '431234567890123', message: 'hi', scheduled_at: at() });
-      expect((await res.json()).error).not.toBe('recipient_is_lid');
+      expect((await res.json()).error).toBe('recipient_not_on_whatsapp');
       mockSupa.setResponse('whatsapp_contacts:select', { added_manually: false, created_at: '2026-10-02T09:00:00Z' });
       res = await callPost({ recipient_number: '62812345678901', message: 'hi', scheduled_at: at() });
-      expect((await res.json()).error).not.toBe('recipient_is_lid');
+      expect((await res.json()).error).toBe('recipient_not_on_whatsapp');
+    });
+  });
+
+  // Audit 25 set 2026: prod 3466…2716 (un 346 con una cifra in più, letto
+  // come Spagna) programmato 4 volte in 17 giorni, fallito exists:false ogni
+  // volta al momento dell'invio. Ora WhatsApp si interpella UNA volta, quando
+  // il promemoria si crea, e solo per chi non ha mai ricevuto nulla.
+  describe('existence check at scheduling time', () => {
+    const at = () => new Date(Date.now() + 3600_000).toISOString();
+    const sentQuery = (c: any) => c.chain.some((m: any) => m.method === 'eq' && m.args[0] === 'status' && m.args[1] === 'sent');
+    beforeEach(() => {
+      mockSupa.setResponse('user_instances:select', { id: 'user-uuid-1', subscription_plan: 'personal', connection_status: 'open', instance_name: INSTANCE });
+      mockInsertedRow();
+    });
+
+    test('never-reached number WhatsApp does not know → 400 recipient_not_on_whatsapp with Italian message, nothing inserted', async () => {
+      mockSupa.setResponse('scheduled_messages:select', []);
+      whatsappNumbersMock.mockResolvedValue([{ exists: false, jid: '34661234562@s.whatsapp.net', number: '34661234562' }]);
+      const res = await callPost({ recipient_number: '34661234562', message: 'Promemoria', scheduled_at: at() });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('recipient_not_on_whatsapp');
+      expect(body.message).toMatch(/non risulta su WhatsApp/);
+      expect(whatsappNumbersMock).toHaveBeenCalledTimes(1);
+      expect(whatsappNumbersMock).toHaveBeenCalledWith(INSTANCE, ['34661234562']);
+      expect(mockSupa.calls.some((c) => c.table === 'scheduled_messages' && c.operation === 'insert')).toBe(false);
+    });
+
+    test('never-reached number WhatsApp knows → scheduled', async () => {
+      mockSupa.setResponse('scheduled_messages:select', []);
+      whatsappNumbersMock.mockResolvedValue([{ exists: true, jid: '393339998877@s.whatsapp.net' }]);
+      const res = await callPost({ recipient_number: '393339998877', message: 'hi', scheduled_at: at() });
+      expect(res.status).toBe(200);
+    });
+
+    test('a number already reached (a sent row) is not asked again', async () => {
+      mockSupa.setHandler('scheduled_messages:select', (c) => ({ data: sentQuery(c) ? [{ id: 'old-sent' }] : [], error: null }));
+      whatsappNumbersMock.mockResolvedValue([{ exists: false }]);
+      const res = await callPost({ recipient_number: '393339998877', message: 'hi', scheduled_at: at() });
+      expect(res.status).toBe(200);
       expect(whatsappNumbersMock).not.toHaveBeenCalled();
     });
 
-    test('a normal-length number never triggers the check', async () => {
-      mockSupa.setResponse('whatsapp_contacts:select', { added_manually: false, created_at: '2026-01-01T00:00:00Z' });
-      await callPost({ recipient_number: '393339998877', message: 'hi', scheduled_at: at() });
+    test('invalid digits are refused with an Italian message before any WhatsApp call', async () => {
+      const res = await callPost({ recipient_number: '1393471234567', message: 'hi', scheduled_at: at() });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('invalid_phone');
+      expect(body.message).toMatch(/Numero non valido/);
       expect(whatsappNumbersMock).not.toHaveBeenCalled();
+    });
+
+    test('"00" international prefix is read as + (0041… is Switzerland, not 390041…)', async () => {
+      mockSupa.setResponse('scheduled_messages:select', []);
+      const res = await callPost({ recipient_number: '0041 79 123 45 67', message: 'hi', scheduled_at: at() });
+      expect(res.status).toBe(200);
+      const inserted = mockSupa.calls.find((c) => c.table === 'scheduled_messages' && c.operation === 'insert')!.args[0];
+      expect(inserted.recipient_number).toBe('41791234567');
     });
   });
 
@@ -287,10 +356,24 @@ describe('POST /api/messages', () => {
   });
 
   describe('whatsapp_contacts manual upsert hook', () => {
+    test('a pick from the address book or from Recents (no manual_entry) is NOT saved as a manual contact', async () => {
+      mockUserInstance('personal');
+      mockInsertedRow();
+      const res = await callPost({
+        recipient_number: '393339998877',
+        recipient_name: 'Anna',
+        message: 'Ciao',
+        scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
+      });
+      expect(res.status).toBe(200);
+      expect(mockSupa.calls.some((c) => c.table === 'whatsapp_contacts' && c.operation === 'upsert')).toBe(false);
+    });
+
     test('upserts whatsapp_contacts with added_manually=true and source=MANUAL', async () => {
       mockUserInstance('personal');
       mockInsertedRow();
       const res = await callPost({
+        manual_entry: true,
         recipient_number: '3339998877',
         recipient_name: 'Anna Lead',
         message: 'Ciao',
@@ -320,6 +403,7 @@ describe('POST /api/messages', () => {
       mockUserInstance('personal');
       mockInsertedRow();
       const res = await callPost({
+        manual_entry: true,
         recipient_number: '3339998877',
         message: 'Ciao',
         scheduled_at: new Date(Date.now() + 3600_000).toISOString(),
@@ -337,6 +421,7 @@ describe('POST /api/messages', () => {
       mockSupa.setResponse('whatsapp_contacts:upsert', null, { message: 'simulated supabase error' });
 
       const res = await callPost({
+        manual_entry: true,
         recipient_number: '3339998877',
         recipient_name: 'Anna',
         message: 'Ciao',

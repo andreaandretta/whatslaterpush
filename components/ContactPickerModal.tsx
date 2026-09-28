@@ -2,7 +2,9 @@
 
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { X, Search, UserPlus, ChevronDown, ChevronUp, AlertCircle, Loader2, Upload, Settings2 } from 'lucide-react';
-import { validatePhone } from '../app/lib/phone';
+// Il parser dei numeri (libphonenumber, ~40 KB gzip di metadati) si carica solo
+// quando serve: all'apertura di "Nuovo contatto", non con la dashboard.
+import type { PhoneInputResult } from '../app/lib/phone';
 import { pickerStateForResponseStatus } from '../app/lib/contacts-picker-state';
 import { getContactsSnapshot, setContactsSnapshot, clearContactsSnapshots } from '../app/lib/contacts-client-cache';
 import { Button } from './Button';
@@ -27,6 +29,19 @@ function formatPhone(digits: string): string {
   return `+${digits}`;
 }
 
+const loadPhone = () => import('../app/lib/phone');
+
+// Ricerca: se la query è un numero ("+39 347 123 4567", "0039 347…", "081 555…")
+// si confrontano solo le cifre, senza "00" iniziale. I numeri in lista sono cifre
+// E.164 (39…), quindi "347 123 4567" e "+39 347…" trovano entrambi 393471234567.
+// Prima "+39 347…" e "347 123 4567" non trovavano niente (spazi e "+").
+function digitsQuery(q: string): string | null {
+  if (!/^[\d\s+().-]+$/.test(q)) return null;
+  const d = q.replace(/\D/g, '');
+  if (d.length < 3) return null;
+  return d.startsWith('00') ? d.slice(2) : d;
+}
+
 // Quante righe si montano per volta. La ricerca lavora SEMPRE sull'intera lista:
 // è solo il render a essere a finestra.
 const PAGE_SIZE = 60;
@@ -42,7 +57,7 @@ const ContactRow = React.memo(function ContactRow({
   onPick,
 }: {
   contact: Contact;
-  onPick: (contact: { number: string; name?: string }) => void;
+  onPick: (contact: PickedContact) => void;
 }) {
   const formattedPhone = formatPhone(c.number);
   const hasRealName = !!c.name && c.name.trim() !== '' && c.name !== `+${c.number}`;
@@ -75,10 +90,15 @@ const ContactRow = React.memo(function ContactRow({
   );
 });
 
+// manualEntry: il numero è stato scritto a mano in "Nuovo contatto" (non scelto
+// dalla rubrica o dai Recenti). La POST /api/messages lo salva come contatto
+// manuale SOLO in quel caso (body.manual_entry).
+export type PickedContact = { number: string; name?: string; manualEntry?: boolean };
+
 interface ContactPickerModalProps {
   open: boolean;
   onClose: () => void;
-  onSelect: (contact: { number: string; name?: string }) => void;
+  onSelect: (contact: PickedContact) => void;
 }
 
 type PickerState =
@@ -94,6 +114,9 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   const [manualName, setManualName] = useState('');
   const [manualNumber, setManualNumber] = useState('');
   const [manualError, setManualError] = useState<string | null>(null);
+  // Numero estero letto dal parser, in attesa di "Sì, è giusto" / "Correggi".
+  const [manualConfirm, setManualConfirm] = useState<{ digits: string; label: string } | null>(null);
+  const manualNumberRef = useRef<HTMLInputElement | null>(null);
   // Label filter — null = no filter, string = filter by label_id.
   // Refetches /api/contacts when changed.
   const [labelFilterId, setLabelFilterId] = useState<string | null>(null);
@@ -114,7 +137,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
   const handlePick = useCallback(
-    (contact: { number: string; name?: string }) => onSelectRef.current(contact),
+    (contact: PickedContact) => onSelectRef.current(contact),
     [],
   );
 
@@ -126,8 +149,14 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     setManualName('');
     setManualNumber('');
     setManualError(null);
+    setManualConfirm(null);
     setLabelFilterId(null);
   }, [open]);
+
+  // Il parser si scarica mentre l'utente scrive, così "Continua" risponde subito.
+  useEffect(() => {
+    if (open && manualOpen) void loadPhone().catch(() => {});
+  }, [open, manualOpen]);
 
   // Il filtro etichetta si azzera anche alla CHIUSURA: così alla riapertura
   // labelFilterId è già null e parte UN solo fetch (prima: un fetch ?label=X
@@ -228,9 +257,12 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     return snap ? { kind: 'list', contacts: snap.contacts, recents: snap.recents } : state;
   }, [state, labelFilterId]);
 
-  // Nomi in minuscolo calcolati UNA volta per lista, non a ogni tasto.
+  // Nomi in minuscolo calcolati UNA volta per lista, non a ogni tasto. Dentro c'è
+  // anche il nome WhatsApp (pushName): chi è salvato col numero si trova per nome.
   const lowerNames = useMemo(
-    () => (view.kind === 'list' ? view.contacts.map((c) => c.name.toLowerCase()) : []),
+    () => (view.kind === 'list'
+      ? view.contacts.map((c) => (c.pushName && c.pushName !== c.name ? `${c.name}\n${c.pushName}` : c.name).toLowerCase())
+      : []),
     [view],
   );
 
@@ -239,7 +271,8 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     if (view.kind !== 'list') return [];
     const q = search.trim().toLowerCase();
     if (!q) return view.contacts;
-    return view.contacts.filter((c, i) => lowerNames[i].includes(q) || c.number.includes(q));
+    const qd = digitsQuery(q);
+    return view.contacts.filter((c, i) => lowerNames[i].includes(q) || c.number.includes(q) || (qd !== null && c.number.includes(qd)));
   }, [view, lowerNames, search]);
 
   // Finestra di render: prime N righe, le altre arrivano scorrendo (o col bottone).
@@ -268,14 +301,53 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     return () => io.disconnect();
   }, [open, hasMore, visibleCount]);
 
-  function handleManualSubmit() {
+  // "Continua" di Nuovo contatto. Senza "+" o "00" il numero è italiano: un
+  // cellulare con una cifra in più viene rifiutato (prima diventava Spagna,
+  // Francia, Ungheria… e il promemoria poteva arrivare a uno sconosciuto). Un
+  // numero estero si accetta solo dopo averne mostrato la lettura.
+  async function handleManualSubmit() {
     setManualError(null);
-    const normalized = validatePhone(manualNumber);
-    if (!normalized) {
-      setManualError('Numero non valido (min 10 cifre).');
+    setManualConfirm(null);
+    let parsed: PhoneInputResult;
+    let errorText: (e: Extract<PhoneInputResult, { ok: false }>['error']) => string;
+    let describe: (country?: string) => string;
+    try {
+      const phone = await loadPhone();
+      parsed = phone.parsePhoneInput(manualNumber);
+      errorText = phone.phoneInputErrorMessage;
+      describe = (country) => [phone.flagEmoji(country), phone.countryNameIt(country)].filter(Boolean).join(' ');
+    } catch {
+      setManualError('Non riesco a controllare il numero. Riprova.');
       return;
     }
-    onSelect({ number: normalized, name: manualName.trim() || undefined });
+    if (!parsed.ok) {
+      setManualError(errorText(parsed.error));
+      return;
+    }
+    if (!parsed.italian) {
+      const where = describe(parsed.country);
+      setManualConfirm({ digits: parsed.digits, label: `${where ? where + ' · ' : ''}${parsed.international}` });
+      return;
+    }
+    onSelect({ number: parsed.digits, name: manualName.trim() || undefined, manualEntry: true });
+  }
+
+  function confirmForeignNumber() {
+    if (!manualConfirm) return;
+    onSelect({ number: manualConfirm.digits, name: manualName.trim() || undefined, manualEntry: true });
+  }
+
+  // Dalla ricerca senza risultati: apre Nuovo contatto già compilato con quello
+  // che l'utente ha scritto (cifre → Numero, testo → Nome).
+  function openManualFromSearch() {
+    const q = search.trim();
+    if (digitsQuery(q) !== null) setManualNumber(q);
+    else if (q) setManualName(q);
+    setManualError(null);
+    setManualConfirm(null);
+    setManualOpen(true);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    setTimeout(() => manualNumberRef.current?.focus(), 0);
   }
 
   if (!open) return null;
@@ -395,23 +467,50 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
                 style={{ backgroundColor: '#2A3942' }}
               />
               <input
+                ref={manualNumberRef}
                 type="tel"
                 inputMode="tel"
                 value={manualNumber}
-                onChange={(e) => setManualNumber(e.target.value)}
-                placeholder="Numero (es. 3331234567)"
+                onChange={(e) => { setManualNumber(e.target.value); setManualConfirm(null); }}
+                placeholder="Numero (es. 333 123 4567, estero con +)"
+                aria-label="Numero"
+                aria-invalid={manualError ? true : undefined}
                 className="w-full px-3 py-2 rounded-xl text-sm text-white placeholder:text-[#8696A0] focus:outline-none focus:ring-2 focus:ring-[#25D366]"
                 style={{ backgroundColor: '#2A3942' }}
               />
-              {manualError && <div className="text-xs text-red-400">{manualError}</div>}
-              <Button
-                type="button"
-                onClick={handleManualSubmit}
-                className="w-full !bg-[#25D366] hover:!bg-[#1DA851] !text-white !border-transparent"
-                size="sm"
-              >
-                Continua
-              </Button>
+              {manualError && <div role="alert" className="text-xs text-red-400">{manualError}</div>}
+              {manualConfirm ? (
+                <div className="rounded-xl p-3 space-y-2" style={{ backgroundColor: '#1F2C34' }} role="group" aria-label="Conferma numero estero">
+                  <p className="text-sm text-white">{manualConfirm.label} — è giusto?</p>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      onClick={confirmForeignNumber}
+                      className="flex-1 !bg-[#25D366] hover:!bg-[#1DA851] !text-white !border-transparent"
+                      size="sm"
+                    >
+                      Sì, è giusto
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => { setManualConfirm(null); manualNumberRef.current?.focus(); }}
+                      className="flex-1 !bg-transparent !text-white !border-[#2A3942]"
+                      size="sm"
+                    >
+                      Correggi
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  onClick={() => { void handleManualSubmit(); }}
+                  className="w-full !bg-[#25D366] hover:!bg-[#1DA851] !text-white !border-transparent"
+                  size="sm"
+                >
+                  Continua
+                </Button>
+              )}
             </div>
           )}
 
@@ -484,8 +583,20 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
           )}
 
           {view.kind === 'list' && filtered.length === 0 && view.contacts.length > 0 && (
-            <div className="p-8 text-center text-sm" style={{ color: '#AEBAC1' }}>
-              Nessun risultato per &quot;{search}&quot;.
+            <div className="p-8 text-center text-sm space-y-3" style={{ color: '#AEBAC1' }}>
+              <p>Nessun risultato per &quot;{search}&quot;.</p>
+              <p className="text-xs">
+                Alcuni contatti WhatsApp non mostrano il numero: compaiono appena ti scrivono,
+                oppure aggiungili col numero.
+              </p>
+              <Button
+                type="button"
+                onClick={openManualFromSearch}
+                className="!bg-[#25D366] hover:!bg-[#1DA851] !text-white !border-transparent"
+                size="sm"
+              >
+                Scrivi il numero
+              </Button>
             </div>
           )}
 

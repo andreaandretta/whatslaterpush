@@ -10,7 +10,7 @@
  */
 import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
-import { normalizeItalianPhone } from './phone';
+import { parsePhoneInput } from './phone';
 import { applyCourtesyWindow, spreadCoTimed, romeParts, romeWallClockToUtc } from './anti-ban';
 
 // ── Types ──
@@ -100,21 +100,44 @@ const MIN_LEAD_MS = 2 * 60 * 1000;   // send time closer than this to now → cl
 const CLAMP_DELAY_MS = 5 * 60 * 1000; // clamped send time = now + 5min
 
 // Candidate phone runs: 9-19 chars of digits/spaces/separators, optional +.
-// Real validity is decided AFTER normalization (10-15 digits), so date-like
-// runs ("10/09/2026" → 8 digits) fall out on their own.
+// Real validity is decided AFTER normalization: the number must be valid for
+// its country (libphonenumber, see app/lib/phone.ts), not just 10-15 digits.
 const PHONE_CANDIDATE_RE = /(\+?\d[\d\s\-\.\/]{7,17}\d)/g;
+
+// Dates and times are blanked out BEFORE looking for numbers: "10/09/2026
+// 18:30" used to become the run "10/09/2026 18" = recipient 1009202618, and a
+// number right after a date got glued to it.
+const DATE_RE = /\b\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}\b/g;
+const TIME_RE = /\b\d{1,2}[:.]\d{2}\b/g;
+// Digits right after these words are codes, not phones ("P.IVA 01234567890"
+// is a valid-looking Turin landline for the phone library).
+const NOT_A_PHONE_BEFORE = /(\biva|partita\s+iva|\bc\.?\s*f\.?|codice(\s+fiscale)?|\bcod\.?|fattura|pratica|ordine|iban|\bnr?\.|\bn°)\s*[:.#]?\s*$/i;
+
+// Default normalizer: E.164 digits of a real number, '' otherwise. An event is
+// written by a person and nobody confirms the reading before the automatic
+// send, so it is read like "Nuovo contatto": Italian unless it starts with +
+// or 00 ("347 12345 678" is a typo, not a Spanish number).
+function normalizeEventPhone(raw: string): string {
+  const r = parsePhoneInput(raw);
+  return r.ok ? r.digits : '';
+}
 
 // ── Phone extraction ──
 
 export function extractEventPhone(
   event: Pick<CalendarEvent, 'summary' | 'description' | 'location'>,
-  normalizeFn: (raw: string) => string = normalizeItalianPhone
+  normalizeFn: (raw: string) => string = normalizeEventPhone
 ): { phone: string; rawMatch: string } | null {
   // First extractable phone wins, in field-priority order.
   for (const field of [event.summary, event.description, event.location]) {
     if (!field) continue;
-    const candidates = field.match(PHONE_CANDIDATE_RE) || [];
-    for (const raw of candidates) {
+    // ';' is not in the candidate charset, so no run can span a blanked date.
+    const text = field.replace(DATE_RE, ' ; ').replace(TIME_RE, ' ; ');
+    const re = new RegExp(PHONE_CANDIDATE_RE.source, 'g');
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const raw = m[1];
+      if (NOT_A_PHONE_BEFORE.test(text.slice(Math.max(0, m.index - 24), m.index))) continue;
       const digits = raw.replace(/\D/g, '');
       if (digits.length < 10 || digits.length > 15) continue; // validatePhone bounds
       const phone = normalizeFn(raw);

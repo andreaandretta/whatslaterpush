@@ -800,5 +800,80 @@ describe('GET /api/contacts', () => {
       const body = await (await callGet()).json();
       expect(body.recents.map((r: any) => r.number)).toEqual(['393401111111']);
     });
+
+    // Audit 25 set 2026: 13-digit LIDs got past the 14-15 digit filter; three
+    // of them had a name and were offered in the picker (prod 1542…2503).
+    test('a 13-digit synced row that cannot be a number is hidden too, even with a name', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', [
+        { contact_number: '1542123452503', name: 'Luca Calcio', push_name: null, profile_pic_url: null, added_manually: false, created_at: '2026-09-21T10:00:00Z' },
+        { contact_number: '2348031234567', name: 'Ada', push_name: null, profile_pic_url: null, added_manually: false, created_at: '2026-09-21T10:00:00Z' },
+      ]);
+      mockSupa.setResponse('scheduled_messages:select', [
+        { recipient_number: '1542123452503', recipient_name: 'Luca Calcio' },
+      ]);
+      const body = await (await callGet()).json();
+      expect(body.contacts.map((c: any) => c.number)).toEqual(['2348031234567']);
+      expect(body.recents).toEqual([]);
+    });
+
+    test('recents never offer digits that cannot be a number (stray "1" before 39)', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', []);
+      mockSupa.setResponse('scheduled_messages:select', [
+        { recipient_number: '1393471234567', recipient_name: 'Genitore' },
+        { recipient_number: '393401111111', recipient_name: 'Mario' },
+      ]);
+      const body = await (await callGet({ prefetch: true })).json();
+      expect(body.recents.map((r: any) => r.number)).toEqual(['393401111111']);
+    });
+  });
+
+  // Prod: 3466…2716 saved by hand, picked again 4 times in 17 days, failed
+  // "exists": false every time. After a "Numero non su WhatsApp" it is hidden.
+  describe('numbers WhatsApp refused ("exists": false)', () => {
+    const DEAD = '34661234562';
+    const EXISTS_FALSE = 'Evolution API error: 400 {"status":400,"response":{"message":[{"jid":"34661234562@s.whatsapp.net","exists":false,"number":"34661234562"}]}}';
+    function history(opts: { sentAfter?: boolean } = {}) {
+      mockSupa.setHandler('scheduled_messages:select', (c) => {
+        const isFailRead = c.chain.some((m) => m.method === 'ilike');
+        const isSentRead = c.chain.some((m) => m.method === 'eq' && m.args[0] === 'status' && m.args[1] === 'sent');
+        if (isFailRead) return { data: [{ recipient_number: DEAD, status: 'failed', error_message: EXISTS_FALSE, created_at: '2026-06-01T08:00:00Z' }], error: null };
+        if (isSentRead) return { data: opts.sentAfter ? [{ recipient_number: DEAD, status: 'sent', created_at: '2026-07-01T08:00:00Z', sent_at: '2026-07-01T08:00:05Z' }] : [], error: null };
+        return { data: [{ recipient_number: DEAD, recipient_name: 'Genitore' }, { recipient_number: '393401111111', recipient_name: 'Mario' }], error: null };
+      });
+    }
+    const rows = [
+      { contact_number: DEAD, name: 'Genitore', push_name: null, profile_pic_url: null, added_manually: true, created_at: '2026-05-23T10:00:00Z' },
+      { contact_number: '393401111111', name: 'Mario', push_name: 'Mario', profile_pic_url: null, added_manually: false },
+    ];
+
+    test('hidden from the picker and from the recents, even if saved by hand', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', rows);
+      history();
+      const body = await (await callGet()).json();
+      expect(body.contacts.map((c: any) => c.number)).toEqual(['393401111111']);
+      expect(body.recents.map((c: any) => c.number)).toEqual(['393401111111']);
+    });
+
+    test('a later successful send brings it back', async () => {
+      mockSupa.setResponse('whatsapp_contacts:select', rows);
+      history({ sentAfter: true });
+      const body = await (await callGet()).json();
+      expect(body.contacts.map((c: any) => c.number).sort()).toEqual([DEAD, '393401111111']);
+    });
+  });
+
+  // Baileys 7: in LID-addressed groups a participant is `<lid>@lid` and its
+  // number is in `phoneNumber`. Reading only p.id dropped them all.
+  test('group participant addressed by LID resolves through phoneNumber', async () => {
+    mockSupa.setResponse('whatsapp_contacts:select', []);
+    mockSupa.setResponse('scheduled_messages:select', []);
+    findChatsMock.mockResolvedValue([{ remoteJid: '393331112233@s.whatsapp.net', pushName: 'Marco' }]);
+    fetchAllGroupsMock.mockResolvedValue([
+      { id: '123@g.us', participants: [{ id: '144392555855948@lid', phoneNumber: '393335554444@s.whatsapp.net' }, { id: '155555555555555@lid' }] },
+    ]);
+    whatsappNumbersMock.mockResolvedValue([{ exists: true, jid: '393335554444@s.whatsapp.net', number: '393335554444', name: 'Giulia' }]);
+    const body = await (await callGet()).json();
+    expect(body.contacts.map((c: any) => c.number).sort()).toEqual(['393331112233', '393335554444']);
+    expect(body.contacts.some((c: any) => c.number.startsWith('1'))).toBe(false);
   });
 });
