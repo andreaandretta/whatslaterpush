@@ -19,6 +19,7 @@ let failedRows: any[] = [];          // righe 'failed' viste da checkFailures
 let sentToRecipient: any[] = [];     // righe 'sent' viste dal cool-down
 let storageFiles: Record<string, any[]> = {};
 
+const HELD = 'Istanza disconnessa, retry 3/12 fra 5 min'; // motivo scritto dal cron in scaletta
 const EXISTS_FALSE = 'HTTP 400: {"status":400,"error":"Bad Request","response":{"message":[{"jid":"390811234567@s.whatsapp.net","exists":false,"number":"390811234567"}]}}';
 
 function has(call: any, method: string, col?: string, val?: any) {
@@ -28,7 +29,13 @@ function has(call: any, method: string, col?: string, val?: any) {
 function installDb() {
   mockSupa.setHandler('scheduled_messages:select', (call: any) => {
     if (String(call.args[0]).startsWith('*, user_instances')) return { data: pendingRows, error: null };
-    if (has(call, 'eq', 'status', 'failed')) return { data: failedRows, error: null, count: failedRows.length } as any;
+    if (has(call, 'eq', 'status', 'failed')) {
+      // Come PostgREST: ogni .gte(col, v) filtra davvero (solo sulle righe che
+      // hanno la colonna, così i test vecchi senza timestamp restano uguali).
+      const gtes = call.chain.filter((m: any) => m.method === 'gte');
+      const rows = failedRows.filter((r) => gtes.every((g: any) => r[g.args[0]] === undefined || String(r[g.args[0]]) >= String(g.args[1])));
+      return { data: rows, error: null, count: rows.length } as any;
+    }
     if (has(call, 'eq', 'status', 'sent') && has(call, 'gte', 'sent_at')) return { data: sentToRecipient, error: null, count: sentToRecipient.length } as any;
     return { data: [], error: null, count: 0 } as any;
   });
@@ -145,6 +152,32 @@ describe('circuit breaker: 5 numeri sbagliati non congelano i promemoria ai clie
     expect(upd.args[0].error_message).toMatch(/Invii sospesi/);
   });
 
+  test('BUG: domenica la pulizia allegati tocca 5 righe fallite un mese fa (updated_at = adesso) → il breaker NON scatta', async () => {
+    const monthAgo = new Date(Date.now() - 35 * 86400000).toISOString();
+    const justNow = new Date(Date.now() - 3 * 3600000).toISOString();
+    failedRows = ['1', '2', '3', '4', '5'].map((r) => ({
+      recipient_number: '39340000000' + r, error_message: 'HTTP 500: Internal Server Error',
+      created_at: monthAgo, scheduled_at: monthAgo, updated_at: justNow,
+    }));
+    pendingRows = [makeRow()];
+    const body = await runCron();
+    expect(body.sent).toBe(1);
+    expect(fetchMock.calls.some((c) => String(c.options?.body || '').includes('Messaggi sospesi'))).toBe(false);
+  });
+
+  test('guasti VERI di stamattina su un promemoria creato 40 giorni fa → il breaker scatta ancora', async () => {
+    const createdLongAgo = new Date(Date.now() - 40 * 86400000).toISOString();
+    const thisMorning = new Date(Date.now() - 3 * 3600000).toISOString();
+    failedRows = ['1', '2', '3', '4', '5'].map((r) => ({
+      recipient_number: '39340000000' + r, error_message: 'HTTP 500: Internal Server Error',
+      created_at: createdLongAgo, scheduled_at: thisMorning, updated_at: thisMorning,
+    }));
+    pendingRows = [makeRow()];
+    const body = await runCron();
+    expect(body.sent).toBe(0);
+    expect(body.rateLimited).toBe(1);
+  });
+
   test('la finestra delle 24h guarda il momento del FALLIMENTO (updated_at), non la creazione', async () => {
     pendingRows = [makeRow()];
     await runCron();
@@ -181,9 +214,9 @@ describe('disconnessione', () => {
 describe('riconnessione: il backlog non esce tutto insieme', () => {
   test('3 righe arretrate dello stesso utente: 1 invio ora, le altre a +90 s / +180 s', async () => {
     pendingRows = [
-      makeRow({ id: 'a', disconnect_retry_count: 2 }),
-      makeRow({ id: 'b', disconnect_retry_count: 2, recipient_number: '393401111111' }),
-      makeRow({ id: 'c', disconnect_retry_count: 2, recipient_number: '393402222222' }),
+      makeRow({ id: 'a', disconnect_retry_count: 2, error_message: HELD }),
+      makeRow({ id: 'b', disconnect_retry_count: 2, error_message: HELD, recipient_number: '393401111111' }),
+      makeRow({ id: 'c', disconnect_retry_count: 2, error_message: HELD, recipient_number: '393402222222' }),
     ];
     const before = Date.now();
     const body = await runCron();
@@ -199,7 +232,7 @@ describe('riconnessione: il backlog non esce tutto insieme', () => {
 
   test('ricollegato a mezzanotte con una riga in ritardo da >30 min → domattina, non alle 00:18', async () => {
     freezeClock('2026-09-27T22:18:00.000Z'); // 00:18 Roma
-    pendingRows = [makeRow({ disconnect_retry_count: 8 })];
+    pendingRows = [makeRow({ disconnect_retry_count: 9, error_message: HELD })];
     const body = await runCron();
     expect(sendCalls()).toHaveLength(0);
     expect(body.sent).toBe(0);
@@ -211,9 +244,30 @@ describe('riconnessione: il backlog non esce tutto insieme', () => {
 
   test('glitch di 5 minuti alle 22:00: l\'orario scelto dall\'utente resta (parte subito)', async () => {
     freezeClock('2026-09-27T20:05:00.000Z'); // 22:05 Roma
-    pendingRows = [makeRow({ disconnect_retry_count: 1 })];
+    pendingRows = [makeRow({ disconnect_retry_count: 1, error_message: HELD })];
     const body = await runCron();
     expect(body.sent).toBe(1);
+  });
+
+  test('BUG: blip di 18 min in "connecting" (6 giri da 1+1+1+5+5+5) alle 22:00 → parte alle 22:18, non domattina', async () => {
+    freezeClock('2026-09-27T20:18:00.000Z'); // 22:18 Roma
+    pendingRows = [makeRow({ disconnect_retry_count: 6, error_message: 'Istanza disconnessa, retry 6/12 fra 5 min' })];
+    const body = await runCron();
+    expect(body.sent).toBe(1);
+    expect(msgUpdates('msg-1').some((u) => /fuori orario/.test(String(u.args[0].error_message)))).toBe(false);
+  });
+
+  test('BUG: Posticipa "+1 ora" alle 20:40 dopo una disconnessione lunga → parte alle 21:40 scelto dall\'utente', async () => {
+    // Il PATCH ha riscritto scheduled_at e azzerato error_message; il contatore
+    // della disconnessione è rimasto a 7.
+    freezeClock('2026-09-27T19:40:00.000Z'); // 21:40 Roma
+    pendingRows = [
+      makeRow({ id: 'a', disconnect_retry_count: 7, error_message: null }),
+      makeRow({ id: 'b', disconnect_retry_count: 7, error_message: null, recipient_number: '393401111111' }),
+    ];
+    const body = await runCron();
+    expect(body.sent).toBe(2);
+    expect(msgUpdates().some((u) => /fuori orario|invii arretrati/.test(String(u.args[0].error_message)))).toBe(false);
   });
 });
 
@@ -257,6 +311,19 @@ describe('allegati', () => {
     expect(upd.error_message).toMatch(/40 s/);
   });
 
+  test('allegato tolto dalla pulizia (media_type senza media_url): niente invio del solo testo, riga fallita col motivo', async () => {
+    pendingRows = [makeRow({ media_url: null, media_type: 'document', media_filename: 'circolare.pdf', parsed_message: 'Ecco la circolare' })];
+    const body = await runCron();
+    expect(sendCalls()).toHaveLength(0);
+    expect(body.sent).toBe(0);
+    expect(body.failed).toBe(1);
+    const upd = msgUpdates('msg-1').map((u) => u.args[0]).find((a) => a.status === 'failed')!;
+    expect(upd.error_message).toMatch(/Allegato non più disponibile/);
+    // nessuna quota consumata, nessun avviso al titolare
+    expect(mockSupa.calls.some((c) => c.table === '__rpc__' && c.operation === 'claim_daily_quota')).toBe(false);
+    expect(fetchMock.calls.some((c) => c.url.includes('/message/sendText/'))).toBe(false);
+  });
+
   test('la route dichiara un maxDuration che contiene il timeout massimo', async () => {
     const mod = await import('../app/api/cron/send-messages/route');
     expect((mod as any).maxDuration).toBeGreaterThanOrEqual(60);
@@ -272,7 +339,7 @@ describe('invio fallito per istanza disconnessa (DB diceva "open")', () => {
     fetchMock.setJsonResponse('/instance/connectionState/', { instance: { instanceName: 'SchedWhats-393501234567', state: 'close' } });
     const body = await runCron();
     expect(body.failed).toBe(0);
-    const inst = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update')!;
+    const inst = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update' && 'connection_status' in c.args[0])!;
     expect(inst.args[0]).toEqual({ connection_status: 'close' });
     const upd = msgUpdates('msg-1').map((u) => u.args[0]).find((a) => a.disconnect_retry_count !== undefined)!;
     expect(upd.status).toBe('pending');
@@ -288,9 +355,34 @@ describe('invio fallito per istanza disconnessa (DB diceva "open")', () => {
     fetchMock.setJsonResponse('/message/sendText/', closedErr.body, closedErr.status);
     fetchMock.setJsonResponse('/instance/connectionState/', { instance: { state: 'open' } });
     await runCron();
-    expect(mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update')).toBeUndefined();
+    expect(mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update' && 'connection_status' in c.args[0])).toBeUndefined();
     const upd = msgUpdates('msg-1').map((u) => u.args[0]).find((a) => a.retry_count !== undefined)!;
     expect(upd.retry_count).toBe(1);
     expect(upd.status).toBe('pending');
+  });
+});
+
+describe('contatore giornaliero: il reset non deve "perdonare" gli invii di oggi', () => {
+  test('BUG: data di reset vecchia e 0 invii → il cron la porta a OGGI (Roma), così il reset di metà giornata non azzera i claim di stamattina', async () => {
+    freezeClock('2026-09-28T08:00:00.000Z'); // 10:00 Roma
+    await runCron();
+    const stamp = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update' && 'last_daily_reset_at' in c.args[0]);
+    expect(stamp).toBeDefined();
+    expect(stamp!.args[0]).toEqual({ last_daily_reset_at: '2026-09-28' });
+    // Solo righe dove "azzerare" non cambia niente: 0 invii e upsell non inviato.
+    expect(has(stamp, 'eq', 'messages_sent_today', 0)).toBe(true);
+    expect(has(stamp, 'eq', 'upsell_sent_today', false)).toBe(true);
+    const or = stamp!.chain.find((m: any) => m.method === 'or');
+    expect(String(or!.args[0])).toBe('last_daily_reset_at.is.null,last_daily_reset_at.lt.2026-09-28');
+    // Dopo il reset RPC (che gestisce le righe con invii > 0), prima degli invii.
+    const idxReset = mockSupa.calls.findIndex((c) => c.table === '__rpc__' && c.operation === 'reset_daily_counters');
+    expect(mockSupa.calls.indexOf(stamp!)).toBeGreaterThan(idxReset);
+  });
+
+  test('a mezzanotte e mezza Roma (22:30 UTC del giorno prima) la data è quella di Roma', async () => {
+    freezeClock('2026-09-27T22:30:00.000Z'); // 00:30 Roma del 28
+    await runCron();
+    const stamp = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'update' && 'last_daily_reset_at' in c.args[0]);
+    expect(stamp!.args[0]).toEqual({ last_daily_reset_at: '2026-09-28' });
   });
 });

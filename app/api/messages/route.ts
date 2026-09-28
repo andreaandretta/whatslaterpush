@@ -68,11 +68,17 @@ export async function GET(req: NextRequest) {
   // the user's queue (future), not history. Hiding them past historyDays made
   // old-but-live rows invisible — and thus uneditable/unresumable — in the
   // dashboard while the cron kept processing them (runbook §2).
+  // Audit 28 set 2026: la finestra si misura da quando la riga è FINITA
+  // (sent_at, o scheduled_at per annullati/falliti), non da created_at. Un
+  // promemoria programmato 120 giorni prima (POST accetta fino a 365, e le
+  // ricorrenze annuali ne hanno sempre ~365) spariva nell'istante in cui
+  // partiva o falliva. I falliti restano visibili SEMPRE, finché l'utente non
+  // li toglie: una card rossa nascosta fa credere che il messaggio sia partito.
   const { data, error } = await supabase
     .from('scheduled_messages')
     .select('*')
     .eq('instance_phone', phone)
-    .or(`created_at.gte.${historyStart},status.in.(pending,paused,processing,awaiting_time,awaiting_recipient,awaiting_confirm)`)
+    .or(`status.eq.failed,sent_at.gte.${historyStart},scheduled_at.gte.${historyStart},status.in.(pending,paused,processing,awaiting_time,awaiting_recipient,awaiting_confirm)`)
     .order('scheduled_at', { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

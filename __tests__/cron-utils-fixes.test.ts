@@ -13,6 +13,7 @@ import {
   DISCONNECT_RETRY_THRESHOLD,
   planBacklogSpread,
   isLateDisconnectBacklog,
+  MEDIA_EXPIRED_ERROR,
 } from '../app/lib/cron-utils';
 
 const EXISTS_FALSE = 'HTTP 400: {"status":400,"error":"Bad Request","response":{"message":[{"jid":"390811234567@s.whatsapp.net","exists":false,"number":"390811234567"}]}}';
@@ -106,8 +107,8 @@ describe('disconnectRetryStep — la scaletta riparte ogni giorno', () => {
 
 describe('planBacklogSpread — alla riconnessione il backlog esce uno per volta', () => {
   const now = Date.parse('2026-09-28T10:00:00Z');
-  const row = (id: string, owner: string, count: number, status = 'open') => ({
-    id, instance_phone: owner, disconnect_retry_count: count, user_instances: { connection_status: status },
+  const row = (id: string, owner: string, count: number, status = 'open', error_message: string | null = 'Istanza disconnessa, retry 3/12 fra 5 min') => ({
+    id, instance_phone: owner, disconnect_retry_count: count, error_message, user_instances: { connection_status: status },
   });
 
   test('5 messaggi arretrati dello stesso utente: 1 parte ora, gli altri a +90/180/270/360 s', () => {
@@ -134,6 +135,15 @@ describe('planBacklogSpread — alla riconnessione il backlog esce uno per volta
     expect(planBacklogSpread(rows, now).keep.map((r) => r.id)).toEqual(['a', 'b']);
   });
 
+  test('BUG: riga col contatore vecchio ma riprogrammata dall\'utente (Posticipa/Modifica azzerano error_message) NON è backlog', () => {
+    // Il PATCH riscrive scheduled_at e pulisce error_message ma (oggi) non
+    // disconnect_retry_count: il contatore da solo non dice più "arretrato".
+    const rows = [row('a', 'u1', 7), row('b', 'u1', 7, 'open', null)];
+    const { keep, defer } = planBacklogSpread(rows, now);
+    expect(keep.map((r) => r.id)).toEqual(['a', 'b']);
+    expect(defer).toEqual([]);
+  });
+
   test('istanza ANCORA disconnessa: nessuno spread, la riga deve fare la sua scaletta', () => {
     const rows = [row('a', 'u1', 4, 'close'), row('b', 'u1', 4, 'close')];
     const { keep, defer } = planBacklogSpread(rows, now);
@@ -143,13 +153,31 @@ describe('planBacklogSpread — alla riconnessione il backlog esce uno per volta
 });
 
 describe('isLateDisconnectBacklog — da quando l\'orario non è più quello scelto dall\'utente', () => {
-  test('pochi minuti di ritardo (1-5 giri da 5 min): resta l\'orario dell\'utente', () => {
-    expect(isLateDisconnectBacklog(0)).toBe(false);
-    expect(isLateDisconnectBacklog(5)).toBe(false);
+  const HELD = 'Istanza disconnessa, retry 5/12 fra 5 min';
+  test('pochi minuti di ritardo: resta l\'orario dell\'utente', () => {
+    expect(isLateDisconnectBacklog(0, HELD)).toBe(false);
+    expect(isLateDisconnectBacklog(5, HELD)).toBe(false);
   });
-  test('da mezz\'ora in poi (o rinviato a domani) l\'orario è del sistema', () => {
-    expect(isLateDisconnectBacklog(6)).toBe(true);
-    expect(isLateDisconnectBacklog(12)).toBe(true);
-    expect(isLateDisconnectBacklog(13)).toBe(true);
+  test('BUG: 6 giri in "connecting" sono 1+1+1+5+5+5 = 18 min, non 30 → l\'orario dell\'utente resta', () => {
+    expect(isLateDisconnectBacklog(6, HELD)).toBe(false);
+    expect(isLateDisconnectBacklog(8, HELD)).toBe(false); // 28 min nel caso più veloce
+  });
+  test('da mezz\'ora GARANTITA in poi (o rinviato a domani) l\'orario è del sistema', () => {
+    expect(isLateDisconnectBacklog(9, HELD)).toBe(true); // ≥ 33 min anche con la scaletta rapida
+    expect(isLateDisconnectBacklog(12, 'Istanza disconnessa per 12× 5min, riprogrammato a domani')).toBe(true);
+    expect(isLateDisconnectBacklog(13, HELD)).toBe(true);
+    expect(isLateDisconnectBacklog(9, 'WhatsApp ricollegato: invii arretrati distanziati per non partire tutti insieme')).toBe(true);
+  });
+  test('BUG: contatore vecchio ma orario scelto di nuovo dall\'utente (error_message azzerato dal PATCH) → mai "arretrato"', () => {
+    expect(isLateDisconnectBacklog(12, null)).toBe(false);
+    expect(isLateDisconnectBacklog(7, undefined)).toBe(false);
+    expect(isLateDisconnectBacklog(9, 'Limite giornaliero raggiunto (5/5) — riprogrammato a domattina')).toBe(false);
+  });
+});
+
+describe('countBreakerFailures — allegato tolto dalla pulizia', () => {
+  test('una riga fallita perché il file non c\'è più non dice nulla sulla salute del numero', () => {
+    const rows = ['1', '2', '3', '4', '5'].map((r) => ({ recipient_number: '39340000000' + r, error_message: MEDIA_EXPIRED_ERROR }));
+    expect(countBreakerFailures(rows)).toBe(0);
   });
 });

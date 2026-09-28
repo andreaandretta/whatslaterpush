@@ -40,6 +40,42 @@ export function partitionRemovableMedia(
   };
 }
 
+// ── Riferimenti a un file, senza il tetto di PostgREST ─────────────────────────
+// PostgREST ospitato restituisce al massimo 1000 righe per risposta e non
+// segnala il taglio. Ogni occorrenza di una catena ricorrente e ogni "Duplica"
+// è una riga a sé con lo stesso media_url: un file popolare riempiva la
+// risposta e i riferimenti agli altri finivano oltre la 1000ª riga → il file
+// sembrava orfano e veniva cancellato mentre una riga pending lo usava ancora.
+// Qui si restringe: ogni giro toglie dalla lista i path già visti e ripete
+// finché una risposta arriva NON piena (allora è completa). Se i giri non
+// bastano si lancia: meglio non cancellare niente che cancellare un file vivo.
+export const REF_PAGE = 1000;
+const REF_MAX_ROUNDS = 20;
+
+export async function findReferencedPaths(
+  paths: string[],
+  // Filtri in più sulla stessa query (es. solo righe recenti).
+  narrow: (q: any) => any = (q) => q,
+): Promise<Set<string>> {
+  const supabase = getSupabaseAdmin();
+  const referenced = new Set<string>();
+  let remaining = Array.from(new Set(paths.filter(Boolean)));
+  for (let round = 0; remaining.length > 0; round++) {
+    if (round >= REF_MAX_ROUNDS) throw new Error('reference check troncato: troppi riferimenti, nessuna cancellazione');
+    const { data, error } = await narrow(
+      supabase.from('scheduled_messages').select('media_url').in('media_url', remaining),
+    ).limit(REF_PAGE);
+    if (error) throw new Error(error.message);
+    const rows = (data || []) as Array<{ media_url: string | null }>;
+    for (const r of rows) if (r.media_url) referenced.add(r.media_url);
+    if (rows.length < REF_PAGE) break; // risposta non piena: completa
+    const next = remaining.filter((p) => !referenced.has(p));
+    if (next.length === remaining.length) throw new Error('reference check troncato: risposta piena senza path nuovi');
+    remaining = next;
+  }
+  return referenced;
+}
+
 export async function runMediaCleanup(): Promise<CleanupResult> {
   const supabase = getSupabaseAdmin();
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -80,15 +116,13 @@ export async function runMediaCleanup(): Promise<CleanupResult> {
   // già inviata o fallita, lo tiene vivo finché non ha anche lei 30 giorni.
   // Altrimenti il suo "Riprova" o una nuova "Duplica" partirebbero con un
   // allegato che non esiste più.
-  const { data: recentRefs, error: recentErr } = await supabase
-    .from('scheduled_messages')
-    .select('media_url')
-    .in('media_url', allPaths)
-    .or(`created_at.gte.${cutoff},updated_at.gte.${cutoff}`);
-  if (recentErr) throw new Error('cleanup-media recent-reference check failed: ' + recentErr.message);
-  for (const r of (recentRefs || []) as Array<{ media_url: string | null }>) {
-    if (r.media_url) inUse.add(r.media_url);
+  let recentRefs: Set<string>;
+  try {
+    recentRefs = await findReferencedPaths(allPaths, (q) => q.or(`created_at.gte.${cutoff},updated_at.gte.${cutoff}`));
+  } catch (e: any) {
+    throw new Error('cleanup-media recent-reference check failed: ' + (e?.message || e));
   }
+  recentRefs.forEach((p) => inUse.add(p));
 
   const { removablePaths, removableIds, skipped } = partitionRemovableMedia(rows, inUse);
 
@@ -105,12 +139,15 @@ export async function runMediaCleanup(): Promise<CleanupResult> {
   const { error: storageErr } = await supabase.storage.from(BUCKET).remove(removablePaths);
   if (storageErr) throw new Error('cleanup-media storage remove failed: ' + storageErr.message);
 
+  // media_type e media_filename RESTANO (audit 28 set 2026): "tipo senza
+  // URL" è il segnale che il file è stato tolto. Lo leggono il Riprova
+  // (409 media_expired), la dashboard (banner "allegato non più disponibile"
+  // su Duplica) e il cron (non spedisce la riga come solo testo). Prima si
+  // azzerava tutto e quei tre controlli non potevano mai scattare.
   const { error: updErr } = await supabase
     .from('scheduled_messages')
     .update({
       media_url: null,
-      media_type: null,
-      media_filename: null,
       media_caption: null,
     })
     .in('id', removableIds);
@@ -175,12 +212,12 @@ export async function sweepOrphanUploads(nowMs: number = Date.now()): Promise<Or
 
   // Qualsiasi riga, anche cancelled/failed/sent: se la riga c'è il file lo
   // gestisce la retention sopra. Errore di query → nessuna cancellazione.
-  const { data: refs, error: refErr } = await supabase
-    .from('scheduled_messages')
-    .select('media_url')
-    .in('media_url', oldPaths);
-  if (refErr) throw new Error('orphan sweep reference check failed: ' + refErr.message);
-  const referenced = new Set(((refs || []) as Array<{ media_url: string | null }>).map((r) => r.media_url));
+  let referenced: Set<string>;
+  try {
+    referenced = await findReferencedPaths(oldPaths);
+  } catch (e: any) {
+    throw new Error('orphan sweep reference check failed: ' + (e?.message || e));
+  }
   const orphans = oldPaths.filter((p) => !referenced.has(p));
   if (orphans.length === 0) return { scanned, orphans: 0, removed: 0 };
 

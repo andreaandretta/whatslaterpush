@@ -135,7 +135,8 @@ describe('runMediaCleanup — Storage remove', () => {
 });
 
 describe('runMediaCleanup — DB nullification', () => {
-  test('updates rows by id IN list with all media_* columns NULL', async () => {
+  // media_type/media_filename restano come segnale "file tolto" (audit 28 set 2026).
+  test('updates rows by id IN list: media_url + media_caption NULL, type/filename kept', async () => {
     mockSupa.setResponse('scheduled_messages:select', [
       { id: 'm1', media_url: 'a/foo.jpg' },
       { id: 'm2', media_url: 'b/bar.mp4' },
@@ -147,8 +148,6 @@ describe('runMediaCleanup — DB nullification', () => {
     expect(upd).toBeDefined();
     expect(upd.args[0]).toEqual({
       media_url: null,
-      media_type: null,
-      media_filename: null,
       media_caption: null,
     });
     const inCall = upd.chain.find(c => c.method === 'in' && c.args[0] === 'id');

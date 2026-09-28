@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
-import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, isNotOnWhatsAppError, countBreakerFailures, BREAKER_THRESHOLD, sendTimeoutMs, cooldownReleaseAt, COOLDOWN_MAX_PER_RECIPIENT, disconnectRetryStep, DISCONNECT_RETRY_THRESHOLD, isLateDisconnectBacklog, planBacklogSpread } from '../../../lib/cron-utils';
+import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, isNotOnWhatsAppError, countBreakerFailures, BREAKER_THRESHOLD, sendTimeoutMs, cooldownReleaseAt, COOLDOWN_MAX_PER_RECIPIENT, disconnectRetryStep, DISCONNECT_RETRY_THRESHOLD, isLateDisconnectBacklog, planBacklogSpread, MEDIA_EXPIRED_ERROR } from '../../../lib/cron-utils';
 import { isBillingEnabled, getEffectivePlan } from '../../../lib/billing';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
@@ -30,6 +30,8 @@ export const fetchCache = 'force-no-store';
 // iniziare nuovi batch tardi.
 export const maxDuration = 60;
 
+let resetStampWarned = false;
+
 async function checkFailures(supabase: ReturnType<typeof createClient>, userPhone: string) {
   // Audit 25 set 2026: prima contava OGNI riga 'failed' CREATA nelle ultime
   // 24h. Cinque numeri inesistenti (exists:false) bloccavano tutti i promemoria
@@ -37,11 +39,19 @@ async function checkFailures(supabase: ReturnType<typeof createClient>, userPhon
   // erano ancora "nelle 24h" della creazione. Ora: finestra sul momento del
   // FALLIMENTO (updated_at), errori permanenti del destinatario esclusi,
   // conteggio per destinatario distinto (vedi countBreakerFailures).
+  // updated_at da solo però lo cambia anche chi fa manutenzione: la pulizia
+  // allegati della domenica tocca righe fallite un mese fa e il trigger le
+  // rendeva "fallite nelle 24h" → invii sospesi ogni domenica. Anche
+  // scheduled_at deve stare nelle 24h: su una riga 'failed' è l'orario del
+  // tentativo finale (buildFailureRequeueUpdate), quindi mai dopo il
+  // fallimento, e la manutenzione non lo tocca.
+  const since = new Date(Date.now() - 86400000).toISOString();
   const { data: failedRows } = await supabase.from('scheduled_messages')
     .select('recipient_number, error_message')
     .eq('instance_phone', userPhone)
     .eq('status', 'failed')
-    .gte('updated_at', new Date(Date.now() - 86400000).toISOString())
+    .gte('updated_at', since)
+    .gte('scheduled_at', since)
     .limit(200);
   const count = countBreakerFailures((failedRows || []) as Array<{ recipient_number: string | null; error_message: string | null }>);
   if (count >= BREAKER_THRESHOLD) {
@@ -121,6 +131,32 @@ export async function GET(req: NextRequest) {
       });
     } else if (typeof resetCount === 'number' && resetCount > 0) {
       console.log('CRON: Reset daily counters for ' + resetCount + ' users');
+    }
+    // Data di reset portata a OGGI anche dove non c'era niente da azzerare
+    // (audit 28 set 2026). reset_daily_counters salta le righe con 0 invii,
+    // quindi dopo un giorno senza invii la data restava vecchia; claim_daily_quota
+    // la timbra solo se NULL. Il primo tick dopo i claim di stamattina trovava
+    // "data vecchia + contatore > 0" e azzerava: cap e rampa warm-up valevano
+    // doppio ogni giorno dopo un giorno fermo. Qui si toccano SOLO righe con 0
+    // invii e upsell non inviato, dove azzerare non cambia niente: è lo stesso
+    // effetto del reset, meno il salto. Il fix definitivo è in SQL (migration
+    // 20260928_reset_daily_counters_date_based.sql, da applicare); questo resta
+    // innocuo anche dopo. Best-effort: un errore non ferma gli invii.
+    try {
+      const romeToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+      const { error: stampErr } = await supabase.from('user_instances')
+        .update({ last_daily_reset_at: romeToday })
+        .or('last_daily_reset_at.is.null,last_daily_reset_at.lt.' + romeToday)
+        .eq('messages_sent_today', 0)
+        .eq('upsell_sent_today', false);
+      // Una riga per lambda, non una al minuto: il 7 lug il PATCH REST su
+      // questa colonna rispondeva 400 ("column does not exist") a ogni tick.
+      if (stampErr && !resetStampWarned) {
+        resetStampWarned = true;
+        console.warn('CRON: daily reset date refresh failed (non-fatal): ' + stampErr.message);
+      }
+    } catch (e) {
+      console.warn('CRON: daily reset date refresh error (non-fatal):', (e as Error)?.message);
     }
 
     // Trial → Free downgrade — the ONLY systematic billing mutation in the
@@ -455,12 +491,31 @@ export async function GET(req: NextRequest) {
 
         // decision === 'send' — proceed with tier limits, cool-down, rate limiting
 
+        // Allegato tolto dalla pulizia dei 30 giorni (cleanup-media lascia
+        // media_type come segnale e azzera media_url). Senza questo controllo
+        // hasMedia era false e la riga partiva come solo testo: promemoria
+        // senza il PDF, o corpo vuoto → 400 e tre tentativi bruciati. Si ferma
+        // qui, prima di quota e claim: nessun invio, nessun avviso al titolare
+        // (la card "Non inviato" lo mostra), non pesa sul breaker.
+        if (msg.media_type && !msg.media_url) {
+          await supabase.from('scheduled_messages').update({
+            status: 'failed',
+            retry_count: Math.max(3, msg.retry_count || 0),
+            error_message: MEDIA_EXPIRED_ERROR,
+            send_attempted_at: null,
+          }).eq('id', msg.id).eq('status', 'pending');
+          console.log('CRON: media expired for msg ' + msg.id + ' — not sent as text-only');
+          return 'failed' as const;
+        }
+
         // Backlog di una disconnessione, già in ritardo di ≥30 min (o rinviato
         // a domani): l'orario non è più quello scelto dall'utente ma uno del
         // sistema, quindi vale la fascia 08-21 come per quota e corsia lenta.
         // Senza, un re-pair alle 00:18 faceva partire i promemoria a mezzanotte.
-        // Sotto i 30 min l'orario dell'utente resta (isLateDisconnectBacklog).
-        if (isLateDisconnectBacklog((msg as any).disconnect_retry_count) && !isWithinCourtesyWindow(new Date())) {
+        // Sotto i 30 min l'orario dell'utente resta (isLateDisconnectBacklog),
+        // e resta sempre se l'utente l'ha riscelto (Posticipa/Modifica azzerano
+        // error_message: il contatore da solo non basta).
+        if (isLateDisconnectBacklog((msg as any).disconnect_retry_count, msg.error_message) && !isWithinCourtesyWindow(new Date())) {
           await supabase.from('scheduled_messages').update({
             scheduled_at: applyJitter(nextRomeMorning(new Date()).toISOString(), 30 * 60_000),
             error_message: 'WhatsApp ricollegato fuori orario — il promemoria in ritardo parte domattina',
@@ -893,6 +948,7 @@ export async function GET(req: NextRequest) {
           else if (r.value === 'rate_limited') rateLimited++;
           else if (r.value === 'trial_expired') trialExpired++;
           else if (r.value === 'disconnected') disconnected++;
+          else if (r.value === 'failed') failed++;
         } else {
           // Promise rejected = send error, handle retry
           const msg = batch[j];

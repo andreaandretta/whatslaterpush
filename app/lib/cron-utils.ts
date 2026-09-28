@@ -233,10 +233,21 @@ export function countBreakerFailures(rows: Array<{ recipient_number?: string | n
   const recipients = new Set<string>();
   for (const r of rows || []) {
     if (notOnWhatsApp(r?.error_message)) continue;
+    // Allegato già tolto dalla pulizia dei 30 giorni: è un problema della
+    // RIGA (il file non c'è più), non del numero che invia.
+    if (typeof r?.error_message === 'string' && r.error_message.startsWith(MEDIA_EXPIRED_ERROR)) continue;
     recipients.add(String(r?.recipient_number || ''));
   }
   return recipients.size;
 }
+
+/**
+ * Motivo scritto dal cron su una riga con media_type ma senza media_url: la
+ * pulizia dei 30 giorni (cleanup-media) ha tolto il file e lasciato il tipo
+ * apposta, come segnale. Spedirla come solo testo manderebbe il promemoria
+ * senza il PDF (o un corpo vuoto → 400 e tre tentativi bruciati).
+ */
+export const MEDIA_EXPIRED_ERROR = 'Allegato non più disponibile (rimosso dopo 30 giorni): usa "Duplica" e caricalo di nuovo';
 
 export const TEXT_SEND_TIMEOUT_MS = 8000;
 export const MEDIA_SEND_TIMEOUT_CAP_MS = 40_000;
@@ -292,22 +303,48 @@ export function disconnectRetryStep(prevCount: number, connectionStatus: string 
 }
 
 /**
- * Riga trattenuta per disconnessione da almeno ~30 min (6 giri da 5 min) o già
- * rinviata a domani: il suo orario non è più quello scelto a mano dall'utente
- * ma uno calcolato dal sistema, quindi vale la fascia di cortesia 08-21.
+ * La riga è in scaletta PER COLPA DEL SISTEMA adesso? Il contatore da solo non
+ * basta: Posticipa e Modifica (PATCH /api/messages) riscrivono scheduled_at e
+ * azzerano error_message ma non disconnect_retry_count, quindi un contatore
+ * vecchio restava su un orario scelto di nuovo dall'utente e il cron lo
+ * spostava a domattina (o di +90 s). Conta solo se l'ultimo motivo l'ha
+ * scritto il cron per la disconnessione o per il rientro dal backlog.
+ */
+const DISCONNECT_BACKLOG_MARKER = /^(Istanza disconnessa|WhatsApp ricollegato)/;
+export function isDisconnectBacklogRow(disconnectRetryCount: number | null | undefined, errorMessage: string | null | undefined): boolean {
+  return (disconnectRetryCount || 0) > 0 && typeof errorMessage === 'string' && DISCONNECT_BACKLOG_MARKER.test(errorMessage);
+}
+
+/**
+ * Riga trattenuta per disconnessione da almeno 30 min GARANTITI, o già
+ * rinviata a domani: il suo orario non è più quello scelto a mano
+ * dall'utente ma uno calcolato dal sistema, quindi vale la fascia 08-21.
  * Sotto i 30 min resta l'orario dell'utente (un glitch alle 22:00 non sposta
  * il promemoria alle 08:00 del giorno dopo).
+ * Si contano i MINUTI, non i giri: in 'connecting' i primi 3 giri durano
+ * 1 minuto, e "6 giri" erano 18 min, non 30. Il conto usa la scaletta più
+ * veloce possibile (disconnectRetryStep in 'connecting'): meglio lasciare
+ * l'orario dell'utente qualche minuto di troppo che spostarlo a domattina.
  */
-export const LATE_BACKLOG_MIN_RETRIES = 6;
-export function isLateDisconnectBacklog(disconnectRetryCount: number | null | undefined): boolean {
-  return (disconnectRetryCount || 0) >= LATE_BACKLOG_MIN_RETRIES;
+export const LATE_BACKLOG_MIN_MINUTES = 30;
+export function isLateDisconnectBacklog(disconnectRetryCount: number | null | undefined, errorMessage: string | null | undefined): boolean {
+  if (!isDisconnectBacklogRow(disconnectRetryCount, errorMessage)) return false;
+  const n = Math.floor(disconnectRetryCount || 0);
+  let minutes = 0;
+  for (let k = 0; k < n; k++) {
+    const step = disconnectRetryStep(k, 'connecting');
+    if (step.retryInMinutes === null) return true; // già rinviata a domani
+    minutes += step.retryInMinutes;
+    if (minutes >= LATE_BACKLOG_MIN_MINUTES) return true;
+  }
+  return false;
 }
 
 /**
  * Alla riconnessione tutto ciò che era in scaletta diventa dovuto nello stesso
  * tick: fino a 5 invii in parallelo in ~3 s da un device appena ricollegato,
  * il pattern "burst da istanza fresca" che anti-ban.ts vuole evitare. Per ogni
- * utente la prima riga arretrata (disconnect_retry_count > 0) parte, le altre
+ * utente la prima riga arretrata (isDisconnectBacklogRow) parte, le altre
  * slittano di +90 s l'una (stesso passo di spreadCoTimed). Solo istanze già
  * 'open': una riga ancora disconnessa deve fare la sua scaletta.
  */
@@ -315,13 +352,14 @@ export function planBacklogSpread<T extends {
   id: string;
   instance_phone?: string | null;
   disconnect_retry_count?: number | null;
+  error_message?: string | null;
   user_instances?: { connection_status?: string | null; phone_number?: string | null } | null;
 }>(rows: T[], nowMs: number, stepMs: number = SPREAD_STEP_MS): { keep: T[]; defer: Array<{ id: string; scheduledAt: string }> } {
   const keep: T[] = [];
   const defer: Array<{ id: string; scheduledAt: string }> = [];
   const seen: Record<string, number> = {};
   for (const r of rows || []) {
-    const backlog = (r.disconnect_retry_count || 0) > 0 && r.user_instances?.connection_status === 'open';
+    const backlog = isDisconnectBacklogRow(r.disconnect_retry_count, r.error_message) && r.user_instances?.connection_status === 'open';
     if (!backlog) { keep.push(r); continue; }
     const owner = r.instance_phone || r.user_instances?.phone_number || 'unknown';
     const k = seen[owner] || 0;
