@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
 import { logAuditEvent, hashContactRefSync } from '../../../lib/audit';
 import { getSupabaseAdmin } from '../../../lib/supabase-admin';
+import { forceDeleteInstance } from '../../../lib/evolution';
+import { revokeGoogleGrant } from '../../../lib/google-revoke';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,6 +62,36 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Google Calendar (fase 1b): delete_user_account NON tocca
+  // calendar_connections, quindi refresh token cifrato, google_email e template
+  // sopravvivevano, e un numero riciclato avrebbe ripreso a leggere il
+  // calendario del vecchio proprietario. Finché la RPC non la include (serve
+  // una migration e l'ok di Andrea) la riga si cancella da qui, PRIMA della
+  // cascata: se fallisce ci si ferma come per lo storage (nessuna mezza
+  // cancellazione, un retry riparte pulito). Prima si revoca il grant su
+  // Google, best-effort: un grant già revocato o la rete giù non bloccano.
+  let googleRevoked = false;
+  {
+    const { data: conn, error: selErr } = await supabase
+      .from('calendar_connections')
+      .select('id, google_refresh_token_enc')
+      .eq('user_phone', phone)
+      .maybeSingle();
+    if (selErr) {
+      return NextResponse.json({ error: 'calendar_purge_failed', stage: 'select', message: selErr.message }, { status: 500 });
+    }
+    if (conn) {
+      googleRevoked = await revokeGoogleGrant((conn as any).google_refresh_token_enc);
+      const { error: calErr } = await supabase
+        .from('calendar_connections')
+        .delete()
+        .eq('user_phone', phone);
+      if (calErr) {
+        return NextResponse.json({ error: 'calendar_purge_failed', message: calErr.message }, { status: 500 });
+      }
+    }
+  }
+
   // #58 + #30: atomic DB cascade (all-or-nothing) via the transactional RPC,
   // which also prunes the instance-keyed, IP-bearing audit_events.
   {
@@ -69,19 +101,21 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Best-effort Evolution instance logout. Failure is non-fatal — the DB
-  // side is already wiped; if Evolution can't be reached, the Baileys
-  // session just stays alive on the droplet until manual cleanup.
+  // Teardown Evolution COMPLETO (fase 1b), lo stesso del logout: logout +
+  // delete + verifica che l'istanza sia sparita. Prima c'era solo
+  // /instance/logout: l'istanza e tutto ciò che Baileys aveva sincronizzato
+  // (contatti, chat, storico al primo pairing) restavano sul nodo Hetzner —
+  // solo delete li cancella. Non fatale (il DB è già pulito), ma l'esito
+  // si riporta in evolution_disconnected invece di nasconderlo.
   let evolutionDisconnected = false;
-  if (process.env.EVOLUTION_API_URL && process.env.EVOLUTION_API_KEY && instanceName) {
+  if (instanceName) {
     try {
-      const res = await fetch(
-        process.env.EVOLUTION_API_URL + '/instance/logout/' + instanceName,
-        { method: 'DELETE', headers: { apikey: process.env.EVOLUTION_API_KEY } },
-      );
-      evolutionDisconnected = res.ok;
+      evolutionDisconnected = await forceDeleteInstance(instanceName);
     } catch {
       evolutionDisconnected = false;
+    }
+    if (!evolutionDisconnected) {
+      console.error('[account/delete] Evolution teardown not verified for ' + hashContactRefSync(phone) + ' — instance may still hold synced data, operator cleanup needed');
     }
   }
 
@@ -95,6 +129,7 @@ export async function POST(req: NextRequest) {
       phone_hash: phoneHash,
       removed_media: removedMedia,
       evolution_disconnected: evolutionDisconnected,
+      google_revoked: googleRevoked,
     },
   });
 

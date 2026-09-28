@@ -6,6 +6,7 @@ import StepNumero from '../components/connect/StepNumero';
 import StepCodice from '../components/connect/StepCodice';
 import StepPronto from '../components/connect/StepPronto';
 import { classifyInitError, type InitUiError } from '../lib/connect-errors';
+import { savePairingSession, loadPairingSession, clearPairingSession } from '../lib/pairing-session-store';
 
 // Connect flow orchestrator — 3 steps:
 //   1. Numero — user types phone, we POST to /api/auth/init to start session
@@ -63,6 +64,7 @@ function ConnectFlow() {
   // After pairing success, redirect to dashboard. The 1.5s delay lives in
   // StepPronto so the user actually sees the celebration animation.
   const handlePaired = () => {
+    clearPairingSession();
     setStep('3');
     setTimeout(() => {
       // replace (not push) so /connect leaves the history stack — pressing
@@ -89,12 +91,25 @@ function ConnectFlow() {
       });
       const data = await res.json().catch(() => ({}));
 
+      // Fase 1b: init non scollega più un WhatsApp già collegato. Se il numero
+      // è di questa sessione ed Evolution lo vede aperto, si torna alla
+      // dashboard invece di generare un codice (che avrebbe tolto il
+      // dispositivo collegato dal telefono).
+      if (res.ok && data.already_connected) {
+        setInitError(null);
+        setCooldownUntil(null);
+        router.replace(typeof data.redirect === 'string' ? data.redirect : '/dashboard');
+        return;
+      }
+
       if (res.ok && data.pairingCode && data.sessionId) {
         setInitError(null);
         setCooldownUntil(null);
         pairingCodeRef.current = data.pairingCode;
         setPairingCode(data.pairingCode);
         setSessionId(data.sessionId);
+        // Sopravvive a un reload/scheda scartata mentre l'utente è su WhatsApp.
+        savePairingSession(data.sessionId, number);
         setConnState(null);
         // Evolution RIGENERA il codice ~ogni 45s (QRCODE_UPDATED): il
         // countdown onesto è ~60s, non 10 minuti. Alla rotazione il poll
@@ -117,6 +132,47 @@ function ConnectFlow() {
     }
   };
 
+  // Ripresa dopo un reload (fase 1b): se c'è una sessione di pairing salvata,
+  // un solo controllo decide dove ripartire — già autenticata → cookie e
+  // dashboard; ancora in corso → passo 2 col codice CORRENTE; scaduta → passo 1.
+  const resumedRef = useRef(false);
+  useEffect(() => {
+    if (resumedRef.current) return;
+    resumedRef.current = true;
+    const stored = loadPairingSession();
+    if (!stored) return;
+    (async () => {
+      try {
+        const res = await fetch('/api/auth/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: stored.sessionId }),
+        });
+        if (res.status === 410 || res.status === 400) {
+          clearPairingSession();
+          return;
+        }
+        const data = await res.json();
+        if (data.authenticated) {
+          handlePaired();
+          return;
+        }
+        if (stored.phone) setPhoneNumber(stored.phone);
+        if (typeof data.pairingCode === 'string' && data.pairingCode) {
+          pairingCodeRef.current = data.pairingCode;
+          setPairingCode(data.pairingCode);
+          setCodeExpiresAt(Date.now() + 60 * 1000);
+        }
+        if (typeof data.connState === 'string') setConnState(data.connState);
+        setSessionId(stored.sessionId);
+        setStep('2');
+      } catch {
+        // rete assente: la sessione resta salvata, un reload riproverà
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Step 2 polls /api/auth/check until authenticated === true.
   // 410 means the session expired — stop polling and let the countdown in
   // StepCodice show 0:00 so the user can tap "Rigenera codice".
@@ -133,6 +189,7 @@ function ConnectFlow() {
         });
         if (res.status === 410) {
           clearInterval(interval);
+          clearPairingSession();
           return;
         }
         const data = await res.json();
@@ -166,7 +223,7 @@ function ConnectFlow() {
           expiresAt={codeExpiresAt}
           phoneNumber={phoneNumber}
           connState={connState}
-          onBack={() => setStep('1')}
+          onBack={() => { clearPairingSession(); setStep('1'); }}
           onRegenerate={() => handleNumeroSubmit(phoneNumber)}
         />
       )}

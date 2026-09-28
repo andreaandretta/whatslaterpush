@@ -5,6 +5,15 @@
  */
 import { createMockSupabase, createFetchMock, mockRequest } from './helpers/mocks';
 import { signCookie, AUTH_COOKIE_NAME } from '../app/lib/auth-cookie';
+import { encryptToken } from '../app/lib/calendar-crypto';
+
+// Teardown Evolution condiviso con il logout (logout + delete + verifica):
+// mockato qui, il suo comportamento è coperto da pairing-teardown.test.ts.
+const mockForceDelete = jest.fn(async (_name: string): Promise<boolean> => true);
+jest.mock('../app/lib/evolution', () => ({
+  forceDeleteInstance: (name: string) => mockForceDelete(name),
+  instanceNameForPhone: (p: string) => 'SchedWhats-' + p,
+}));
 
 const mockSupa = createMockSupabase();
 jest.mock('@supabase/supabase-js', () => ({
@@ -24,6 +33,10 @@ beforeEach(() => {
   mockSupa.setStorageResponse('message-media:list', []);
   mockSupa.setStorageResponse('message-media:remove', null);
   mockSupa.setRpcResponse('delete_user_account', null);
+  mockSupa.setResponse('calendar_connections:select', null);
+  mockSupa.setResponse('calendar_connections:delete', null);
+  mockForceDelete.mockReset();
+  mockForceDelete.mockResolvedValue(true);
   process.env = {
     ...ORIGINAL_ENV,
     SUPABASE_URL: 'https://test.supabase.co',
@@ -31,6 +44,7 @@ beforeEach(() => {
     AUTH_COOKIE_SECRET: 'a'.repeat(128),
     EVOLUTION_API_URL: 'https://evo.test',
     EVOLUTION_API_KEY: 'evo-key',
+    CALENDAR_TOKEN_SECRET: 'b'.repeat(64),
   };
   (global as any).fetch = fetchMock.mockFetch;
 });
@@ -169,11 +183,11 @@ describe('POST /api/account/delete — final audit event', () => {
 });
 
 describe('POST /api/account/delete — Evolution disconnect is best-effort', () => {
-  test('200 even when Evolution logout throws, with evolution_disconnected=false; DB cascade still ran', async () => {
+  test('200 even when Evolution teardown throws, with evolution_disconnected=false; DB cascade still ran', async () => {
     mockUserInstanceLookup();
     mockSupa.setStorageResponse('message-media:list', []);
     mockSupa.setRpcResponse('delete_user_account', null);
-    fetchMock.setHandler('/instance/logout/', () => { throw new Error('Evolution unreachable'); });
+    mockForceDelete.mockRejectedValue(new Error('Evolution unreachable'));
 
     const res = await callDelete({ confirmation: USER_PHONE });
     expect(res.status).toBe(200);
@@ -181,5 +195,66 @@ describe('POST /api/account/delete — Evolution disconnect is best-effort', () 
     expect(body.status).toBe('ok');
     expect(body.evolution_disconnected).toBe(false);
     expect(mockSupa.calls.find(c => c.operation === 'delete_user_account')).toBeDefined();
+  });
+});
+
+// Fase 1b: "Elimina account" lasciava su Evolution i dati sincronizzati da
+// Baileys (solo /instance/logout, mai /instance/delete) e in DB la connessione
+// Google Calendar (refresh token cifrato, email, template), con il grant
+// Google ancora attivo. Un numero riciclato avrebbe ripreso a leggere il
+// calendario del vecchio proprietario.
+describe('POST /api/account/delete — nothing left behind on Evolution or Google', () => {
+  test('Evolution: full teardown (logout + delete + verify), not a bare logout', async () => {
+    mockUserInstanceLookup();
+    const res = await callDelete({ confirmation: USER_PHONE });
+    expect(res.status).toBe(200);
+    expect(mockForceDelete).toHaveBeenCalledWith(INSTANCE);
+    expect((await res.json()).evolution_disconnected).toBe(true);
+    expect(fetchMock.calls.some(c => c.url.includes('/instance/logout/'))).toBe(false);
+  });
+
+  test('teardown not verified → evolution_disconnected=false (reported, not hidden)', async () => {
+    mockUserInstanceLookup();
+    mockForceDelete.mockResolvedValue(false);
+    const res = await callDelete({ confirmation: USER_PHONE });
+    expect((await res.json()).evolution_disconnected).toBe(false);
+  });
+
+  test('Calendar: revokes the Google grant, then deletes the row BEFORE the cascade RPC', async () => {
+    mockUserInstanceLookup();
+    mockSupa.setResponse('calendar_connections:select', { id: 'cc1', google_refresh_token_enc: encryptToken('1//refresh-abc') });
+    fetchMock.setJsonResponse('oauth2.googleapis.com/revoke', {});
+    const res = await callDelete({ confirmation: USER_PHONE });
+    expect(res.status).toBe(200);
+    const revoke = fetchMock.calls.find(c => c.url.startsWith('https://oauth2.googleapis.com/revoke'))!;
+    expect(revoke).toBeDefined();
+    expect((revoke.options.method || '').toUpperCase()).toBe('POST');
+    // token nel body, mai nell'URL (log di accesso)
+    expect(revoke.url).not.toContain('refresh-abc');
+    expect(String(revoke.options.body)).toContain('token=1%2F%2Frefresh-abc');
+    const delIdx = mockSupa.calls.findIndex(c => c.table === 'calendar_connections' && c.operation === 'delete');
+    const rpcIdx = mockSupa.calls.findIndex(c => c.operation === 'delete_user_account');
+    expect(delIdx).toBeGreaterThanOrEqual(0);
+    expect(delIdx).toBeLessThan(rpcIdx);
+    expect(mockSupa.calls[delIdx].chain).toContainEqual({ method: 'eq', args: ['user_phone', USER_PHONE] });
+  });
+
+  test('Google revoke failing does not block the deletion', async () => {
+    mockUserInstanceLookup();
+    mockSupa.setResponse('calendar_connections:select', { id: 'cc1', google_refresh_token_enc: encryptToken('1//refresh-abc') });
+    fetchMock.setHandler('oauth2.googleapis.com/revoke', () => { throw new Error('network'); });
+    const res = await callDelete({ confirmation: USER_PHONE });
+    expect(res.status).toBe(200);
+    expect(mockSupa.calls.some(c => c.table === 'calendar_connections' && c.operation === 'delete')).toBe(true);
+  });
+
+  test('calendar row delete error → 500, cascade NOT run (no half-delete)', async () => {
+    mockUserInstanceLookup();
+    mockSupa.setResponse('calendar_connections:select', { id: 'cc1', google_refresh_token_enc: 'garbage' });
+    mockSupa.setResponse('calendar_connections:delete', null, { message: 'db down' });
+    const res = await callDelete({ confirmation: USER_PHONE });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe('calendar_purge_failed');
+    expect(mockSupa.calls.find(c => c.operation === 'delete_user_account')).toBeUndefined();
   });
 });

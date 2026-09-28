@@ -17,12 +17,14 @@ async function applyQueueChoice(phone: string, queue: QueueChoice): Promise<numb
   const update = queue === 'pause'
     ? { status: 'paused', error_message: LOGOUT_PAUSE_REASON }
     : { status: 'cancelled' };
-  const statuses = queue === 'pause' ? ['pending'] : ['pending', 'paused'];
+  // Solo i 'pending', anche per 'cancel' (review fase 1b): il dialogo conta
+  // solo quelli ("Hai N messaggi in coda"). I 'paused' sono pause volute
+  // (stagione ferma, destinatari sospesi) e restano in pausa.
   const { data, error } = await getSupabaseAdmin()
     .from('scheduled_messages')
     .update(update)
     .eq('instance_phone', phone)
-    .in('status', statuses)
+    .in('status', ['pending'])
     .select('id');
   if (error) throw error;
   return data?.length || 0;
@@ -40,29 +42,34 @@ export async function POST(req: NextRequest) {
   const raw = req.cookies?.get?.(AUTH_COOKIE_NAME)?.value;
   const payload = raw ? await verifyCookie(raw) : null;
 
-  // "Disconnetti" must be a REAL disconnect, not just a session logout. When we
-  // know whose session this is, tear down their WhatsApp connection too:
-  //   1. flip user_instances.connection_status to 'close' — deterministic, and
-  //      THIS is what unblocks the anti-hijack guard in /api/auth/init so the
-  //      owner can re-pair their own number (the guard 409s a number that is
-  //      still 'open' when the caller has no sw_session cookie — which is
-  //      exactly the post-logout state).
-  //   2. best-effort logout+delete the Evolution instance — actually unlinks the
-  //      device. Without this the socket stays open, no CONNECTION_UPDATE close
-  //      webhook fires, and connection_status would never leave 'open'.
-  // Both are best-effort and must NEVER block the cookie from clearing, or a
-  // user could get stuck unable to log out. Anonymous / invalid-cookie logouts
-  // skip teardown (no phone to attribute) — this also keeps the anti-hijack
-  // guard intact: you can only disconnect the number carried in YOUR cookie.
-  // Cosa fare della coda (scelta nel dialogo della dashboard). Prima la coda
-  // restava intatta: ai ricollegamenti settimane dopo partiva tutta insieme,
-  // con promemoria di eventi già passati (7 set 2026). Default 'pause': una
-  // chiamata senza scelta non deve lasciare niente che parta da solo.
-  const body = await req.json().catch(() => null) as { queue?: unknown } | null;
+  // Due azioni distinte (fase 1b), scelte nel dialogo della dashboard:
+  //
+  // scope='device' — "Esci da questo dispositivo": SOLO il cookie. Nessun
+  //   unlink, nessun cambio di stato, coda intatta: i promemoria continuano a
+  //   partire. È l'uscita normale da un PC condiviso; prima esisteva solo lo
+  //   scollegamento, e chi "usciva" a fine giornata fermava tutti i promemoria.
+  //
+  // altrimenti — "Scollega WhatsApp" (anche un client vecchio senza scope):
+  //   1. applica la scelta sulla coda (sotto);
+  //   2. connection_status → 'close' (deterministico: il cron smette subito di
+  //      provare, il banner lo dice);
+  //   3. best-effort logout+delete dell'istanza Evolution: scollega davvero il
+  //      dispositivo. Senza, il socket resta aperto e nessun webhook 'close'
+  //      arriverebbe mai.
+  // NB: il guard anti-hijack di /api/auth/init dal 18 ago guarda paired_at,
+  // che il logout non tocca: dopo un logout (qualunque dei due) rientrare da
+  // un browser senza cookie resta un 409 → supporto, finché non c'è l'OTP.
+  // Tutto best-effort: il cookie si cancella SEMPRE. Logout anonimo / cookie
+  // non valido → nessun teardown: si scollega solo il numero del PROPRIO cookie.
+  // Cosa fare della coda: prima restava intatta e al ricollegamento settimane
+  // dopo partiva tutta insieme (7 set 2026). Default 'pause': una chiamata
+  // senza scelta non deve lasciare niente che parta da solo.
+  const body = await req.json().catch(() => null) as { queue?: unknown; scope?: unknown } | null;
+  const deviceOnly = body?.scope === 'device';
   const queue: QueueChoice = body?.queue === 'cancel' || body?.queue === 'keep' ? body.queue : 'pause';
   let queueAffected = 0;
 
-  if (payload?.phone) {
+  if (payload?.phone && !deviceOnly) {
     // Prima della chiusura del collegamento: la scrittura è condizionata su
     // status='pending', quindi una riga già presa dal cron non viene toccata.
     try {
@@ -82,7 +89,7 @@ export async function POST(req: NextRequest) {
   await logAuditEvent({
     userPhone: payload?.phone || null,
     eventType: 'auth_logout',
-    payload: payload?.phone ? { queue, queue_affected: queueAffected } : {},
+    payload: !payload?.phone ? {} : deviceOnly ? { scope: 'device' } : { queue, queue_affected: queueAffected },
     ipAddress: clientIpFromHeaders(req.headers),
   });
 

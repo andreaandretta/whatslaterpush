@@ -74,12 +74,36 @@ test('no choice sent (old client) → pause by default: nothing fires on a futur
   expect(queueWrites()[0].patch).toMatchObject({ status: 'paused' });
 });
 
-test('queue=cancel: pending and paused rows are cancelled', async () => {
+// Review fase 1b: il dialogo dice "Hai N messaggi in coda" contando solo i
+// 'pending'. 'Annullali' cancellava anche i 'paused' messi in pausa apposta
+// (pausa stagionale, destinatari sospesi): 2 annunciati, 7 cancellati, catene
+// ricorrenti comprese. Si annulla solo ciò che il dialogo ha contato.
+test('queue=cancel: only the pending rows the dialog counted are cancelled — paused rows stay paused', async () => {
   const { POST } = await import('../app/api/auth/logout/route');
   await POST(req({ queue: 'cancel' }));
   const w = queueWrites();
   expect(w[0].patch).toEqual({ status: 'cancelled' });
-  expect(w[0].inStatuses).toEqual(['pending', 'paused']);
+  expect(w[0].inStatuses).toEqual(['pending']);
+});
+
+// "Esci da questo dispositivo" (fase 1b): solo il cookie. Su un PC condiviso
+// l'utente esce come da qualsiasi sito, e i promemoria continuano a partire.
+test('scope=device: clears the cookie only — no queue change, no status change, no Evolution teardown', async () => {
+  forceDelete.mockClear();
+  const { POST } = await import('../app/api/auth/logout/route');
+  const res = await POST(req({ scope: 'device', queue: 'cancel' }));
+  expect(res.status).toBe(200);
+  expect(calls).toHaveLength(0);
+  expect(forceDelete).not.toHaveBeenCalled();
+  expect((res.headers.get('set-cookie') || '').toLowerCase()).toContain('max-age=0');
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'auth_logout', payload: { scope: 'device' } }));
+});
+
+test('no scope (old client) keeps the full unlink', async () => {
+  forceDelete.mockClear();
+  const { POST } = await import('../app/api/auth/logout/route');
+  await POST(req({ queue: 'keep' }));
+  expect(forceDelete).toHaveBeenCalled();
 });
 
 test('queue=keep: the queue is not touched', async () => {

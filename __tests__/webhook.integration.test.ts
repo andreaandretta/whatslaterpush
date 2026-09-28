@@ -23,6 +23,7 @@ beforeEach(() => {
     EVOLUTION_API_URL: 'https://evo.test',
     EVOLUTION_API_KEY: 'evo-key',
     GROQ_API_KEY: 'groq-test-key',
+    SELF_CHAT_PARSER_ENABLED: 'true', // parser spento di default (fase 1b): questi test lo esercitano
     WEBHOOK_SECRET: 'test-webhook-secret',
     NEXT_PUBLIC_APP_URL: 'https://whatslaterpush.vercel.app',
   };

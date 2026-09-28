@@ -82,12 +82,26 @@ export async function reconcileInstanceStates(
     const state = live[i];
     if (!state) { unknown++; continue; }
     if (state === rows[i].connection_status) continue;
-    const { error: updErr } = await supabase
+    // Compare-and-set sul valore letto PRIMA della GET (review fase 1b): tra
+    // la lettura e questa scrittura passano fino a 3 s, e se nel frattempo il
+    // webhook ha scritto un 'open' fresco, un 'connecting' letto prima lo
+    // sovrascriverebbe — e nessun altro evento arriva finché resta collegato.
+    // Se la riga è cambiata, vince il webhook: 0 righe toccate.
+    const prev = rows[i].connection_status;
+    const base = supabase
       .from('user_instances')
       .update({ connection_status: state })
       .eq('instance_name', rows[i].instance_name);
+    const { data: touched, error: updErr } = await (prev == null
+      ? base.is('connection_status', null)
+      : base.eq('connection_status', prev)
+    ).select('instance_name');
     if (updErr) {
       console.warn('[connection-reconcile] ' + rows[i].instance_name + ' update failed: ' + updErr.message);
+      continue;
+    }
+    if (Array.isArray(touched) && touched.length === 0) {
+      console.log('[connection-reconcile] ' + rows[i].instance_name + ': stato cambiato durante il controllo, lascio quello del webhook');
       continue;
     }
     console.log('[connection-reconcile] ' + rows[i].instance_name + ': ' + (rows[i].connection_status || 'null') + ' → ' + state);

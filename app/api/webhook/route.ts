@@ -1,7 +1,12 @@
 // @ts-nocheck
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
-import { extractInlineRecipient, extractInlineMessage, extractInlinePhoneAndName, parseAIDatetime, getRomeOffsetMs, nowRome, romeToUtc, formatContactListForLLM } from '../../lib/webhook-utils';
+import { extractInlineRecipient, extractInlineMessage, extractInlinePhoneAndName, parseAIDatetime, getRomeOffsetMs, nowRome, romeToUtc, formatContactListForLLM, selfChatParserEnabled, isSelfChatCommand, isSelfChatShortReply } from '../../lib/webhook-utils';
+import { hashContactRefSync } from '../../lib/audit';
+// Nei log mai testo, nomi o numeri in chiaro (audit fase 1b: le note della
+// chat con se stessi finivano parola per parola nei log Vercel). Lunghezza e
+// hash bastano per correlare.
+const hRef = (v: unknown) => hashContactRefSync(String(v ?? ''));
 import { getPlanLimits } from '../../lib/plans';
 import { isBillingEnabled, getEffectivePlan } from '../../lib/billing';
 import { containsAmbiguousTimeKeyword, hasExplicitHHMM } from '../../lib/quick-capture-utils';
@@ -13,6 +18,8 @@ import { handleInboundOptOut } from '../../lib/opt-out';
 import { recordCustodyAck } from '../../lib/custody-ack';
 import { extractStatusUpdate } from '../../lib/message-status';
 import { phoneDigitsFromJid, phoneJidFromContact } from '../../lib/jid';
+import { fetchEvolutionState } from '../../lib/connection-state';
+import { PENDING_SESSION_GRACE_MS } from '../../lib/auth-session-grace';
 export const dynamic = 'force-dynamic';
 // The self-chat path chains askAI (8s) + verifyAndFixMessage (6s) + notify;
 // the Hobby default ~10s kills it mid-insert, orphaning the dedup claim (#4).
@@ -290,7 +297,7 @@ async function findContactByName(ownerPhone, name) {
   if (!name) return null;
   const cleanName = name.trim();
   const safeName = escapeIlike(cleanName);
-  console.log('WEBHOOK: findContactByName owner=' + ownerPhone + ' name="' + cleanName + '"');
+  console.log('WEBHOOK: findContactByName owner=' + hRef(ownerPhone) + ' name=' + hRef(cleanName));
 
   // Try exact ILIKE match first
   const { data: pending } = await supabase
@@ -302,7 +309,7 @@ async function findContactByName(ownerPhone, name) {
     .limit(1)
     .maybeSingle();
   if (pending) {
-    console.log('WEBHOOK: Found contact in pending_contacts: ' + pending.recipient_name + ' ' + pending.recipient_number);
+    console.log('WEBHOOK: Found contact in pending_contacts: ' + hRef(pending.recipient_number));
     return pending;
   }
 
@@ -317,7 +324,7 @@ async function findContactByName(ownerPhone, name) {
     .limit(1)
     .maybeSingle();
   if (historical) {
-    console.log('WEBHOOK: Found contact in history: ' + historical.recipient_name + ' ' + historical.recipient_number);
+    console.log('WEBHOOK: Found contact in history: ' + hRef(historical.recipient_number));
     return historical;
   }
 
@@ -335,21 +342,22 @@ async function findContactByName(ownerPhone, name) {
       const cName = (c.recipient_name || '').toLowerCase();
       // Match if contact name starts with the search term or vice versa
       if (cName.startsWith(nameLower) || nameLower.startsWith(cName)) {
-        console.log('WEBHOOK: Fuzzy match: "' + cleanName + '" → ' + c.recipient_name);
+        console.log('WEBHOOK: Fuzzy match: ' + hRef(cleanName) + ' → ' + hRef(c.recipient_number));
         return c;
       }
       // Match first word of either
       const cFirst = cName.split(/\s+/)[0];
       const nFirst = nameLower.split(/\s+/)[0];
       if (cFirst === nFirst || cFirst === nameLower || cName === nFirst) {
-        console.log('WEBHOOK: First-word match: "' + cleanName + '" → ' + c.recipient_name);
+        console.log('WEBHOOK: First-word match: ' + hRef(cleanName) + ' → ' + hRef(c.recipient_number));
         return c;
       }
     }
   }
 
-  console.log('WEBHOOK: Contact NOT found: "' + cleanName + '"');
-  await dbLog('CONTACT_NOT_FOUND', { searched: cleanName, allContacts: allContacts?.map(c => c.recipient_name) });
+  console.log('WEBHOOK: Contact NOT found: ' + hRef(cleanName));
+  // Solo il conteggio: un array di nomi sfuggiva allo scrubber (top-level only).
+  await dbLog('CONTACT_NOT_FOUND', { searched: cleanName, contacts_count: allContacts?.length || 0 });
   return null;
 }
 
@@ -363,7 +371,7 @@ async function notifyOwner(instanceName, phone, msg) {
       body: JSON.stringify({ number: phone, text: msg }),
       signal: controller.signal,
     });
-    console.log('notify status:', r.status, 'to:', phone, 'via:', instanceName);
+    console.log('notify status:', r.status, 'to:', hRef(phone), 'via:', instanceName);
   } catch(e) { console.error('notify err:', e.message); }
   finally { clearTimeout(timeout); }
 }
@@ -385,11 +393,11 @@ async function findUserStrict(instanceName: string, phone: string): Promise<any>
       .eq('phone_number', v)
       .maybeSingle();
     if (data) {
-      console.log(`WEBHOOK: STRICT MATCH found - instance=${instanceName} phone=${v} id=${data.id}`);
+      console.log(`WEBHOOK: STRICT MATCH found - instance=${instanceName} phone=${hRef(v)} id=${data.id}`);
       return data;
     }
   }
-  console.log(`WEBHOOK: STRICT MATCH failed - no row for instance=${instanceName} phone=[${variants.join(',')}]`);
+  console.log(`WEBHOOK: STRICT MATCH failed - no row for instance=${instanceName} phone=${hRef(variants[0])}`);
   return null;
 }
 
@@ -448,11 +456,38 @@ async function handleConnectionUpdate(payload: any): Promise<NextResponse> {
     update.last_disconnect_at = nowIso;
   }
 
-  const { data: updated, error } = await supabase
-    .from('user_instances')
-    .update(update)
-    .eq('instance_name', instanceName)
-    .select('id, phone_number');
+  // Ordine degli eventi (review fase 1b): col 503 qui sotto Evolution
+  // ritrasmette un evento non salvato 5-40 s dopo, e gli eventi non sono
+  // ordinati. Un 'close' ritrasmesso dopo l'"open" successivo riportava la riga
+  // a 'close' con il socket aperto: nessun altro CONNECTION_UPDATE arriva
+  // finché resta collegato → cron fermo e banner rosso che spinge a un re-pair
+  // (segnale di ban). date_time del payload NON è affidabile per ordinare: in
+  // 2.3.7 è l'ora locale del container etichettata come UTC, e questa colonna
+  // la leggono health/monitoring come ora reale. Quindi si chiede a Evolution
+  // lo stato VIVO: se contraddice l'evento (non-open contro 'open', 'open'
+  // contro 'close') l'evento è superato e connection_status non si tocca.
+  // Stato vivo ignoto (rete, 404 istanza sparita, timeout 3 s) → si scrive
+  // l'evento come prima. Tutto il resto (last_disconnect_*, audit, paired_at,
+  // sessione di pairing) racconta cose successe davvero e prosegue.
+  const live = connectionStatus === 'open' || connectionStatus === 'close' || connectionStatus === 'connecting'
+    ? await fetchEvolutionState(instanceName)
+    : null;
+  const superseded =
+    (connectionStatus !== 'open' && live === 'open') ||
+    (connectionStatus === 'open' && live === 'close');
+  if (superseded) {
+    delete update.connection_status;
+    delete update.last_connection_update;
+    console.log(`WEBHOOK: CONNECTION_UPDATE superato - instance=${instanceName} evento=${connectionStatus} evolution=${live}: stato non sovrascritto`);
+  }
+
+  const { data: updated, error } = Object.keys(update).length === 0
+    ? { data: [], error: null }
+    : await supabase
+      .from('user_instances')
+      .update(update)
+      .eq('instance_name', instanceName)
+      .select('id, phone_number');
   if (error) {
     // connection_status arriva SOLO da qui: rispondere 200 a una scrittura
     // fallita (Gateway Timeout Supabase, 9-14 set 2026) faceva perdere l'evento
@@ -504,12 +539,16 @@ async function handleConnectionUpdate(payload: any): Promise<NextResponse> {
         .update({ status: 'authenticated', instance_name: instanceName })
         .eq('phone', ownerPhone)
         .eq('status', 'pending')
-        .gt('expires_at', new Date().toISOString())
+        // Grazia oltre il TTL (fase 1b): Evolution ruota il codice anche dopo
+        // i 10 minuti e un telefono collegato al minuto 12 lasciava la sessione
+        // 'pending' → niente cookie, paired_at timbrato, 409 al nuovo tentativo.
+        // Il vincolo vero resta phone = ownerJid del telefono appena collegato.
+        .gt('expires_at', new Date(Date.now() - PENDING_SESSION_GRACE_MS).toISOString())
         .select('id');
       if (sErr) {
         console.error(`WEBHOOK: pending_auth_sessions update error: ${sErr.message}`);
       } else {
-        console.log(`WEBHOOK: pending_auth_sessions marked authenticated count=${sessions?.length || 0} phone=${ownerPhone}`);
+        console.log(`WEBHOOK: pending_auth_sessions marked authenticated count=${sessions?.length || 0} phone=${hRef(ownerPhone)}`);
         // pairing_completed: numerator counterpart of pairing_started. Gated
         // on the UPDATE actually flipping a row (the `.eq('status','pending')`
         // guard above means we only see >0 sessions on a real pending->auth
@@ -600,6 +639,20 @@ async function getPendingContext(ownerPhone: string): Promise<any> {
     .limit(1)
     .maybeSingle();
   return data;
+}
+
+// Sola lettura (niente pulizia): c'è un promemoria in costruzione nell'ultima
+// ora? Serve al filtro "solo comandi" per lasciar passare le risposte a una
+// domanda del bot ("a che ora?" → "alle 16").
+async function hasPendingContext(ownerPhone: string): Promise<boolean> {
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { data } = await supabase.from('scheduled_messages')
+    .select('id')
+    .eq('instance_phone', ownerPhone)
+    .in('status', ['awaiting_time', 'awaiting_recipient', 'awaiting_confirm'])
+    .gte('created_at', oneHourAgo)
+    .limit(1);
+  return Array.isArray(data) ? data.length > 0 : !!data;
 }
 
 // ── AI config: Groq (primary, free) → OpenAI (fallback) ──
@@ -708,7 +761,7 @@ Includi SEMPRE nel JSON un campo "confidence" con uno di questi valori:
   const userContent = aiUserText + '\n---\nContatti: ' + (contactList || 'nessuno') + '\nOra: ' + currentDateTime + ' (ISO: ' + currentIso + ')' + pendingBlock;
 
   try {
-    console.log('WEBHOOK: AI call provider=' + ai.provider + ' model=' + ai.model + ' user="' + userMessage + '"');
+    console.log('WEBHOOK: AI call provider=' + ai.provider + ' model=' + ai.model + ' user=(' + String(userMessage || '').length + ' chars)');
     await dbLog('AI_REQUEST', { provider: ai.provider, model: ai.model, user: userMessage, pending: pendingContext?.status || 'none' });
 
     const controller = new AbortController();
@@ -746,7 +799,7 @@ Includi SEMPRE nel JSON un campo "confidence" con uno di questi valori:
 
     const jsonStr = content.replace(/^```json?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
     const parsed = JSON.parse(jsonStr);
-    console.log('WEBHOOK: AI response (' + ai.provider + '):', JSON.stringify(parsed));
+    console.log('WEBHOOK: AI response (' + ai.provider + '): action=' + (parsed?.action || 'none'));
     await dbLog('AI_RESPONSE', { provider: ai.provider, ...parsed });
     return parsed;
   } catch (e: any) {
@@ -765,11 +818,11 @@ async function verifyAndFixMessage(messageText: string, recipientName: string): 
   const dirtyAnywhere = /(di[''`]?\s+a[d]?\s+\w+\s+di\s+ricordare|scrivi\s+all[ao]|manda\s+a\s+\w+\s+che)/i;
   if (!dirtyPatterns.test(messageText.trim()) && !dirtyAnywhere.test(messageText)) {
     // Message looks clean — no rewrite needed
-    console.log('WEBHOOK: Message looks clean, no rewrite needed: "' + messageText + '"');
+    console.log('WEBHOOK: Message looks clean, no rewrite needed (' + String(messageText || '').length + ' chars)');
     return messageText;
   }
 
-  console.log('WEBHOOK: Message still dirty, rewriting: "' + messageText + '"');
+  console.log('WEBHOOK: Message still dirty, rewriting (' + String(messageText || '').length + ' chars)');
   const ai = getAIConfig();
   if (!ai) return messageText;
 
@@ -796,7 +849,7 @@ async function verifyAndFixMessage(messageText: string, recipientName: string): 
     const data = await res.json();
     const fixed = (data.choices?.[0]?.message?.content || '').trim().replace(/^["']|["']$/g, '');
     if (fixed && fixed.length > 3) {
-      console.log('WEBHOOK: Rewrite result (' + ai.provider + '): "' + messageText + '" → "' + fixed + '"');
+      console.log('WEBHOOK: Rewrite result (' + ai.provider + '): ' + String(messageText || '').length + ' → ' + String(fixed || '').length + ' chars');
       await dbLog('REWRITE', { from: messageText, to: fixed, provider: ai.provider });
       return fixed;
     }
@@ -1259,7 +1312,7 @@ export async function POST(req) {
     }
 
     if (!isFromMe) {
-      console.log('WEBHOOK: Skipped - not fromMe. remoteJid=' + (msgKey?.remoteJid || 'none'));
+      console.log('WEBHOOK: Skipped - not fromMe. remoteJid=' + hRef(msgKey?.remoteJid || 'none'));
       // Release the dedup claim so a SIGKILL before this return doesn't
       // permanently orphan the claim and block Evolution's retry (#4).
       if (claimedMsgId) await releaseWebhookEvent(supabase, claimedMsgId);
@@ -1271,7 +1324,17 @@ export async function POST(req) {
       return NextResponse.json({ ok:true });
     }
 
-    console.log('WEBHOOK: Processing sender=' + senderRaw + ' evoInstance=' + evoInstance);
+    // Parser della chat con se stessi SPENTO di default (audit fase 1b): da qui
+    // in giù c'è solo lui (self-chat, vCard, risposte a una conferma in una
+    // chat 1:1). Senza SELF_CHAT_PARSER_ENABLED=true un messaggio scritto
+    // dall'utente — a sé stesso o a un cliente — non viene letto, salvato,
+    // loggato né mandato all'LLM. Il claim di dedup resta: evento gestito.
+    if (!selfChatParserEnabled()) {
+      console.log('WEBHOOK: fromMe ignorato (parser spento) instance=' + evoInstance);
+      return NextResponse.json({ ok: true, ignored: 'self_chat_parser_off' });
+    }
+
+    console.log('WEBHOOK: Processing sender=' + hashContactRefSync(senderRaw) + ' evoInstance=' + evoInstance);
 
     // STRICT IDENTITY RESOLUTION
     let user = await findUserStrict(evoInstance, senderRaw);
@@ -1280,7 +1343,7 @@ export async function POST(req) {
       // No match: instance+phone combo not in DB. Silently ignore.
       // NEVER auto-reassign instances — it causes cross-user contamination
       // when user A sends a message to user B and both have WhatsLater instances.
-      console.log(`WEBHOOK: No user for instance=${evoInstance} phone=${senderRaw}. Ignoring.`);
+      console.log(`WEBHOOK: No user for instance=${evoInstance} phone=${hRef(senderRaw)}. Ignoring.`);
       if (claimedMsgId) await releaseWebhookEvent(supabase, claimedMsgId);
       return NextResponse.json({ ok: true });
     }
@@ -1293,7 +1356,7 @@ export async function POST(req) {
 
     const ownerPhone = user.phone_number;
     const instanceName = user.instance_name;
-    console.log(`WEBHOOK: IDENTITY CONFIRMED - owner=${ownerPhone} instance=${instanceName} user_id=${user.id}`);
+    console.log(`WEBHOOK: IDENTITY CONFIRMED - owner=${hRef(ownerPhone)} instance=${instanceName} user_id=${user.id}`);
 
     // ── SELF-CHAT CHECK: Only process messages the user sends to themselves ──
     // remoteJid contains the chat partner; for self-chat it equals the owner's phone
@@ -1304,15 +1367,15 @@ export async function POST(req) {
       // Groups (@g.us) and broadcasts (@broadcast) are NEVER processed, even with awaiting_confirm
       const fullJid = msgKey?.remoteJid || '';
       if (fullJid.includes('@g.us') || fullJid.includes('@broadcast') || !fullJid.includes('@s.whatsapp.net')) {
-        console.log(`WEBHOOK: IGNORED - group/broadcast/non-personal chat. jid=${fullJid} owner=${ownerPhone}`);
+        console.log(`WEBHOOK: IGNORED - group/broadcast/non-personal chat. jid=${hRef(fullJid)} owner=${hRef(ownerPhone)}`);
         return NextResponse.json({ ok: true });
       }
       // Exception: allow replies to an awaiting_confirm context ONLY in 1:1 personal chats
       const pendingCtx = await getPendingContext(ownerPhone);
       if (pendingCtx && pendingCtx.status === 'awaiting_confirm') {
-        console.log(`WEBHOOK: NOT self-chat but awaiting_confirm active in 1:1 chat - allowing. remoteJid=${senderRaw} owner=${ownerPhone}`);
+        console.log(`WEBHOOK: NOT self-chat but awaiting_confirm active in 1:1 chat - allowing. remoteJid=${hRef(senderRaw)} owner=${hRef(ownerPhone)}`);
       } else {
-        console.log(`WEBHOOK: IGNORED - not self-chat. remoteJid=${senderRaw} owner=${ownerPhone} instance=${instanceName}`);
+        console.log(`WEBHOOK: IGNORED - not self-chat. remoteJid=${hRef(senderRaw)} owner=${hRef(ownerPhone)} instance=${instanceName}`);
         return NextResponse.json({ ok: true });
       }
     }
@@ -1328,7 +1391,7 @@ export async function POST(req) {
         const tel = (vcard.match(/TEL[^:]*:([+\d\s()-]+)/i) || vcard.match(/TEL[:;]+([+\d\s()-]+)/i))?.[1];
         if (tel) { num = tel.replace(/[\s()\-+]/g,''); if (num.startsWith('0')) num = '39' + num; }
       }
-      console.log('WEBHOOK: vCard received:', name, num, 'owner:', ownerPhone);
+      console.log('WEBHOOK: vCard received:', hRef(num), 'owner:', hRef(ownerPhone));
       if (num) {
         // Contact limit enforcement — on the effective plan (beta: 300).
         const userPlan = getEffectivePlan(user.subscription_plan);
@@ -1345,7 +1408,7 @@ export async function POST(req) {
           .select('id').eq('owner_phone', ownerPhone).eq('recipient_number', num).maybeSingle();
 
         if (!existingContact && (contactCount || 0) >= planLimits.maxContacts) {
-          console.log('WEBHOOK: Contact limit reached for', ownerPhone, 'plan=' + userPlan, 'count=' + contactCount, 'limit=' + planLimits.maxContacts);
+          console.log('WEBHOOK: Contact limit reached for', hRef(ownerPhone), 'plan=' + userPlan, 'count=' + contactCount, 'limit=' + planLimits.maxContacts);
           // Billing off → neutral copy: no plan name, no upsell, no #prezzi
           // anchor (the pricing section is unmounted during the beta, the
           // link would scroll nowhere).
@@ -1376,6 +1439,22 @@ export async function POST(req) {
     // ── Text message parsing ──
     const raw = msgContent?.conversation || msgContent?.extendedTextMessage?.text || msgContent?.imageMessage?.caption || '';
     if (!raw) { console.log('WEBHOOK: Empty text, skipping'); return NextResponse.json({ ok:true }); }
+    // Solo comandi (audit fase 1b): una nota personale nella chat con se stessi
+    // non va né nei log né all'LLM. Passano: un testo che INIZIA con un comando
+    // ("invia a…", "lista", "annulla 2"…), una risposta breve ("ok", "no"), o
+    // qualunque testo mentre c'è un promemoria in costruzione (<1 h, es. "alle
+    // 16" dopo "manda a Mario"). In una chat 1:1 con un cliente (ammessa solo
+    // con una conferma in attesa) passa SOLO la risposta breve: quello che
+    // l'utente scrive ai suoi clienti non deve mai arrivare all'LLM.
+    {
+      const allowed = isSelfChat
+        ? (isSelfChatCommand(raw) || await hasPendingContext(ownerPhone))
+        : isSelfChatShortReply(raw);
+      if (!allowed) {
+        console.log('WEBHOOK: testo non-comando ignorato (' + raw.length + ' chars)');
+        return NextResponse.json({ ok: true, ignored: 'not_a_command' });
+      }
+    }
     console.log('WEBHOOK: Text received (' + raw.length + ' chars)'); // no message text in logs (PII)
     await dbLog('MSG_RECEIVED', { text: raw, sender: ownerPhone });
 
@@ -1459,15 +1538,13 @@ export async function POST(req) {
     if (pendingCtx) {
       console.log('WEBHOOK: PENDING CONTEXT FOUND:', JSON.stringify({
         status: pendingCtx.status,
-        recipient: pendingCtx.recipient_name,
-        message: pendingCtx.parsed_message?.substring(0, 60),
         scheduled_at: pendingCtx.scheduled_at,
         id: pendingCtx.id
       }));
     } else {
-      console.log('WEBHOOK: No pending context for', ownerPhone);
+      console.log('WEBHOOK: No pending context for', hRef(ownerPhone));
     }
-    console.log('WEBHOOK: Calling AI with message="' + raw + '" contacts=' + (contactList ? 'yes' : 'none') + ' pendingCtx=' + (pendingCtx?.status || 'none'));
+    console.log('WEBHOOK: Calling AI with message=(' + raw.length + ' chars) contacts=' + (contactList ? 'yes' : 'none') + ' pendingCtx=' + (pendingCtx?.status || 'none'));
     const aiResult = await askAI(raw, contactList, pendingCtx);
 
     if (aiResult) {
@@ -1636,7 +1713,7 @@ export async function POST(req) {
             updates.recipient_number = newContact.recipient_number;
           }
         } else if (aiResult.recipient_name) {
-          console.log('WEBHOOK: MODIFY_SCHEDULED skipping recipient update — "' + aiResult.recipient_name + '" not in raw text (current: "' + targetMsg.recipient_name + '")');
+          console.log('WEBHOOK: MODIFY_SCHEDULED skipping recipient update — suggested name not in raw text');
         }
 
         if (Object.keys(updates).length === 0) {
@@ -1667,11 +1744,11 @@ export async function POST(req) {
 
       // ── AI: modify (user wants to change pending message) ──
       if (aiResult.action === 'modify' && pendingCtx?.status === 'awaiting_confirm') {
-        console.log('WEBHOOK: MODIFY handler, AI message_text="' + aiResult.message_text + '" datetime_iso="' + aiResult.datetime_iso + '" recipient="' + aiResult.recipient_name + '"');
+        console.log('WEBHOOK: MODIFY handler, AI message_text=(' + String(aiResult.message_text || '').length + ' chars) datetime_iso="' + aiResult.datetime_iso + '" recipient=' + (aiResult.recipient_name ? 'yes' : 'none'));
         const updates: any = {};
         if (aiResult.message_text) {
           updates.parsed_message = await verifyAndFixMessage(aiResult.message_text, pendingCtx.recipient_name || 'il destinatario');
-          console.log('WEBHOOK: MODIFY rewritten message="' + updates.parsed_message + '"');
+          console.log('WEBHOOK: MODIFY rewritten message (' + String(updates.parsed_message || '').length + ' chars)');
         }
         if (aiResult.datetime_iso) {
           try {
@@ -1685,7 +1762,7 @@ export async function POST(req) {
             updates.recipient_number = newContact.recipient_number;
           }
         } else if (aiResult.recipient_name) {
-          console.log('WEBHOOK: MODIFY skipping recipient update — AI suggested "' + aiResult.recipient_name + '" but not present in raw text "' + raw + '" (current: "' + pendingCtx.recipient_name + '")');
+          console.log('WEBHOOK: MODIFY skipping recipient update — AI suggested name not present in raw text');
         }
 
         if (Object.keys(updates).length > 0) {
@@ -1959,7 +2036,7 @@ export async function POST(req) {
     // Legacy scheduling
     const parsed = parseCommand(raw);
     if (!parsed) {
-      console.log('WEBHOOK: No scheduling command in:', raw);
+      console.log('WEBHOOK: No scheduling command (' + raw.length + ' chars)');
       return NextResponse.json({ ok:true });
     }
 

@@ -133,3 +133,29 @@ export function parseAIDatetime(datetimeStr: string): Date {
   const hasOffset = /([+-]\d{2}:\d{2}|Z)\s*$/.test(datetimeStr);
   return hasOffset ? aiDate : romeToUtc(aiDate);
 }
+
+// ── Self-chat parser: interruttore e filtro per parola chiave ──
+// Audit fase 1b: il parser della chat con se stessi non ha UI (easter egg,
+// decisione 17 mag) ma ogni nota scritta in "Messaggio a te stesso" (liste
+// della spesa, indirizzi, note di salute) finiva a Groq con 50 nomi della
+// rubrica e in chiaro nei log Vercel — 110 note in un mese, 0 promemoria
+// creati. Quindi: spento di default (SELF_CHAT_PARSER_ENABLED=true lo
+// riaccende) e, quando acceso, arriva all'LLM solo un testo che inizia con un
+// comando o una risposta breve a un promemoria in corso.
+export function selfChatParserEnabled(): boolean {
+  return process.env.SELF_CHAT_PARSER_ENABLED === 'true';
+}
+
+// Risposte brevi alla conferma ("ok", "no", "annulla"...): solo a parola intera.
+const SHORT_REPLY_RE = /^(ok|sì|si|conferma|confermo|yes|va bene|perfetto|no|u|undo|annulla|cancella)$/i;
+// Comandi: il testo deve INIZIARE con uno di questi (a parola intera).
+const COMMAND_RE = /^(invia|inviare|manda|mandare|programma|programmare|ricorda|ricordami|ricordare|scrivi|lista|list|pending|programmati|annulla|cancella|elimina|modifica|cambia|sposta|undo)(\s|$|[:,.!])/i;
+
+export function isSelfChatShortReply(text: string): boolean {
+  return SHORT_REPLY_RE.test((text || '').trim());
+}
+
+export function isSelfChatCommand(text: string): boolean {
+  const t = (text || '').trim();
+  return COMMAND_RE.test(t) || SHORT_REPLY_RE.test(t);
+}

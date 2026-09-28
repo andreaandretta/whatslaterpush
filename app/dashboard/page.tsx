@@ -19,7 +19,8 @@ import { shouldShowOnboardingHints, markOnboardingDone } from '../../components/
 import { getPlanLimits, getPlanName } from '../lib/plans';
 import { apiErrorText } from '../lib/api-error-text';
 import { formatShortWhen } from '../lib/schedule-quick';
-import { LogoutDialog } from './LogoutDialog';
+import { LogoutDialog, type LogoutChoice } from './LogoutDialog';
+import { checkSession, sessionRetryDelayMs, goTo } from '../lib/session-load';
 import InstallPrompt from '../components/InstallPrompt';
 import InstallAppButton from '../components/InstallAppButton';
 import Logo from '@/components/Logo';
@@ -98,32 +99,51 @@ export default function DashboardPage() {
   }, []);
 
   // --- Cookie-based auth check on mount ---
+  // Solo un 401 vero porta a /connect; rete assente / 5xx / HTML di un captive
+  // portal → "Connessione assente, riprovo" e nuovo tentativo (fase 1b: prima
+  // un blip all'apertura spingeva a re-inserire il numero, e init scollegava un
+  // WhatsApp funzionante). Vedi app/lib/session-load.ts.
+  const [sessionOffline, setSessionOffline] = useState(false);
+  const sessionRetryRef = useRef<() => void>(() => {});
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/auth/me');
-        if (cancelled) return;
-        if (res.status === 401 || !res.ok) {
-          window.location.href = '/connect';
-          return;
-        }
-        const data = await res.json();
-        setUserPhone(data.phone);
-        setInstanceName(data.instanceName);
-        setSessionValidated(true);
-        // La cache della rubrica appartiene a questo numero: se la sessione è cambiata
-        // (altra scheda, bfcache) si svuota prima di qualunque lettura.
-        setContactsCacheOwner(data.phone || null);
-        // Scalda la rubrica a pagina ferma: alla prima apertura del picker la lista c'è già.
-        const idle: (cb: () => void) => void =
-          (window as any).requestIdleCallback || ((cb: () => void) => setTimeout(cb, 1500));
-        idle(() => { void prefetchContacts(); });
-      } catch {
-        if (!cancelled) window.location.href = '/connect';
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const load = async () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      const out = await checkSession();
+      if (cancelled) return;
+      if (out.kind === 'login') {
+        goTo('/connect');
+        return;
       }
-    })();
-    return () => { cancelled = true; };
+      if (out.kind === 'retry') {
+        setSessionOffline(true);
+        timer = setTimeout(() => { void load(); }, sessionRetryDelayMs(attempt++));
+        return;
+      }
+      setSessionOffline(false);
+      setUserPhone(out.phone);
+      setInstanceName(out.instanceName);
+      setSessionValidated(true);
+      // La cache della rubrica appartiene a questo numero: se la sessione è cambiata
+      // (altra scheda, bfcache) si svuota prima di qualunque lettura.
+      setContactsCacheOwner(out.phone || null);
+      // Scalda la rubrica a pagina ferma: alla prima apertura del picker la lista c'è già.
+      const idle: (cb: () => void) => void =
+        (window as any).requestIdleCallback || ((cb: () => void) => setTimeout(cb, 1500));
+      idle(() => { void prefetchContacts(); });
+    };
+    sessionRetryRef.current = () => { attempt = 0; void load(); };
+    // Tornata la rete: riprova subito invece di aspettare il prossimo giro.
+    const onOnline = () => sessionRetryRef.current();
+    window.addEventListener('online', onOnline);
+    void load();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      window.removeEventListener('online', onOnline);
+    };
   }, []);
 
   const fetchMessages = useCallback(async () => {
@@ -186,13 +206,15 @@ export default function DashboardPage() {
   // mette in pausa, così niente parte da solo a un ricollegamento futuro.
   const handleLogout = () => setLogoutOpen(true);
 
-  const doLogout = async (queue: 'pause' | 'cancel' | 'keep') => {
+  // 'device' = esci solo da qui (i promemoria continuano); il resto scollega
+  // WhatsApp con la scelta sulla coda (fase 1b, vedi LogoutDialog).
+  const doLogout = async (choice: LogoutChoice) => {
     if (msgTimer.current) clearInterval(msgTimer.current);
     try {
       await fetch('/api/auth/logout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ queue }),
+        body: JSON.stringify(choice === 'device' ? { scope: 'device' } : { queue: choice }),
       });
     } catch {
       // ignore
@@ -451,8 +473,21 @@ export default function DashboardPage() {
 
   if (!sessionValidated) {
     return (
-      <div className="min-h-screen bg-[#111B21] flex items-center justify-center">
+      <div className="min-h-screen bg-[#111B21] flex flex-col items-center justify-center gap-4 px-6 text-center">
         <Loader2 className="w-8 h-8 text-primary animate-spin" />
+        {sessionOffline && (
+          <div role="status" className="space-y-3">
+            <p className="text-sm text-gray-300">Connessione assente — riprovo da solo.</p>
+            <p className="text-xs text-gray-500">WhatsApp resta collegato: i messaggi programmati partono comunque.</p>
+            <button
+              type="button"
+              onClick={() => sessionRetryRef.current()}
+              className="rounded-lg bg-white/[0.06] px-4 py-2 text-sm font-semibold text-white hover:bg-white/10"
+            >
+              Riprova ora
+            </button>
+          </div>
+        )}
       </div>
     );
   }
