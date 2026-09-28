@@ -12,6 +12,9 @@ jest.mock('@supabase/supabase-js', () => ({
 const ORIGINAL_ENV = process.env;
 beforeEach(() => {
   mockSupa.calls.length = 0;
+  // Risposte che alcuni test impostano: si azzerano perché non trapelino nei successivi.
+  mockSupa.setResponse('user_instances:select', null);
+  mockSupa.setResponse('scheduled_messages:select', null);
   process.env = {
     ...ORIGINAL_ENV,
     SUPABASE_URL: 'https://test.supabase.co',
@@ -89,8 +92,13 @@ describe('Webhook messages.update', () => {
       calls += 1;
       return calls === 1 ? { data: [], error: null } : { data: [{ id: 'late-row' }], error: null };
     });
-    // al primo giro la riga non ha ancora l'id (il cron non l'ha scritto)
-    mockSupa.setHandler('scheduled_messages:select', () => ({ data: [], error: null }));
+    // al primo giro la riga non ha ancora l'id: il cron la tiene in 'processing'
+    // → la corsa è possibile e vale la pena riprovare.
+    mockSupa.setResponse('user_instances:select', { phone_number: '393331112222' });
+    mockSupa.setHandler('scheduled_messages:select', (call) =>
+      call.chain.some(m => m.method === 'or')
+        ? { data: [{ id: 'processing-row' }], error: null }
+        : { data: [], error: null });
     const res = await postWebhook({
       event: 'messages.update',
       instance: 'user_393331112222',
@@ -201,5 +209,121 @@ describe('Webhook messages.update', () => {
     // We still call the UPDATE — but with .is('delivered_at', null) the matched row count is 0.
     const updates = mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'update');
     expect(updates.length).toBe(1);
+  });
+});
+
+// 25 set 2026: 601 ricevute su 603 dal 22 set non erano di WhatsLater (chat
+// personali dell'utente, spunte blu delle chat appena aperte) e ognuna pagava
+// 2 pause da 1,2 s + fino a 9 query; nelle stesse ore /api/webhook andava in 504.
+describe('Webhook messages.update — receipts that are not ours answer fast', () => {
+  const OWNER = '393331112222';
+  const raceChecks = () => mockSupa.calls.filter(c =>
+    c.table === 'scheduled_messages' && c.operation === 'select' && c.chain.some(m => m.method === 'or'));
+
+  test('receipt of a personal chat (no row, no send in flight): one UPDATE, no pause, no retry', async () => {
+    mockSupa.setResponse('scheduled_messages:update', []);
+    mockSupa.setResponse('user_instances:select', { phone_number: OWNER });
+    mockSupa.setHandler('scheduled_messages:select', () => ({ data: [], error: null }));
+    const t0 = Date.now();
+    const res = await postWebhook({
+      event: 'messages.update',
+      instance: 'SchedWhats-' + OWNER,
+      data: { keyId: 'PERSONAL_1', remoteJid: '393409999999@s.whatsapp.net', fromMe: true, status: 'DELIVERY_ACK' },
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).touched).toBe(0);
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'update')).toHaveLength(1);
+    // La finestra di corsa è verificata sulle righe di QUESTA istanza.
+    const [check] = raceChecks();
+    expect(check.chain.find(m => m.method === 'eq')?.args).toEqual(['instance_phone', OWNER]);
+    expect(String(check.chain.find(m => m.method === 'or')?.args[0])).toContain('status.eq.processing');
+  });
+
+  test('the in-flight check runs once per request, not once per receipt', async () => {
+    mockSupa.setResponse('scheduled_messages:update', []);
+    mockSupa.setResponse('user_instances:select', { phone_number: OWNER });
+    mockSupa.setHandler('scheduled_messages:select', () => ({ data: [], error: null }));
+    const res = await postWebhook({
+      event: 'messages.update',
+      instance: 'SchedWhats-' + OWNER,
+      data: [
+        { keyId: 'P_A', remoteJid: '393409999991@s.whatsapp.net', fromMe: true, status: 'READ' },
+        { keyId: 'P_B', remoteJid: '393409999992@s.whatsapp.net', fromMe: true, status: 'DELIVERY_ACK' },
+        { keyId: 'P_C', remoteJid: '393409999993@s.whatsapp.net', fromMe: true, status: 'DELIVERY_ACK' },
+      ],
+    });
+    expect(res.status).toBe(200);
+    expect(raceChecks()).toHaveLength(1);
+    expect(mockSupa.calls.filter(c => c.table === 'user_instances')).toHaveLength(1);
+  });
+
+  test('instance not mapped to a user: no in-flight check, no retry', async () => {
+    mockSupa.setResponse('scheduled_messages:update', []);
+    const t0 = Date.now();
+    const res = await postWebhook({
+      event: 'messages.update',
+      instance: 'unknown-instance',
+      data: { keyId: 'X1', remoteJid: '393409999999@s.whatsapp.net', fromMe: true, status: 'DELIVERY_ACK' },
+    });
+    expect(res.status).toBe(200);
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(raceChecks()).toHaveLength(0);
+    expect(mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'update')).toHaveLength(1);
+  });
+});
+
+// Custody ack spento (migration 20260907 non applicata): SERVER_ACK(2) ed
+// ERROR(0) venivano scartati PRIMA del log, quindi i rifiuti di WhatsApp non
+// erano nemmeno contabili. Ora si contano in webhook_logs, senza PII.
+describe('Webhook messages.update — ERROR / SERVER_ACK visible while CUSTODY_ACK_ENABLED is off', () => {
+  const statusLogs = () => mockSupa.calls
+    .filter(c => c.table === 'webhook_logs' && c.operation === 'insert' && c.args[0]?.tag === 'MSG_STATUS')
+    .map(c => JSON.parse(c.args[0].data));
+
+  test('ERROR on one of our rows is logged with matched=1 and touches nothing', async () => {
+    mockSupa.setResponse('scheduled_messages:select', [{ id: 'ours' }]);
+    const res = await postWebhook({
+      event: 'messages.update',
+      instance: 'X',
+      data: { keyId: 'EVO_ERR_1', remoteJid: '393401234567@s.whatsapp.net', fromMe: true, status: 'ERROR' },
+    });
+    expect(res.status).toBe(200);
+    expect(statusLogs()).toEqual([{ status: 0, matched: 1, custody_ack: false }]);
+    expect(mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'update')).toHaveLength(0);
+    // niente id messaggio né numeri nel log
+    const raw = mockSupa.calls.filter(c => c.table === 'webhook_logs').map(c => c.args[0].data).join(' ');
+    expect(raw).not.toContain('EVO_ERR_1');
+    expect(raw).not.toContain('393401234567');
+  });
+
+  test('ERROR on a message that is not ours is still counted (matched=0)', async () => {
+    mockSupa.setResponse('scheduled_messages:select', []);
+    await postWebhook({
+      event: 'messages.update',
+      instance: 'X',
+      data: { keyId: 'EVO_ERR_2', remoteJid: '393401234567@s.whatsapp.net', fromMe: true, status: 'ERROR' },
+    });
+    expect(statusLogs()).toEqual([{ status: 0, matched: 0, custody_ack: false }]);
+  });
+
+  test('SERVER_ACK is logged only for our rows (every personal message has one: no log spam)', async () => {
+    mockSupa.setResponse('scheduled_messages:select', []);
+    await postWebhook({
+      event: 'messages.update',
+      instance: 'X',
+      data: { keyId: 'PERSONAL_ACK', remoteJid: '393401234567@s.whatsapp.net', fromMe: true, status: 'SERVER_ACK' },
+    });
+    expect(statusLogs()).toEqual([]);
+
+    mockSupa.calls.length = 0;
+    mockSupa.setResponse('scheduled_messages:select', [{ id: 'ours' }]);
+    await postWebhook({
+      event: 'messages.update',
+      instance: 'X',
+      data: { keyId: 'OUR_ACK', remoteJid: '393401234567@s.whatsapp.net', fromMe: true, status: 'SERVER_ACK' },
+    });
+    expect(statusLogs()).toEqual([{ status: 2, matched: 1, custody_ack: false }]);
+    expect(mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'update')).toHaveLength(0);
   });
 });

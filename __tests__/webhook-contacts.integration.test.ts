@@ -354,3 +354,65 @@ describe('Webhook: WhatsApp Linked ID (@lid) JIDs are never phone numbers', () =
     expect(rows[0].name).toBe('Anna');
   });
 });
+
+describe('Webhook: contact event sent as a SINGLE object (inbound message, Evolution 2.3.7)', () => {
+  // Evolution 2.3.7 (whatsapp.baileys.service.ts:1478-1544): for every message
+  // received it rewrites key.remoteJid from the @lid to remoteJidAlt (the phone
+  // JID) and then emits CONTACTS_UPDATE (or CONTACTS_UPSERT for a new contact)
+  // with ONE object — { remoteJid, pushName, profilePicUrl, instanceId } — not
+  // an array. It is the only place a contact known to us only by LID shows up
+  // with its real number and name. The webhook used to accept arrays only, so
+  // the object was dropped and the hidden LID contact was never recovered.
+  test('contacts.update with data as an object persists the phone number and pushName', async () => {
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 1);
+    const res = await callWebhook({
+      event: 'contacts.update',
+      instance: INSTANCE,
+      data: {
+        remoteJid: '393405556666@s.whatsapp.net',
+        pushName: 'Mamma di Luca',
+        profilePicUrl: 'https://pps.whatsapp.net/luca.jpg',
+        instanceId: 'evo-uuid',
+      },
+    });
+    expect(res.status).toBe(200);
+    const rows = rpcUpsertRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      user_phone: USER_PHONE,
+      contact_number: '393405556666',
+      push_name: 'Mamma di Luca',
+      profile_pic_url: 'https://pps.whatsapp.net/luca.jpg',
+      source: 'CONTACTS_UPDATE',
+    });
+  });
+
+  test('contacts.upsert with data as an object uses source=CONTACTS_UPSERT', async () => {
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 1);
+    const res = await callWebhook({
+      event: 'contacts.upsert',
+      instance: INSTANCE,
+      data: { remoteJid: '393407778888@s.whatsapp.net', pushName: 'Don Paolo', instanceId: 'evo-uuid' },
+    });
+    expect(res.status).toBe(200);
+    const rows = rpcUpsertRows();
+    expect(rows.map(r => [r.contact_number, r.push_name, r.source])).toEqual([
+      ['393407778888', 'Don Paolo', 'CONTACTS_UPSERT'],
+    ]);
+  });
+
+  // Group message: remoteJid is the group, pushName is the PARTICIPANT's name —
+  // never a row. A LID without remoteJidAlt (~9% of inbound) stays a LID: no row.
+  test('object with a group JID or an unresolved @lid is not persisted', async () => {
+    mockSupa.setRpcResponse('upsert_whatsapp_contacts', 1);
+    for (const remoteJid of ['120363041234567890@g.us', '123456789012345@lid']) {
+      const res = await callWebhook({
+        event: 'contacts.update',
+        instance: INSTANCE,
+        data: { remoteJid, pushName: 'Qualcuno', instanceId: 'evo-uuid' },
+      });
+      expect(res.status).toBe(200);
+    }
+    expect(rpcUpsertRows()).toEqual([]);
+  });
+});
