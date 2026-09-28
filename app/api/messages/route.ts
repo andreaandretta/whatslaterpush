@@ -4,6 +4,7 @@ import { isBillingEnabled, getEffectivePlan } from '../../lib/billing';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { validatePhone } from '../../lib/phone';
 import { looksLikeLidDigits, isLegacyLidRow } from '../../lib/jid';
+import { isUnsendableContactRow } from '../../lib/contact-rows';
 import { evolutionClient } from '../../../lib/evolution/client';
 import { applyJitter } from '../../lib/cron-utils';
 import { contactActiveCutoffIso, isRecipientActive } from '../../lib/contact-window';
@@ -21,7 +22,8 @@ export const fetchCache = 'force-no-store';
 
 
 // true unless WhatsApp explicitly answers "exists": false (4 s cap; any error,
-// missing instance or unclear answer counts as "don't block").
+// missing instance or unclear answer counts as "don't block"). ONE number per
+// call, the one the user just chose: never used to probe an address book.
 async function whatsappKnowsNumber(supabase: any, phone: string, number: string): Promise<boolean> {
   try {
     const { data: inst } = await supabase.from('user_instances').select('instance_name').eq('phone_number', phone).maybeSingle();
@@ -399,6 +401,8 @@ export async function PATCH(req: NextRequest) {
   return NextResponse.json({ message: updated });
 }
 
+const RECIPIENT_IS_LID_MESSAGE = 'Questo contatto è salvato con un codice interno di WhatsApp, non con il numero. Cercalo di nuovo in rubrica o scrivi il numero a mano.';
+
 export async function POST(req: NextRequest) {
   const phone = await getAuthedPhone(req);
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -415,13 +419,40 @@ export async function POST(req: NextRequest) {
     media_filename,
     media_caption,
   } = body || {};
+  // true only when the number was typed in ContactPicker "Nuovo contatto":
+  // picks from the address book or from Recents must not become 'manual'
+  // rows (manual rows are always shown and exempt from the LID filters).
+  const manualEntry = body?.manual_entry === true;
 
   if (typeof rawNumber !== 'string' || rawNumber.includes('@g.us') || rawNumber.includes('@broadcast')) {
-    return NextResponse.json({ error: 'invalid_phone' }, { status: 400 });
+    return NextResponse.json({
+      error: 'invalid_phone',
+      message: 'Si può programmare un messaggio solo verso un numero di telefono.',
+    }, { status: 400 });
   }
 
   const normalized = validatePhone(rawNumber);
-  if (!normalized) return NextResponse.json({ error: 'invalid_phone' }, { status: 400 });
+  if (!normalized) {
+    // A Linked ID from an old address-book row cannot be a number at all
+    // (e.g. 15 digits after +1): say so instead of "numero non valido", which
+    // would blame the user for digits they never typed.
+    const digits = rawNumber.replace(/\D/g, '');
+    if (/^\d{13,15}$/.test(digits)) {
+      const { data: row } = await getSupabaseAdmin()
+        .from('whatsapp_contacts')
+        .select('added_manually, created_at')
+        .eq('user_phone', phone)
+        .eq('contact_number', digits)
+        .maybeSingle();
+      if (row && isUnsendableContactRow({ contact_number: digits, ...(row as any) })) {
+        return NextResponse.json({ error: 'recipient_is_lid', message: RECIPIENT_IS_LID_MESSAGE }, { status: 400 });
+      }
+    }
+    return NextResponse.json({
+      error: 'invalid_phone',
+      message: 'Numero non valido. Controlla le cifre; se è estero scrivilo col prefisso (es. +41 79 123 45 67).',
+    }, { status: 400 });
+  }
 
   if (normalized === phone) {
     return NextResponse.json({ error: 'self_target' }, { status: 400 });
@@ -471,26 +502,6 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = getSupabaseAdmin();
-
-  // A Linked ID (WhatsApp's internal code, 14-15 digits) is not a phone number:
-  // sending to it always fails with "Numero non su WhatsApp". Only the LIDs
-  // the webhook stored in the address book before it learned to skip them are
-  // suspects, and WhatsApp itself has the last word: a real long number it
-  // knows goes through. If the check cannot run, nothing is blocked.
-  if (looksLikeLidDigits(normalized)) {
-    const { data: lidRow } = await supabase
-      .from('whatsapp_contacts')
-      .select('added_manually, created_at')
-      .eq('user_phone', phone)
-      .eq('contact_number', normalized)
-      .maybeSingle();
-    if (lidRow && isLegacyLidRow({ contact_number: normalized, ...(lidRow as any) }) && !(await whatsappKnowsNumber(supabase, phone, normalized))) {
-      return NextResponse.json({
-        error: 'recipient_is_lid',
-        message: 'Questo contatto è salvato con un codice interno di WhatsApp, non con il numero. Cercalo di nuovo in rubrica o scrivi il numero a mano.',
-      }, { status: 400 });
-    }
-  }
 
   const { data: user } = await supabase
     .from('user_instances')
@@ -572,6 +583,40 @@ export async function POST(req: NextRequest) {
     }, { status: 429 });
   }
 
+  // Does WhatsApp know this number? Asked once, only for a recipient this user
+  // never reached ('sent' row), so a typo, a landline or a dead number is
+  // caught now and not days later at send time (prod: 3466…2716 failed
+  // exists:false 4 times over 17 days). Asked last, after every cheap check.
+  // A Linked ID (WhatsApp's internal code, 14-15 digits) stored in the address
+  // book before the webhook learned to skip it gets its own message. If
+  // WhatsApp cannot be asked in 4 s, nothing is blocked.
+  let legacyLid = false;
+  if (looksLikeLidDigits(normalized)) {
+    const { data: lidRow } = await supabase
+      .from('whatsapp_contacts')
+      .select('added_manually, created_at')
+      .eq('user_phone', phone)
+      .eq('contact_number', normalized)
+      .maybeSingle();
+    legacyLid = !!lidRow && isLegacyLidRow({ contact_number: normalized, ...(lidRow as any) });
+  }
+  const { data: sentBefore } = await supabase
+    .from('scheduled_messages')
+    .select('id')
+    .eq('instance_phone', phone)
+    .eq('recipient_number', normalized)
+    .eq('status', 'sent')
+    .limit(1);
+  const reachedBefore = Array.isArray(sentBefore) && sentBefore.length > 0;
+  if ((legacyLid || !reachedBefore) && !(await whatsappKnowsNumber(supabase, phone, normalized))) {
+    return NextResponse.json(legacyLid
+      ? { error: 'recipient_is_lid', message: RECIPIENT_IS_LID_MESSAGE }
+      : {
+          error: 'recipient_not_on_whatsapp',
+          message: 'Questo numero non risulta su WhatsApp. Controlla le cifre (e il prefisso, se è estero).',
+        }, { status: 400 });
+  }
+
   const cleanMessage = messageStr.trim();
   const cleanName = typeof recipient_name === 'string' && recipient_name.trim().length > 0
     ? recipient_name.trim().slice(0, 100)
@@ -634,20 +679,25 @@ export async function POST(req: NextRequest) {
   // row intact (their added_manually stays whatever it already was — usually
   // false). A failure here must not mask the scheduled-message success, so
   // errors are logged and swallowed.
-  try {
-    const { error: contactErr } = await supabase
-      .from('whatsapp_contacts')
-      .upsert({
-        user_phone: phone,
-        contact_number: normalized,
-        name: cleanName,
-        push_name: null,
-        source: 'MANUAL',
-        added_manually: true,
-      }, { onConflict: 'user_phone,contact_number', ignoreDuplicates: true });
-    if (contactErr) console.error('MANUAL_CONTACT_UPSERT_FAILED', contactErr.message);
-  } catch (err: any) {
-    console.error('MANUAL_CONTACT_UPSERT_FAILED', err?.message || err);
+  // Only for numbers typed in "Nuovo contatto" (manual_entry): before, a pick
+  // from Recents with no row became a permanent 'manual' contact, exempt from
+  // the LID filters (prod: LID 1154…3692 saved as MANUAL the day it failed).
+  if (manualEntry) {
+    try {
+      const { error: contactErr } = await supabase
+        .from('whatsapp_contacts')
+        .upsert({
+          user_phone: phone,
+          contact_number: normalized,
+          name: cleanName,
+          push_name: null,
+          source: 'MANUAL',
+          added_manually: true,
+        }, { onConflict: 'user_phone,contact_number', ignoreDuplicates: true });
+      if (contactErr) console.error('MANUAL_CONTACT_UPSERT_FAILED', contactErr.message);
+    } catch (err: any) {
+      console.error('MANUAL_CONTACT_UPSERT_FAILED', err?.message || err);
+    }
   }
 
   return NextResponse.json({

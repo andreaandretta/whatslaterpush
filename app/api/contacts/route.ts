@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
-import { validatePhone } from '../../lib/phone';
-import { phoneDigitsFromJid, phoneJidFromContact, isLegacyLidRow } from '../../lib/jid';
+import { validatePhone, isPlausibleE164Digits } from '../../lib/phone';
+import { phoneDigitsFromJid, phoneJidFromContact } from '../../lib/jid';
+import { isUnsendableContactRow, notOnWhatsAppNumbers } from '../../lib/contact-rows';
 import { evolutionClient } from '../../../lib/evolution/client';
 import { getSupabaseAdmin } from '../../lib/supabase-admin';
 
@@ -108,19 +109,52 @@ function isNoRealName(name: string | null, num: string): boolean {
   return d.length >= 6 && (num.endsWith(d) || d.endsWith(num.slice(-9)));
 }
 
-// Numbers of the LID rows (see isLegacyLidRow): hidden from picker and recents.
+// Numbers of the rows that are not phone numbers (LIDs of any length, see
+// isUnsendableContactRow): hidden from picker and recents.
 function legacyLidNumbers(rows: CachedContactRow[]): Set<string> {
   const out = new Set<string>();
-  for (const row of rows) if (isLegacyLidRow(row)) out.add(row.contact_number);
+  for (const row of rows) if (isUnsendableContactRow(row)) out.add(row.contact_number);
   return out;
+}
+
+// Numbers whose last message failed with "exists": false (see
+// notOnWhatsAppNumbers): hidden from picker and recents, or the user picks the
+// same dead number again (prod: 3466…2716, 4 times in 17 days). Two small
+// reads: the failures (few rows), then the successful sends of those numbers
+// only. Best-effort: on any error nothing is hidden.
+async function fetchNotOnWhatsApp(supabase: any, phone: string): Promise<Set<string>> {
+  try {
+    const { data: failed } = await supabase
+      .from('scheduled_messages')
+      .select('recipient_number, status, error_message, created_at, sent_at')
+      .eq('instance_phone', phone)
+      .ilike('error_message', '%exists%false%')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    const candidates = notOnWhatsAppNumbers(failed);
+    if (candidates.size === 0) return candidates;
+    const { data: sent } = await supabase
+      .from('scheduled_messages')
+      .select('recipient_number, status, created_at, sent_at')
+      .eq('instance_phone', phone)
+      .eq('status', 'sent')
+      .in('recipient_number', Array.from(candidates))
+      .order('created_at', { ascending: false })
+      .limit(500);
+    return notOnWhatsAppNumbers([...(failed || []), ...(sent || [])]);
+  } catch (err: any) {
+    console.error('CONTACTS:GET not-on-whatsapp read failed:', err?.message || err);
+    return new Set();
+  }
 }
 
 // whatsapp_contacts rows -> picker contacts (+ visibility filter). Shared by the
 // fast cache-only path and the live+seed path so the cache behaves identically.
-function cachedRowsToContacts(rows: CachedContactRow[], phone: string): OutContact[] {
-  // LID rows (14-15 digits, not typed by the user, stored before the webhook
-  // learned to skip them) are Linked IDs, not numbers: sending to them fails
-  // with "Numero non su WhatsApp". They never reach the picker. Their display
+function cachedRowsToContacts(rows: CachedContactRow[], phone: string, hidden: Set<string> = new Set()): OutContact[] {
+  // LID rows (not typed by the user, stored before the webhook learned to skip
+  // them: 14-15 digits, or any length that cannot be a number) are Linked IDs,
+  // not numbers: sending to them fails with "Numero non su WhatsApp". They
+  // never reach the picker, nor do numbers WhatsApp already refused. Their display
   // name is carried over to the phone row with the SAME photo when that phone
   // row has no real name (only when exactly one phone row matches: no guess).
   const lidNameByPhoto = new Map<string, string>();
@@ -128,7 +162,7 @@ function cachedRowsToContacts(rows: CachedContactRow[], phone: string): OutConta
   for (const row of rows) {
     const key = photoKey(row.profile_pic_url);
     if (!key) continue;
-    if (isLegacyLidRow(row)) {
+    if (isUnsendableContactRow(row)) {
       const label = (row.name && row.name.trim()) || (row.push_name && row.push_name.trim()) || '';
       if (label && !isDigitsOnlyName(label)) lidNameByPhoto.set(key, label);
     } else {
@@ -140,7 +174,7 @@ function cachedRowsToContacts(rows: CachedContactRow[], phone: string): OutConta
   for (const row of rows) {
     const num = row.contact_number;
     if (!num || num === phone) continue;
-    if (isLegacyLidRow(row)) continue;
+    if (isUnsendableContactRow(row) || hidden.has(num)) continue;
     let name = (row.name && row.name.trim()) || null;
     const pushName = (row.push_name && row.push_name.trim()) || null;
     const key = photoKey(row.profile_pic_url);
@@ -257,9 +291,11 @@ function buildRecents(recentRows: RecentRow[], phone: string, byNumber: Map<stri
     if (!num || num === phone) continue;
     if (seen.has(num)) continue;
     seen.add(num);
-    // A LID recipient (a message that failed with "Numero non su WhatsApp") must
-    // not come back as a "recent" contact: picking it would fail again.
-    if (lidNumbers.has(num)) continue;
+    // A LID recipient, or any number WhatsApp refused last time ("Numero non
+    // su WhatsApp"), must not come back as a "recent" contact: picking it
+    // would fail again. Same for digits that cannot be a number at all
+    // (e.g. 1393…4257, a stray "1" typed before 39).
+    if (lidNumbers.has(num) || !isPlausibleE164Digits(num)) continue;
     recents.push(byNumber.get(num) ?? { number: num, name: (row.recipient_name && row.recipient_name.trim()) || `+${num}` });
     if (recents.length >= 10) break;
   }
@@ -306,11 +342,12 @@ export async function GET(req: NextRequest) {
   //
   // Le 4 letture sono indipendenti → partono INSIEME (prima erano 3-4 round-trip
   // in fila verso Supabase: utente → rubrica → etichetta → recenti).
-  const [userRes, cachedRead, allowed, recentRows] = await Promise.all([
+  const [userRes, cachedRead, allowed, recentRows, notOnWhatsApp] = await Promise.all([
     supabase.from('user_instances').select('instance_name').eq('phone_number', phone).single(),
     fetchAllCachedRows(supabase, phone),
     fetchLabelAllowed(supabase, phone, labelId),
     fetchRecentRows(supabase, phone),
+    fetchNotOnWhatsApp(supabase, phone),
   ]);
   const dbMs = performance.now() - t0;
   const cached = cachedRead.rows;
@@ -319,8 +356,10 @@ export async function GET(req: NextRequest) {
 
   if (!user?.instance_name) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
-  const cachedContacts = cachedRowsToContacts(cached, phone);
+  const cachedContacts = cachedRowsToContacts(cached, phone, notOnWhatsApp);
+  // Everything hidden from the picker is hidden from Recents too.
   const lidNumbers = legacyLidNumbers(cached);
+  notOnWhatsApp.forEach((n) => lidNumbers.add(n));
   // Sync-completeness signal = the TOTAL synced rows for this instance, BEFORE the
   // visibility AND label filters. We gate cache-only on THIS (the instance's cache
   // size), not on what the user is currently viewing — so a fully-synced user who
@@ -378,7 +417,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'evolution_unavailable' }, { status: 502 });
     }
     console.log('CONTACTS:GET evolution down — serving seeded cache only count=' + byNumber.size);
-    const out = [...applyLabel(Array.from(byNumber.values()).filter(isVisibleInPicker), allowed)]
+    const out = [...applyLabel(Array.from(byNumber.values()).filter((c) => isVisibleInPicker(c) && !lidNumbers.has(c.number)), allowed)]
       .sort((a, b) => a.name.localeCompare(b.name, 'it'));
     const recents = buildRecents(recentRows, phone, byNumber, lidNumbers);
     return respond({ contacts: out, recents }, 'seed-only-evolution-down', t0, dbMs, performance.now() - tEvo, cachedPartial);
@@ -437,7 +476,12 @@ export async function GET(req: NextRequest) {
   for (const g of rawGroups || []) {
     const participants = Array.isArray(g?.participants) ? g.participants : [];
     for (const p of participants) {
-      const normalized = jidToNumber(p?.id || '');
+      // In LID-addressed groups p.id is `<lid>@lid`: the number is in
+      // p.phoneNumber (Baileys 7), which phoneJidFromContact reads. p.id alone
+      // dropped every such participant.
+      const pJid = phoneJidFromContact(p);
+      if (!pJid) continue;
+      const normalized = jidToNumber(pJid);
       if (!normalized) continue;
       if (byNumber.has(normalized)) continue;
       byNumber.set(normalized, { number: normalized, name: `+${normalized}` });
@@ -534,7 +578,7 @@ export async function GET(req: NextRequest) {
     console.error('NAME_BACKFILL_FAILED', err?.message || err);
   }
 
-  const merged: OutContact[] = Array.from(byNumber.values()).filter(isVisibleInPicker);
+  const merged: OutContact[] = Array.from(byNumber.values()).filter((c) => isVisibleInPicker(c) && !lidNumbers.has(c.number));
   merged.sort((a, b) => a.name.localeCompare(b.name, 'it'));
   const out = applyLabel(merged, allowed);
   // Recents computed here too (was hardcoded []): a thin-cache user can still have
