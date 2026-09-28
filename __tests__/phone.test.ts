@@ -110,6 +110,16 @@ describe('validatePhone — numeri che il vecchio controllo sulla lunghezza lasc
   test('un numero di 10 cifre che inizia per 3 resta italiano (non Budapest +36 1)', () => {
     expect(validatePhone('3612345678')).toBe('393612345678');
   });
+
+  // Review fase 1: cifre estere da JID/DB che la libreria non riconosce NON
+  // devono diventare un altro numero italiano valido (di uno sconosciuto).
+  test('cifre estere non riconosciute non diventano un numero italiano', () => {
+    expect(validatePhone('4386669739')).not.toMatch(/^39/);
+    expect(validatePhone('5511234567')).not.toMatch(/^39/);
+    expect(normalizeItalianPhone('4386669739')).toBe('4386669739');
+    // il vecchio cellulare italiano a 9 cifre resta italiano
+    expect(validatePhone('340123456')).toBe('39340123456');
+  });
 });
 
 describe('normalizeItalianPhone — "00" e numeri già salvati', () => {

@@ -10,7 +10,7 @@
 //   2. instance_name is listed verbatim in MONITORING_TEST_INSTANCES.
 //   3. the digits of the instance_name OR the owner phone contain a fragment
 //      listed in MONITORING_TEST_NUMBERS. This covers today's
-//      SchedWhats-<phone> test instances (e.g. the burned 393780311526) until
+//      SchedWhats-<phone> test instances (e.g. the burned 393330004001) until
 //      they are renamed to the wltest* convention.
 //
 // All three are comma-separated env vars; whitespace is trimmed and matching is
@@ -47,7 +47,7 @@ export function getTestNumbers(): string[] {
  * True when an instance should be EXCLUDED from monitoring alerts because it is
  * a test/throwaway instance (not a real user).
  *
- * @param instanceName e.g. "wltest-1" or "SchedWhats-393780311526"
+ * @param instanceName e.g. "wltest-1" or "SchedWhats-393330004001"
  * @param ownerPhone   optional owner phone, used for MONITORING_TEST_NUMBERS
  */
 export function isTestInstance(instanceName?: string | null, ownerPhone?: string | null): boolean {

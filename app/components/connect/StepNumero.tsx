@@ -5,6 +5,7 @@ import Link from 'next/link';
 import Logo from '@/components/Logo';
 import HelpPopover from './HelpPopover';
 import type { InitUiError } from '@/app/lib/connect-errors';
+import { readPairingNumber, phoneInputErrorMessage, flagEmoji, countryNameIt } from '@/app/lib/phone';
 
 interface Props {
   onSubmit: (number: string) => void;
@@ -19,7 +20,9 @@ interface Props {
 // Step 1 — Italian phone input, clean editorial style.
 // • Fixed +39 prefix (single-country app; can be made selectable later).
 // • Auto-formats as "333 123 4567" while typing.
-// • CTA disabled until 10 digits.
+// • CTA disabled until the number is valid (readPairingNumber: Italian by
+//   default, "+39…"/"0039…" pasted or autofilled read in full, foreign only
+//   with its "+"), with the reason under the field once it is long enough.
 export default function StepNumero({ onSubmit, error = null, cooldownUntil = null, submitting = false }: Props) {
   const [raw, setRaw] = useState('');
 
@@ -41,17 +44,40 @@ export default function StepNumero({ onSubmit, error = null, cooldownUntil = nul
   };
   const ERROR_ICONS: Record<string, string> = { rate_limited: '⏳', ours: '🛠', generic: 'ℹ️' };
 
-  // Format: groups of 3-3-4 for Italian mobile.
+  // Il numero si legge TUTTO prima di formattare. Prima il campo teneva solo
+  // le prime 10 cifre: "+39 347 123 4567" (autofill/incolla) diventava
+  // "393 471 2345", e ritoccando una cifra si chiedeva il codice di pairing
+  // per il numero di uno sconosciuto (hunt fase 1).
+  const reading = useMemo(() => readPairingNumber(raw), [raw]);
+  const international = /^\s*(\+|00)/.test(raw);
+
+  // Format: groups of 3-3-4 for an Italian number typed by hand; anything
+  // else (with "+", or more than 10 digits) stays as typed, never cut.
   const formatted = useMemo(() => {
-    const d = raw.replace(/\D/g, '').slice(0, 10);
+    const d = raw.replace(/\D/g, '');
+    if (international || d.length > 10) return raw;
     if (d.length <= 3) return d;
     if (d.length <= 6) return `${d.slice(0, 3)} ${d.slice(3)}`;
     return `${d.slice(0, 3)} ${d.slice(3, 6)} ${d.slice(6)}`;
-  }, [raw]);
+  }, [raw, international]);
+
+  const handleChange = (value: string) => {
+    const cleaned = value.replace(/[^\d+\s().\-]/g, '').slice(0, 24);
+    const r = readPairingNumber(cleaned);
+    // "+39 …" / "0039 …" / "39…" completo: nel campo resta la parte nazionale,
+    // il +39 è già nel riquadro accanto.
+    if (r.ok && r.national && cleaned.replace(/\D/g, '') !== r.national) setRaw(r.national);
+    else setRaw(cleaned);
+  };
 
   const digitsOnly = raw.replace(/\D/g, '');
-  const isValid = digitsOnly.length === 10;
-  const submit = () => isValid && !cooldownActive && !submitting && onSubmit(`39${digitsOnly}`);
+  const isValid = reading.ok;
+  // Il motivo compare solo quando il numero "dovrebbe" essere finito: mentre
+  // si scrive le prime cifre non si sgrida nessuno.
+  const inlineError = !reading.ok && (digitsOnly.length >= 10 || reading.error === 'extra_digit')
+    ? phoneInputErrorMessage(reading.error)
+    : null;
+  const submit = () => reading.ok && !cooldownActive && !submitting && onSubmit(reading.digits);
 
   return (
     <div className="relative min-h-screen bg-white text-[#1A1F2C] overflow-hidden">
@@ -98,16 +124,19 @@ export default function StepNumero({ onSubmit, error = null, cooldownUntil = nul
               isValid ? 'border-[#4FBE7C]' : 'border-gray-200'
             }`}
           >
-            <div className="flex items-center gap-1 px-2 py-1.5 bg-[#C8F2DE] rounded-lg font-mono text-base font-bold shrink-0">
-              <span className="text-base leading-none">🇮🇹</span>
-              +39
-            </div>
+            {!international && (
+              <div className="flex items-center gap-1 px-2 py-1.5 bg-[#C8F2DE] rounded-lg font-mono text-base font-bold shrink-0">
+                <span className="text-base leading-none">🇮🇹</span>
+                +39
+              </div>
+            )}
             <input
               type="tel"
-              inputMode="numeric"
+              inputMode="tel"
+              autoComplete="tel-national"
               autoFocus
               value={formatted}
-              onChange={(e) => setRaw(e.target.value)}
+              onChange={(e) => handleChange(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && submit()}
               placeholder="333 123 4567"
               className="flex-1 min-w-0 bg-transparent border-none outline-none font-mono text-lg font-bold tracking-wide placeholder:text-gray-300"
@@ -122,6 +151,15 @@ export default function StepNumero({ onSubmit, error = null, cooldownUntil = nul
               </svg>
             </div>
           </div>
+          {inlineError && (
+            <p role="alert" className="mt-2 text-[13px] text-[#7F1D1D] leading-snug">{inlineError}</p>
+          )}
+          {reading.ok && !reading.italian && (
+            <p className="mt-2 text-[13px] text-[#5A6573] leading-snug">
+              Numero estero: {flagEmoji(reading.country)} {countryNameIt(reading.country)}{' '}
+              <span className="font-mono font-bold text-[#1A1F2C]">{reading.international}</span>
+            </p>
+          )}
         </div>
 
         {/* Trust */}

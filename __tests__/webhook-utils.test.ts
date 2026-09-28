@@ -213,11 +213,11 @@ describe('extractInlinePhoneAndName', () => {
     expect(r.phone).toBeNull();
   });
 
-  test('strips stray leading digit: "Rebecca 1 393275654257" → 393275654257', () => {
+  test('strips stray leading digit: "Rebecca 1 393330000006" → 393330000006', () => {
     // Regression: real bug where user typed "1" before actual number.
     // Parser must prefer the Italian mobile interpretation over the 13-digit blob.
-    const r = extractInlinePhoneAndName('Invia a REBECCA 1 393275654257 oggi alle 16:33: ciao');
-    expect(r.phone).toBe('393275654257');
+    const r = extractInlinePhoneAndName('Invia a REBECCA 1 393330000006 oggi alle 16:33: ciao');
+    expect(r.phone).toBe('393330000006');
     expect(r.name).toBe('REBECCA');
   });
 

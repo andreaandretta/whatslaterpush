@@ -1782,7 +1782,7 @@ Create `__tests__/e2e/contact-picker.spec.ts`:
 import { test, expect, request as playwrightRequest } from '@playwright/test';
 
 const SESSION_ID = '11111111-1111-1111-1111-111111111111';
-const USER_PHONE = '393442582226';
+const USER_PHONE = '393330000001';
 const BASE = 'https://whatslaterpush.vercel.app';
 
 let SESSION_COOKIE_VALUE = '';

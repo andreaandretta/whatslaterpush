@@ -143,7 +143,7 @@ Modal QuickCaptureModal si apre con 4 campi:
 Marco compila e clicca "Apri WhatsApp e invia"
   ↓
 Frontend:
-  1. Chiama GET /api/auth/me → ottiene { phone: '393442582226', instanceName }
+  1. Chiama GET /api/auth/me → ottiene { phone: '393330000001', instanceName }
      (chiamata già fatta al mount della dashboard, valore in stato — non serve refetch)
   2. Valida formato numero, normalizza (riusa logica lib/phone.ts via /api/quick-capture/validate?
      → NO, validazione client-side semplice; il webhook valida server-side)

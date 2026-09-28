@@ -119,6 +119,36 @@ describe('extractEventPhone', () => {
     expect(extractEventPhone({ summary: 'Anna 393401234567' })?.phone).toBe('393401234567');
   });
 
+  // Review fase 1: "n." / "n°" / "Nr." è il modo italiano di scrivere
+  // "numero" — davanti a un telefono NON lo rende un codice.
+  test('"n.", "n°", "Nr." davanti al numero: resta un telefono', () => {
+    expect(extractEventPhone({ summary: 'Chiamare al n° 3471234567' })?.phone).toBe('393471234567');
+    expect(extractEventPhone({ summary: 'Tel. n. 3471234567' })?.phone).toBe('393471234567');
+    expect(extractEventPhone({ summary: 'Cell n. 3471234567' })?.phone).toBe('393471234567');
+    expect(extractEventPhone({ summary: 'Nr. 3471234567' })?.phone).toBe('393471234567');
+    expect(extractEventPhone({ summary: 'Tel. n. 347 123 4567' })?.phone).toBe('393471234567');
+    // ...ma "pratica n.", "fattura nr.", "ordine n°" restano codici
+    expect(extractEventPhone({ summary: 'Fattura nr. 01234567890' })).toBeNull();
+    expect(extractEventPhone({ summary: 'Ordine n° 01234567890' })).toBeNull();
+  });
+
+  // Review fase 1: lo sbianchettamento di date/ore tagliava i numeri scritti
+  // coi punti ("333.12.34.567" perdeva "12.34.567" come se fosse una data).
+  test('numeri scritti coi punti non vengono presi per date o ore', () => {
+    expect(extractEventPhone({ summary: 'Mario 333.12.34.567' })?.phone).toBe('393331234567');
+    expect(extractEventPhone({ summary: 'Studio 081.555.53.77' })?.phone).toBe('390815555377');
+    expect(extractEventPhone({ summary: 'Mario 333.123.45.67' })?.phone).toBe('393331234567');
+    expect(extractEventPhone({ summary: '347 123 45.67' })?.phone).toBe('393471234567');
+    expect(extractEventPhone({ summary: 'Studio 06.12.34.56.78' })?.phone).toBe('390612345678');
+    expect(extractEventPhone({ summary: 'Mario 333-12-34-567' })?.phone).toBe('393331234567');
+    // le date e le ore vere continuano a sparire
+    expect(extractEventPhone({ summary: 'Guida 10.09.2026 ore 18.30' })).toBeNull();
+    expect(extractEventPhone({ summary: 'Mario 3401234567 18:30' })?.phone).toBe('393401234567');
+    expect(extractEventPhone({ summary: 'Mario 3401234567 ore 18.30-19.30' })?.phone).toBe('393401234567');
+    expect(extractEventPhone({ summary: 'Mario 3401234567 18:30-19:30' })?.phone).toBe('393401234567');
+    expect(extractEventPhone({ summary: 'Guida 05/09/2026 18:30' })).toBeNull();
+  });
+
   test('normalizeFn iniettabile', () => {
     const r = extractEventPhone({ summary: 'x 3401234567' }, () => '11122233344');
     expect(r?.phone).toBe('11122233344');

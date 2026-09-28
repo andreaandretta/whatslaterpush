@@ -165,8 +165,8 @@ Endpoint unificato per la gestione della connessione WhatsApp. Il parametro `act
 
 #### action: `getCodeAndPairing`
 - **Scopo:** Inizializza connessione WhatsApp generando QR code + pairing code
-- **Body:** `{ "action": "getCodeAndPairing", "phone": "393509898408" }`
-- **Response:** `{ "instanceName": "SchedWhats-393509898408", "qrCode": "base64...", "pairingCode": "XXXX-YYYY" }`
+- **Body:** `{ "action": "getCodeAndPairing", "phone": "393330000002" }`
+- **Response:** `{ "instanceName": "SchedWhats-393330000002", "qrCode": "base64...", "pairingCode": "XXXX-YYYY" }`
 - **Logica:**
   1. Valida e normalizza numero con `validatePhone()`
   2. Genera nome istanza: `SchedWhats-{cleanPhone}`
@@ -179,24 +179,24 @@ Endpoint unificato per la gestione della connessione WhatsApp. Il parametro `act
 
 #### action: `status` / `getStatus`
 - **Scopo:** Controlla stato connessione WhatsApp
-- **Body:** `{ "action": "status", "instanceName": "SchedWhats-393509898408" }`
-- **Response:** `{ "status": "open|connecting|close", "owner": "393509898408"|null }`
+- **Body:** `{ "action": "status", "instanceName": "SchedWhats-393330000002" }`
+- **Response:** `{ "status": "open|connecting|close", "owner": "393330000002"|null }`
 - **Logica:** Interroga Evolution API, mappa stati (`open/connected` → `open`, `close/disconnected` → `close`), persiste in DB
 
 #### action: `getPhone`
 - **Scopo:** Recupera numero proprietario (attende connessione)
-- **Body:** `{ "action": "getPhone", "instanceName": "SchedWhats-393509898408" }`
-- **Response:** `{ "phone": "393509898408" }`
+- **Body:** `{ "action": "getPhone", "instanceName": "SchedWhats-393330000002" }`
+- **Response:** `{ "phone": "393330000002" }`
 - **Logica:** Retry fino a 10 volte (3s intervallo, timeout 30s). Estrae `ownerJid` da `/instance/fetchInstances`
 
 #### action: `disconnect`
 - **Scopo:** Disconnette istanza WhatsApp
-- **Body:** `{ "action": "disconnect", "instanceName": "SchedWhats-393509898408" }`
+- **Body:** `{ "action": "disconnect", "instanceName": "SchedWhats-393330000002" }`
 - **Logica:** Logout + delete su Evolution API, aggiorna `connection_status: 'close'` in DB
 
 #### action: `setWebhook`
 - **Scopo:** Configura webhook per istanza
-- **Body:** `{ "action": "setWebhook", "instanceName": "SchedWhats-393509898408" }`
+- **Body:** `{ "action": "setWebhook", "instanceName": "SchedWhats-393330000002" }`
 - **Logica:** POST a Evolution API `/webhook/set/{name}`. Prova formato flat (v2.x), poi wrapped (v2.0). Eventi: `MESSAGES_UPSERT`, `CONNECTION_UPDATE`, `QRCODE_UPDATED`
 
 #### action: `refreshWebhooks`
@@ -292,12 +292,12 @@ Cron job per invio messaggi schedulati. Eseguito da Vercel cron (mezzanotte UTC)
 ### GET/DELETE `/api/messages`
 
 **GET** — Lista messaggi schedulati per un utente.
-- **Query:** `?phone=393509898408`
+- **Query:** `?phone=393330000002`
 - **Response:** `{ "messages": [...], "subscription_plan": "trial", "trial_ends_at": "..." }`
 - **Logica:** Filtra storico per `historyDays` del piano
 
 **DELETE** — Cancella un messaggio.
-- **Body:** `{ "id": "msg-uuid", "phone": "393509898408" }`
+- **Body:** `{ "id": "msg-uuid", "phone": "393330000002" }`
 - **Logica:** Verifica ownership (instance_phone == phone), aggiorna status a `cancelled`
 
 ---
@@ -321,7 +321,7 @@ Health check base. Nessuna autenticazione.
 
 Crea sessione Stripe Checkout.
 
-- **Body:** `{ "phone": "393509898408", "plan": "personal|business" }`
+- **Body:** `{ "phone": "393330000002", "plan": "personal|business" }`
 - **Response:** `{ "url": "https://checkout.stripe.com/..." }`
 - **Logica:** Mappa piano → price ID (`STRIPE_PRICE_PERSONAL`/`STRIPE_PRICE_BUSINESS`), trova/crea Stripe customer, crea sessione subscription
 
@@ -329,7 +329,7 @@ Crea sessione Stripe Checkout.
 
 Crea sessione Stripe Billing Portal.
 
-- **Body:** `{ "phone": "393509898408" }`
+- **Body:** `{ "phone": "393330000002" }`
 - **Response:** `{ "url": "https://billing.stripe.com/..." }`
 
 ### POST `/api/payment/webhook`
@@ -377,7 +377,7 @@ Health check con alerting automatico (chiamato da cron-job.org ogni 15 minuti).
 5. `messages_stalled` — Messaggi in `processing` da >10min → critical
 6. `failed_spike` — >10 falliti in 2h → critical, 6-10 → warning
 
-**Alert cascade:** WhatsApp (al 393442582226) → Email (Resend a musicizthekey@gmail.com) → DB only
+**Alert cascade:** WhatsApp (al 393330000001) → Email (Resend a musicizthekey@gmail.com) → DB only
 
 **Anti-spam:** Cooldown 1 ora per check. Recovery notification quando lo stato torna `ok`.
 
@@ -404,7 +404,7 @@ Tabella principale utenti. Ogni riga = 1 utente con istanza WhatsApp.
 | Colonna | Tipo | Default | Note |
 |---|---|---|---|
 | `id` | UUID | PK | |
-| `instance_name` | TEXT | NOT NULL, UNIQUE | Es. `SchedWhats-393442582226` |
+| `instance_name` | TEXT | NOT NULL, UNIQUE | Es. `SchedWhats-393330000001` |
 | `phone_number` | TEXT | | Numero normalizzato |
 | `connection_status` | TEXT | `'unknown'` | `open`, `close`, `connecting`, `unknown` |
 | `subscription_plan` | TEXT | `'trial'` | `trial`, `free`, `personal`, `business` |
@@ -746,7 +746,7 @@ Esegue 6 check (ogni check isolato con try/catch):
   ↓
 Per ogni check non-ok:
   1. Controlla cooldown (1h anti-spam)
-  2. Tenta WhatsApp al 393442582226
+  2. Tenta WhatsApp al 393330000001
   3. Se fallisce → email Resend a musicizthekey@gmail.com
   4. Se fallisce → log solo DB
   ↓
