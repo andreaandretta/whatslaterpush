@@ -85,6 +85,12 @@ export default function DashboardPage() {
   // Modifica: orario e ripetizione attuali, così la modale riparte da lì.
   const [editingScheduledAt, setEditingScheduledAt] = useState<string | null>(null);
   const [editingRecurrenceRule, setEditingRecurrenceRule] = useState<string | null>(null);
+  // Modale aperta da "Riattiva" su un orario passato: salvando rimette in coda.
+  const [editingResume, setEditingResume] = useState(false);
+  // "Riattiva" su un messaggio in pausa il cui orario è passato: si chiede
+  // "Invia ora" / "Scegli un nuovo orario" invece di rimetterlo in coda col
+  // vecchio orario (partiva entro un minuto, a qualsiasi ora).
+  const [timePassedMsg, setTimePassedMsg] = useState<MessagesSectionMessage | null>(null);
   const [logoutOpen, setLogoutOpen] = useState(false);
   // Onboarding hints — gated on localStorage. Resolved post-mount to avoid
   // SSR hydration mismatch on localStorage access.
@@ -200,22 +206,31 @@ export default function DashboardPage() {
     window.location.href = '/';
   };
 
-  const handleDelete = async (id: string) => {
+  // scope arriva solo dalle righe ricorrenti ("Solo questa volta" / "Tutta la
+  // serie", chiesto da MessagesSection).
+  const handleDelete = async (id: string, scope?: 'occurrence' | 'series') => {
     try {
       const res = await fetch('/api/messages', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify(scope ? { id, scope } : { id }),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
         showToast(data.message || apiErrorText(data, res.status));
         return;
       }
       // Toast SOLO a eliminazione avvenuta (prima MessagesSection diceva
       // "Eliminato" subito, anche quando il server rifiutava).
       const gone = messages.find((m) => m.id === id);
-      showToast(`Eliminato — ${gone?.recipient_name || gone?.recipient_number || 'messaggio'}`);
+      const who = gone?.recipient_name || gone?.recipient_number || 'messaggio';
+      if (typeof data?.skipped_to === 'string') {
+        showToast(`Saltato questa volta — il prossimo parte ${formatShortWhen(new Date(data.skipped_to))}`);
+      } else if (scope === 'series') {
+        showToast(`Promemoria ricorrente interrotto — ${who}`);
+      } else {
+        showToast(`Eliminato — ${who}`);
+      }
       fetchMessages();
     } catch {
       showToast('Errore di rete — riprova.');
@@ -284,6 +299,7 @@ export default function DashboardPage() {
     // La modale riparte dall'orario e dalla ripetizione del messaggio.
     setEditingScheduledAt(msg.scheduled_at);
     setEditingRecurrenceRule(msg.recurrence_rule || null);
+    setEditingResume(false);
     // Allegato esistente: la modale lo mostra e permette di toglierlo o sostituirlo.
     setEditingMedia(mediaOf(msg));
     setScheduleOpen(true);
@@ -296,14 +312,22 @@ export default function DashboardPage() {
     setMediaUnavailable(false);
     setEditingScheduledAt(null);
     setEditingRecurrenceRule(null);
+    setEditingResume(false);
   };
 
   // Pause/resume — optimistic; backend ignores unknown statuses silently for now.
   const handlePauseToggle = useCallback(async (msg: MessagesSectionMessage) => {
     const newStatus = msg.status === 'paused' ? 'pending' : 'paused';
+    // Riprendere un messaggio il cui orario è già passato lo farebbe partire
+    // subito col testo vecchio: si chiede prima (il server fa lo stesso
+    // controllo e risponde 409 time_passed, gestito sotto).
+    if (newStatus === 'pending' && new Date(msg.scheduled_at).getTime() < Date.now() + 60_000) {
+      setTimePassedMsg(msg);
+      return;
+    }
     // Optimistic
     setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, status: newStatus } : m)));
-    showToast(newStatus === 'paused' ? 'Messaggio in pausa' : 'Messaggio riattivato');
+    if (newStatus === 'paused') showToast('Messaggio in pausa');
     try {
       const res = await fetch('/api/messages', {
         method: 'PATCH',
@@ -312,7 +336,12 @@ export default function DashboardPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        showToast(apiErrorText(data, res.status));
+        setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, status: msg.status } : m)));
+        if (data?.error === 'time_passed') setTimePassedMsg(msg);
+        else showToast(apiErrorText(data, res.status));
+      } else if (newStatus === 'pending') {
+        // "Riattivato" solo a conferma avvenuta: il server può dire time_passed.
+        showToast('Messaggio riattivato');
       }
       fetchMessages();
     } catch {
@@ -321,6 +350,36 @@ export default function DashboardPage() {
       showToast('Errore di rete — riprova.');
     }
   }, [fetchMessages, showToast]);
+
+  // "Invia ora" dal dialogo orario-passato: tra ~2 minuti (il PATCH vuole
+  // almeno 60 s nel futuro; il margine copre la latenza). È una scelta
+  // esplicita dell'utente, quindi niente fascia 08-21.
+  const handleResumeNow = useCallback(async (msg: MessagesSectionMessage) => {
+    setTimePassedMsg(null);
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: msg.id, status: 'pending', scheduled_at: new Date(Date.now() + 2 * 60_000).toISOString(), keep_recurrence_anchor: true }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.message || apiErrorText(data, res.status));
+      } else {
+        showToast('Riattivato — parte tra un paio di minuti');
+      }
+      fetchMessages();
+    } catch {
+      showToast('Errore di rete — riprova.');
+    }
+  }, [fetchMessages, showToast]);
+
+  // "Scegli un nuovo orario": la modale di modifica, che salvando rimette in coda.
+  const handleResumeWithNewTime = useCallback((msg: MessagesSectionMessage) => {
+    setTimePassedMsg(null);
+    handleEdit(msg);
+    setEditingResume(true);
+  }, [handleEdit]);
 
   // Snooze one-tap — reschedule via PATCH without opening the edit modal.
   // Optimistic update on scheduled_at; the refetch settles the jittered value.
@@ -331,7 +390,7 @@ export default function DashboardPage() {
       const res = await fetch('/api/messages', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: msg.id, scheduled_at: iso }),
+        body: JSON.stringify({ id: msg.id, scheduled_at: iso, keep_recurrence_anchor: true }),
       });
       if (!res.ok) {
         setMessages((p) => p.map((m) => (m.id === msg.id ? { ...m, scheduled_at: prev } : m)));
@@ -552,7 +611,17 @@ export default function DashboardPage() {
           initialRecurrenceRule={editingRecurrenceRule}
           mediaUnavailable={mediaUnavailable}
           connected={connected}
+          resumeOnSave={editingResume}
         />
+
+        {timePassedMsg && (
+          <TimePassedDialog
+            msg={timePassedMsg}
+            onCancel={() => setTimePassedMsg(null)}
+            onSendNow={() => { void handleResumeNow(timePassedMsg); }}
+            onPickTime={() => handleResumeWithNewTime(timePassedMsg)}
+          />
+        )}
 
         <LogoutDialog
           open={logoutOpen}
@@ -644,6 +713,52 @@ export default function DashboardPage() {
 
 // Allegato di una riga nel formato della modale (null se manca o è stato
 // già rimosso dallo Storage dalla pulizia dei 30 giorni).
+// "Riattiva" su un messaggio in pausa il cui orario è già passato. Pull-only:
+// si apre solo dal tocco dell'utente, nessuna notifica.
+function TimePassedDialog({ msg, onCancel, onSendNow, onPickTime }: {
+  msg: MessagesSectionMessage; onCancel: () => void; onSendNow: () => void; onPickTime: () => void;
+}) {
+  const when = formatShortWhen(new Date(msg.scheduled_at));
+  return (
+    <div className="fixed inset-0 z-sheet flex items-end sm:items-center justify-center" onClick={onCancel}>
+      <div className="absolute inset-0 bg-black/60" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="time-passed-title"
+        data-testid="time-passed-dialog"
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full sm:max-w-sm sm:mx-4 bg-[#1F2C33] border-t sm:border border-[#2A3942] rounded-t-2xl sm:rounded-2xl p-5 pb-safe shadow-2xl"
+      >
+        <h3 id="time-passed-title" className="text-white font-semibold">L&apos;orario è già passato</h3>
+        <p className="text-sm text-gray-400 mt-1">
+          Era programmato per {when}. Se lo riprendi così parte subito, con il testo di allora: controlla che sia ancora giusto.
+        </p>
+        <div className="mt-4 flex flex-col gap-2">
+          <button
+            onClick={onSendNow}
+            className="w-full py-3 rounded-xl bg-primary/15 text-primary font-semibold hover:bg-primary/25 transition-colors"
+          >
+            Invia ora
+          </button>
+          <button
+            onClick={onPickTime}
+            className="w-full py-3 rounded-xl bg-white/[0.06] text-gray-100 font-semibold hover:bg-white/10 transition-colors"
+          >
+            Scegli un nuovo orario
+          </button>
+          <button
+            onClick={onCancel}
+            className="w-full py-2.5 rounded-xl text-gray-400 hover:text-gray-200 transition-colors"
+          >
+            Lascia in pausa
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function mediaOf(msg: MessagesSectionMessage): { media_type: 'image' | 'video' | 'document' | 'audio'; media_url: string; media_filename: string; bytes: number } | null {
   const mt = msg.media_type;
   return msg.media_url && (mt === 'image' || mt === 'video' || mt === 'document' || mt === 'audio')

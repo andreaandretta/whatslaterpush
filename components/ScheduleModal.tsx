@@ -14,6 +14,8 @@ import { SendFab } from './schedule/SendFab';
 import { applyTemplateVariables, hasTemplateVariables, firstNameOf } from '../app/lib/template-variables';
 import { formatSendCta, quickDateChips, isSameDay, courtesyHint } from '../app/lib/schedule-quick';
 import { apiErrorText } from '../app/lib/api-error-text';
+import { romeWallClock, instantFromRomeWallClock, browserIsOutsideRome } from '../app/lib/rome-time';
+import { unfilledPlaceholders } from '../app/lib/placeholders';
 
 // Feature flag: "Richiedi approvazione" e "Promemoria" sono raccolti dalla UI
 // ma NON ancora consegnati end-to-end (handleSubmit non li invia, non c'è cron
@@ -42,6 +44,9 @@ interface ScheduleModalProps {
   mediaUnavailable?: boolean;
   /** Stato del collegamento WhatsApp (false = scollegato). */
   connected?: boolean;
+  /** Edit mode aperto da "Riattiva" su un orario passato: al salvataggio il
+   *  messaggio torna anche in coda (status pending), non resta in pausa. */
+  resumeOnSave?: boolean;
 }
 
 const REMINDER_LABELS: Record<ReminderValue, string> = {
@@ -58,8 +63,12 @@ function mediaChanged(a: MediaAttachment | null, b: MediaAttachment | null): boo
   return a.media_url !== b.media_url;
 }
 
+// Data e ora dei selettori sono l'ora di ROMA ("orologio fluttuante", vedi
+// app/lib/rome-time.ts): il server calcola ricorrenze e fascia 08-21 su Roma.
+// Con il telefono in ora italiana non cambia nulla; da Lisbona prima un "ogni
+// lunedì 23:30" diventava lunedì 00:30 a Roma dalla seconda volta in poi.
 function defaultDateTime(): { date: Date; time: string } {
-  const d = new Date();
+  const d = romeWallClock(new Date());
   d.setHours(d.getHours() + 1, 0, 0, 0);
   return {
     date: d,
@@ -67,6 +76,8 @@ function defaultDateTime(): { date: Date; time: string } {
   };
 }
 
+// Giorno + ora dei selettori → orologio di Roma (fluttuante). L'istante vero
+// si ottiene con instantFromRomeWallClock.
 function combineDateTime(date: Date, time: string): Date {
   const [h, m] = time.split(':').map(Number);
   const d = new Date(date);
@@ -89,15 +100,25 @@ function recurrenceFromRule(rule: string | null | undefined, at: Date | null): R
 // correggere solo il testo di una convocazione di sabato la spostava a oggi.
 function initialDateTime(editMsgId: string | null, initialScheduledAt: string | null | undefined): { date: Date; time: string } {
   if (editMsgId && initialScheduledAt) {
-    const d = new Date(initialScheduledAt);
-    if (!isNaN(d.getTime()) && d.getTime() >= Date.now() + 60_000) {
+    const at = new Date(initialScheduledAt);
+    if (!isNaN(at.getTime()) && at.getTime() >= Date.now() + 60_000) {
+      const d = romeWallClock(at);
       return { date: d, time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` };
     }
   }
   return defaultDateTime();
 }
 
-export default function ScheduleModal({ open, onClose, onBack, contact, onScheduled, initialMessage = '', editMsgId = null, initialMedia = null, initialScheduledAt = null, initialRecurrenceRule = null, mediaUnavailable = false, connected = true }: ScheduleModalProps) {
+// Stesso minuto dell'orario salvato? (lo scheduled_at in DB ha il jitter in
+// secondi, i selettori no.)
+function sameMinute(a: Date, iso: string | null | undefined): boolean {
+  if (!iso) return false;
+  const b = new Date(iso);
+  if (isNaN(b.getTime())) return false;
+  return Math.floor(a.getTime() / 60_000) === Math.floor(b.getTime() / 60_000);
+}
+
+export default function ScheduleModal({ open, onClose, onBack, contact, onScheduled, initialMessage = '', editMsgId = null, initialMedia = null, initialScheduledAt = null, initialRecurrenceRule = null, mediaUnavailable = false, connected = true, resumeOnSave = false }: ScheduleModalProps) {
   const init = defaultDateTime();
   const [selectedDate, setSelectedDate] = useState<Date>(init.date);
   const [selectedTime, setSelectedTime] = useState<string>(init.time);
@@ -134,7 +155,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const [recurrenceTouched, setRecurrenceTouched] = useState(false);
   const initialRecurrence = recurrenceFromRule(
     editMsgId ? initialRecurrenceRule : null,
-    initialScheduledAt ? new Date(initialScheduledAt) : null,
+    initialScheduledAt ? romeWallClock(new Date(initialScheduledAt)) : null,
   );
 
   useEffect(() => {
@@ -167,30 +188,40 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
 
   if (!open || !contact) return null;
 
-  const scheduledDate = combineDateTime(selectedDate, selectedTime);
+  // wallDate: l'orario come lo vedono i selettori (ora di Roma) — da usare per
+  // etichette, regola di ripetizione e avviso 08-21. scheduledDate: l'istante
+  // vero, l'unico che va al server e che si confronta con adesso.
+  const wallDate = combineDateTime(selectedDate, selectedTime);
+  const scheduledDate = instantFromRomeWallClock(wallDate);
+  const romeNow = romeWallClock(new Date());
+  const outsideRome = browserIsOutsideRome();
   const isValidDate = scheduledDate.getTime() >= Date.now() + 60_000;
   // With media, an empty body is OK (the media is the message). Without
   // media, the body remains mandatory like before.
   const isValidMessage = (media !== null && message.length <= 3500)
     || (message.trim().length > 0 && message.length <= 3500);
-  const canSubmit = isValidDate && isValidMessage && !submitting;
+  // I template "Pronti per te" hanno {giorno}, {orario}, {luogo}... che nessuno
+  // compila (all'invio si risolve solo {nome}): finché restano, niente invio.
+  // Il server rifiuta lo stesso testo (unfilled_placeholder).
+  const unfilled = unfilledPlaceholders(message);
+  const canSubmit = isValidDate && isValidMessage && unfilled.length === 0 && !submitting;
 
   const contactLabel = contact.name || `+${contact.number}`;
   const defaultTemplateTitle = contact.name ? `Per ${contact.name}` : 'Mio template';
-  const dateLabel = format(scheduledDate, 'EEE d MMM', { locale: it });
+  const dateLabel = format(wallDate, 'EEE d MMM', { locale: it });
 
   const hasReminder = reminder !== 'never';
   const hasRecurrence = recurrence !== 'none';
   const advancedSummary = !ADVANCED_APPROVAL_REMINDER_ENABLED
     ? (hasRecurrence
-        ? `Ripeti: ${recurrenceLabel(recurrence, scheduledDate).toLowerCase()}`
+        ? `Ripeti: ${recurrenceLabel(recurrence, wallDate).toLowerCase()}`
         : 'Nessuna notifica · invio automatico')
     : (!approval && !hasReminder && !hasRecurrence
         ? 'Nessuna notifica · invio automatico'
         : [
             approval ? 'Approvazione richiesta' : null,
             hasReminder ? `Promemoria: ${REMINDER_LABELS[reminder]}` : null,
-            hasRecurrence ? `Ripeti: ${recurrenceLabel(recurrence, scheduledDate).toLowerCase()}` : null,
+            hasRecurrence ? `Ripeti: ${recurrenceLabel(recurrence, wallDate).toLowerCase()}` : null,
           ].filter(Boolean).join(' · '));
 
   function pickTemplate(pick: TemplatePick) {
@@ -232,7 +263,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
     if (recurrenceTouched) return true;
     if (initialRecurrence === 'unknown') return false;
     // Stessa scelta ma data spostata: BYDAY/BYMONTHDAY seguono la nuova data.
-    return buildRRule(recurrence, scheduledDate) !== (initialRecurrenceRule || null);
+    return buildRRule(recurrence, wallDate) !== (initialRecurrenceRule || null);
   }
 
   async function handleSubmit() {
@@ -246,14 +277,24 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       if (editMsgId) {
         // Edit-in-place: PATCH the existing message instead of creating a new one.
         // Fields accepted by PATCH: message, scheduled_at, recurrence_rule, media.
+        // scheduled_at SOLO se l'utente ha cambiato giorno/ora (o la ripetizione,
+        // che si ancora all'orario a schermo). Prima partiva sempre: su una riga
+        // settimanale ven 18:00 spostata dal cron a sab 08:03, correggere una
+        // parola rifaceva l'ancora alle 08:03 (tutte le volte dopo alle 8 del
+        // mattino) e cancellava il motivo dello spostamento.
+        const recurrenceDirty = recurrenceChanged();
+        const timeDirty = !sameMinute(scheduledDate, initialScheduledAt);
         res = await fetch('/api/messages', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             id: editMsgId,
             message: message.trim(),
-            scheduled_at: scheduledDate.toISOString(),
-            ...(recurrenceChanged() ? { recurrence_rule: buildRRule(recurrence, scheduledDate) ?? null } : {}),
+            ...(timeDirty || recurrenceDirty ? { scheduled_at: scheduledDate.toISOString() } : {}),
+            ...(recurrenceDirty ? { recurrence_rule: buildRRule(recurrence, wallDate) ?? null } : {}),
+            // Aperta da "Riattiva" su un orario passato: il nuovo orario rimette
+            // anche in coda (il server lo accetta perché arriva con scheduled_at).
+            ...(resumeOnSave ? { status: 'pending' } : {}),
             // Allegato: solo se è cambiato rispetto a quello con cui si è aperta
             // la modale (null = tolto, oggetto = nuovo file già caricato).
             ...(mediaChanged(initialMedia, media) ? {
@@ -273,7 +314,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
             ...(contact.manualEntry === true ? { manual_entry: true } : {}),
             message: message.trim(),
             scheduled_at: scheduledDate.toISOString(),
-            recurrence_rule: buildRRule(recurrence, scheduledDate),
+            recurrence_rule: buildRRule(recurrence, wallDate),
             ...(media ? {
               media_type: media.media_type,
               media_url: media.media_url,
@@ -350,7 +391,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           {/* Chip data rapide (pattern beta nativa WhatsApp): un tap imposta la
               data mantenendo l'orario; il calendario resta per tutto il resto. */}
           <div className="flex items-center gap-2 px-4 pt-3 flex-wrap">
-            {quickDateChips().map((chip) => {
+            {quickDateChips(romeNow).map((chip) => {
               const active = isSameDay(selectedDate, chip.date);
               return (
                 <button
@@ -398,6 +439,13 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
               </button>
             </div>
           </div>
+          {/* Telefono in un altro fuso: data e ora qui sopra sono quelle italiane
+              (come il server calcola ripetizioni e fascia 08-21). Lo si dice. */}
+          {outsideRome && (
+            <div className="px-4 -mt-1 pb-1 text-[11px] text-gray-500" data-testid="rome-time-note">
+              Orari in ora italiana
+            </div>
+          )}
 
           <button
             type="button"
@@ -466,7 +514,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
               >
                 <Repeat className="w-5 h-5 text-gray-400 shrink-0" />
                 <div className="flex-1 text-white text-base">Ripeti</div>
-                <div className="text-primary text-base">{recurrenceLabel(recurrence, scheduledDate)}</div>
+                <div className="text-primary text-base">{recurrenceLabel(recurrence, wallDate)}</div>
                 <ChevronRight className="w-5 h-5 text-gray-500" />
               </button>
 
@@ -545,6 +593,19 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                 )}
               </div>
             )}
+            {/* Campi del template da scrivere a mano: evidenziati uno per uno,
+                CTA disattivata finché ne resta uno (si sblocca scrivendo). */}
+            {unfilled.length > 0 && (
+              <div className="mt-2 text-xs text-amber-200 bg-amber-900/30 rounded-lg px-3 py-2" role="status" data-testid="unfilled-placeholders">
+                Completa i campi tra parentesi:{' '}
+                {unfilled.map((tok, i) => (
+                  <React.Fragment key={tok}>
+                    {i > 0 && ', '}
+                    <mark className="bg-amber-400/25 text-amber-100 rounded px-1 font-medium">{tok}</mark>
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
             {!editMsgId && (
               <div className="mt-2">
                 <label className="flex items-center gap-3 min-h-[44px] cursor-pointer select-none">
@@ -591,9 +652,9 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           )}
         </div>
 
-        {courtesyHint(scheduledDate) && (
+        {courtesyHint(wallDate) && (
           <div className="mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-xs text-center" role="status">
-            {courtesyHint(scheduledDate)}
+            {courtesyHint(wallDate)}
           </div>
         )}
 
@@ -616,7 +677,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           disabled={!canSubmit}
           loading={submitting}
           onClick={handleSubmit}
-          label={formatSendCta(scheduledDate)}
+          label={formatSendCta(wallDate, romeNow)}
         />
 
         <DarkCalendarDialog
@@ -642,7 +703,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           onClose={() => setRecurrenceSheetOpen(false)}
           value={recurrence}
           onChange={(v) => { setRecurrence(v); setRecurrenceTouched(true); }}
-          referenceDate={scheduledDate}
+          referenceDate={wallDate}
         />
         <TemplateBottomSheet
           open={templateSheetOpen}

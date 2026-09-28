@@ -9,12 +9,28 @@ import { evolutionClient } from '../../../lib/evolution/client';
 import { applyJitter } from '../../lib/cron-utils';
 import { isNotOnWhatsAppError } from '../../lib/message-error';
 import { contactActiveCutoffIso, isRecipientActive } from '../../lib/contact-window';
-import { isValidRule } from '../../lib/recurrence';
+import { isValidRule, reconcileRecurringChain } from '../../lib/recurrence';
+import { unfilledPlaceholders, unfilledPlaceholderMessage } from '../../lib/placeholders';
 import { logAuditEvent, clientIpFromHeaders, hashContactRef } from '../../lib/audit';
 import { getSupabaseAdmin } from '../../lib/supabase-admin';
 
 // Tipi di allegato accettati (POST e PATCH). Il CHECK in DB è identico.
 const ALLOWED_MEDIA = ['image', 'video', 'document', 'audio', 'sticker', 'location', 'contact'];
+
+// Stati "vivi" di una catena ricorrente: stessi di recurring_chains_needing_next()
+// (migration 20260621). Se uno di questi esiste, la catena va avanti da sola.
+const LIVE_STATES = ['pending', 'processing', 'paused', 'awaiting_time', 'awaiting_recipient', 'awaiting_confirm'];
+
+// Template con {giorno}, {orario}... non compilati: 400 con frase italiana.
+// Vale per ogni client (anche vecchi o scritti a mano): all'invio si risolve
+// solo {nome}, il resto arriverebbe tra graffe al destinatario.
+function unfilledPlaceholderResponse(text: string): NextResponse | null {
+  if (unfilledPlaceholders(text).length === 0) return null;
+  return NextResponse.json({
+    error: 'unfilled_placeholder',
+    message: unfilledPlaceholderMessage(text),
+  }, { status: 400 });
+}
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
@@ -135,18 +151,32 @@ export async function DELETE(req: NextRequest) {
   if (!phone) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
-  const { id } = body;
+  const { id, scope } = body;
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
   const supabase = getSupabaseAdmin();
   const { data: msg } = await supabase
     .from('scheduled_messages')
-    .select('id, instance_phone')
+    .select('id, instance_phone, status, scheduled_at, recurrence_rule, recurrence_anchor_at, parent_recurrence_id')
     .eq('id', id)
     .eq('instance_phone', phone)
     .single();
 
   if (!msg) return NextResponse.json({ error: 'Message not found or not owned' }, { status: 403 });
+
+  // Promemoria ricorrente: una riga 'cancelled' in cima alla catena significa
+  // "l'utente ha fermato la serie" e il cron non crea MAI più la prossima
+  // (reconcileRecurringChain + recurring_chains_needing_next). Prima "Elimina"
+  // su un solo martedì di catechismo, o sulla card rossa di un invio fallito,
+  // fermava in silenzio tutta la serie. Ora la serie si ferma solo con
+  // scope='series' ("Tutta la serie"); altrimenti ("Solo questa volta", e anche
+  // un client vecchio che non manda scope) la riga salta alla prossima
+  // occorrenza: nessuno stato nuovo, nessuna migration.
+  const m = msg as any;
+  if (m.recurrence_rule && scope !== 'series' && ['pending', 'paused', 'failed'].includes(m.status) && m.scheduled_at) {
+    const skipped = await skipRecurringOccurrence(supabase, phone, m);
+    if (skipped) return skipped;
+  }
 
   // 'failed' incluso: "Elimina" è offerto sulle card rosse ed era l'unico modo di
   // togliere un non-inviato; prima il 409 lasciava la card lì per sempre.
@@ -164,6 +194,66 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'message_not_cancellable', message: 'Il messaggio è già in invio o inviato.' }, { status: 409 });
   }
   return NextResponse.json({ success: true });
+}
+
+// "Solo questa volta" su una riga ricorrente. Ritorna la risposta HTTP, oppure
+// null quando la cosa giusta è la cancellazione normale della riga (la serie
+// continua comunque, o la regola non dà una prossima occorrenza).
+async function skipRecurringOccurrence(supabase: any, phone: string, m: any): Promise<NextResponse | null> {
+  // Prossima occorrenza DOPO questa, all'ora dell'ancora (l'orario scelto
+  // dall'utente, non quello spostato dal cron) e comunque nel futuro: è lo
+  // stesso calcolo del cron quando crea l'occorrenza successiva, quindi la
+  // serie resta identica a come sarebbe andata. latestStatus 'sent' serve solo
+  // a superare il cancello "catena viva" della funzione, qui già verificato.
+  const decision = reconcileRecurringChain({
+    hasLiveRow: false,
+    latestStatus: 'sent',
+    latestScheduledAt: m.scheduled_at,
+    rule: m.recurrence_rule,
+    anchorAt: m.recurrence_anchor_at,
+  });
+  if (!decision.insert) return null;
+
+  if (m.status === 'failed') {
+    // Card rossa: se il cron ha già creato l'occorrenza successiva, la serie
+    // va avanti con quella e questa riga si cancella e basta.
+    const chainId = m.parent_recurrence_id || m.id;
+    const { data: live } = await supabase
+      .from('scheduled_messages')
+      .select('id')
+      .eq('instance_phone', phone)
+      .or(`id.eq.${chainId},parent_recurrence_id.eq.${chainId}`)
+      .in('status', LIVE_STATES)
+      .neq('id', m.id)
+      .limit(1);
+    if (Array.isArray(live) && live.length > 0) return null;
+  }
+
+  // Una riga in pausa resta in pausa (l'utente la riprende quando vuole); una
+  // fallita torna in coda per la prossima volta, con i contatori azzerati.
+  const { data: moved, error } = await supabase
+    .from('scheduled_messages')
+    .update({
+      scheduled_at: decision.scheduledAt,
+      status: m.status === 'failed' ? 'pending' : m.status,
+      retry_count: 0,
+      disconnect_retry_count: 0,
+      error_message: null,
+      send_attempted_at: null,
+    })
+    .eq('id', m.id)
+    .eq('instance_phone', phone)
+    .in('status', [m.status])
+    .select('id, status, scheduled_at');
+
+  // 23505 = il cron ha creato proprio adesso la stessa occorrenza
+  // (uniq_recurrence_occurrence): la serie c'è già, questa riga si cancella.
+  if (error && error.code === '23505') return null;
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!moved || moved.length === 0) {
+    return NextResponse.json({ error: 'message_not_cancellable', message: 'Il messaggio è già in invio o inviato.' }, { status: 409 });
+  }
+  return NextResponse.json({ success: true, skipped_to: moved[0].scheduled_at });
 }
 
 // PATCH /api/messages — partial update of a pending/paused scheduled message.
@@ -185,7 +275,7 @@ export async function PATCH(req: NextRequest) {
   const supabase = getSupabaseAdmin();
   const { data: existing } = await supabase
     .from('scheduled_messages')
-    .select('id, instance_phone, status, media_type, media_url, media_filename, recurrence_rule, parsed_message, caption, error_message')
+    .select('id, instance_phone, status, scheduled_at, media_type, media_url, media_filename, recurrence_rule, parsed_message, caption, error_message')
     .eq('id', id)
     .eq('instance_phone', phone)
     .single();
@@ -278,6 +368,23 @@ export async function PATCH(req: NextRequest) {
     update.status = status;
   }
 
+  // "Riattiva" su un messaggio in pausa il cui orario è già passato: prima
+  // tornava in coda con il vecchio orario e il cron lo mandava entro un minuto,
+  // a qualsiasi ora e col testo ormai vecchio ("domani alle 9 hai la guida"
+  // martedì alle 23:10). Ora si chiede all'utente: invia ora o nuovo orario
+  // (la dashboard offre le due scelte e le manda con scheduled_at nello stesso
+  // PATCH, che quindi passa).
+  if (status === 'pending' && existing.status === 'paused' && scheduled_at === undefined) {
+    const at = new Date((existing as any).scheduled_at || '');
+    if (!isNaN(at.getTime()) && at.getTime() < Date.now() + 60_000) {
+      return NextResponse.json({
+        error: 'time_passed',
+        message: 'L\'orario di questo messaggio è già passato: scegli se inviarlo ora o a un nuovo orario.',
+        scheduled_at: (existing as any).scheduled_at,
+      }, { status: 409 });
+    }
+  }
+
   if (scheduled_at !== undefined) {
     if (typeof scheduled_at !== 'string') {
       return NextResponse.json({ error: 'invalid_datetime' }, { status: 400 });
@@ -287,6 +394,11 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'invalid_datetime' }, { status: 400 });
     }
     update.scheduled_at = applyJitter(d.toISOString());
+    // L'orario ora lo sceglie l'utente (modifica o Posticipa): il conteggio dei
+    // tentativi a WhatsApp scollegato è della vecchia scaletta. Lasciato lì, un
+    // conteggio ≥6 faceva trattare dal cron il nuovo orario come "arretrato di
+    // sistema" e lo spostava a domattina (isLateDisconnectBacklog).
+    update.disconnect_retry_count = 0;
   }
 
   // Allegato in modifica (22 set 2026): `media: null` lo toglie, `media: {...}`
@@ -338,6 +450,8 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ error: 'invalid_message' }, { status: 400 });
       }
     }
+    const unfilled = unfilledPlaceholderResponse(clean);
+    if (unfilled) return unfilled;
     update.parsed_message = clean;
     update.caption = clean;
     if (hasMedia) update.media_caption = clean.length > 0 ? clean : null;
@@ -363,8 +477,12 @@ export async function PATCH(req: NextRequest) {
   // BUG #2: keep the recurrence anchor in sync when the user reschedules a
   // (still-)recurring row — the new intended time-of-day (PRE-jitter) becomes the
   // anchor so future occurrences follow the edit; clearing the rule clears it.
+  // keep_recurrence_anchor: lo spostamento vale per QUESTA volta sola ("Invia
+  // ora" dopo una pausa, "Posticipa"): senza, un +1 ora su un settimanale delle
+  // 18:00 spostava alle 19:00 tutte le volte successive.
   const effectiveRule = update.recurrence_rule !== undefined ? update.recurrence_rule : (existing as any).recurrence_rule;
-  if (scheduled_at !== undefined && effectiveRule) {
+  const keepAnchor = body?.keep_recurrence_anchor === true;
+  if (scheduled_at !== undefined && effectiveRule && !keepAnchor) {
     update.recurrence_anchor_at = new Date(scheduled_at as string).toISOString();
   } else if (update.recurrence_rule === null) {
     update.recurrence_anchor_at = null;
@@ -381,6 +499,16 @@ export async function PATCH(req: NextRequest) {
   const nextStatus = (update.status as string | undefined) ?? existing.status;
   if ((update.scheduled_at !== undefined || update.status !== undefined) && nextStatus === 'pending' && (existing as any).error_message) {
     update.error_message = null;
+  }
+  // Pausa decisa dall'utente: il vecchio motivo del cron ("Nuovo tentativo a
+  // breve", "Spostato a domattina") su una riga ferma è falso, non parte
+  // niente. Restano solo i motivi di pausa veri (destinatario che ha scritto
+  // stop, logout: "In pausa: ...") e il trial scaduto.
+  if (update.status === 'paused' && existing.status !== 'paused' && (existing as any).error_message) {
+    const reason = String((existing as any).error_message).trim().toLowerCase();
+    if (!reason.startsWith('in pausa') && !reason.startsWith('trial scaduto')) {
+      update.error_message = null;
+    }
   }
 
   // Conditional write: refuse if the cron picked up the row between our
@@ -512,6 +640,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'invalid_media_url' }, { status: 400 });
     }
   }
+
+  const unfilled = unfilledPlaceholderResponse(messageStr);
+  if (unfilled) return unfilled;
 
   if (typeof scheduled_at !== 'string') {
     return NextResponse.json({ error: 'invalid_datetime' }, { status: 400 });

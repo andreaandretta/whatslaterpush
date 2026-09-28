@@ -7,9 +7,14 @@
  * endpoint enforces "at least 60s in the future"; snoozeTonight returns null
  * from 19:00 to keep a comfortable margin instead of failing at the API.
  * Snooze = l'orario scelto dall'utente: la fascia 08-21 NON si applica qui.
+ *
+ * ScheduleModal passa a formatSendCta/courtesyHint/quickDateChips l'orologio
+ * di ROMA (romeWallClock, app/lib/rome-time.ts): così con il telefono in un
+ * altro fuso la CTA e l'avviso 08-21 parlano la stessa ora del cron.
  */
 import { addDays, addHours, isSameDay, format } from 'date-fns';
 import { it } from 'date-fns/locale';
+import { parseRule } from './recurrence';
 
 // "Posticipa" deve SEMPRE spostare in avanti rispetto all'orario del messaggio.
 // Prima i preset partivano da ADESSO: lunedì, "+1 ora" su una convocazione di
@@ -102,6 +107,30 @@ export function quickDateChips(now: Date = new Date()): QuickDateChip[] {
     { label: 'Domani', date: addDays(now, 1) },
     { label: format(nextWeek, 'EEE d', { locale: it }), date: nextWeek },
   ];
+}
+
+const WEEKDAYS: Record<string, string> = {
+  MO: 'lunedì', TU: 'martedì', WE: 'mercoledì', TH: 'giovedì', FR: 'venerdì', SA: 'sabato', SU: 'domenica',
+};
+
+/**
+ * "ogni martedì", "ogni giorno", "il 5 di ogni mese": etichetta breve della
+ * regola per la lista messaggi. Prima la lista non diceva mai che una riga era
+ * ricorrente, e "Elimina" fermava la serie senza che l'utente lo sapesse.
+ * null = nessuna regola o una regola che non sappiamo leggere.
+ */
+export function recurrenceTagLabel(rule: string | null | undefined): string | null {
+  if (!rule) return null;
+  const p = parseRule(rule);
+  if (!p) return null;
+  if (p.freq === 'DAILY') return 'ogni giorno';
+  if (p.freq === 'WEEKLY') {
+    const days = (p.byDay || []).map((d) => WEEKDAYS[d]).filter(Boolean);
+    if (days.length === 0) return null;
+    return days.length === 1 ? `ogni ${days[0]}` : `ogni ${days.join(', ')}`;
+  }
+  if (p.freq === 'MONTHLY') return `il ${p.byMonthDay} di ogni mese`;
+  return null;
 }
 
 export { isSameDay };

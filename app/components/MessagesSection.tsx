@@ -7,6 +7,8 @@ import { MessageActionsSheet } from './MessageActionsSheet';
 import { DeliveryStatusIcon } from './DeliveryStatusIcon';
 import { mapErrorReason, isNotOnWhatsAppError, isIndeterminateSend, mapPendingReason } from '../lib/message-error';
 import { looksLikeLidDigits } from '../lib/jid';
+import { recurrenceTagLabel } from '../lib/schedule-quick';
+import { romeWallClock } from '../lib/rome-time';
 
 export interface ScheduledMessage {
   id: string;
@@ -51,9 +53,29 @@ export function AttachmentChip({ msg }: { msg: Pick<ScheduledMessage, 'media_typ
   );
 }
 
+// "↻ ogni martedì": prima nella lista niente diceva che una riga era una serie,
+// e "Elimina" sul singolo martedì fermava tutta la serie senza avvisare.
+export function RecurrenceTag({ rule }: { rule?: string | null }) {
+  const label = recurrenceTagLabel(rule);
+  if (!label) return null;
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[11px] font-medium text-sky-300 bg-sky-500/10 rounded-full px-2 py-0.5"
+      title={`Promemoria ricorrente: ${label}`}
+      data-testid="recurrence-tag"
+    >
+      ↻ {label}
+    </span>
+  );
+}
+
+export type DeleteScope = 'occurrence' | 'series';
+
 interface Props {
   messages: ScheduledMessage[];
-  onDelete: (id: string) => void;
+  // scope solo per le righe ricorrenti: 'occurrence' = salta questa volta,
+  // 'series' = ferma la serie. Assente = riga singola, si cancella.
+  onDelete: (id: string, scope?: DeleteScope) => void;
   onDuplicate: (msg: ScheduledMessage) => void;
   onEdit: (msg: ScheduledMessage) => void;
   onPauseToggle: (msg: ScheduledMessage) => void;
@@ -125,6 +147,9 @@ export default function MessagesSection({
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [actionMsg, setActionMsg] = useState<ScheduledMessage | null>(null);
+  // Riga ricorrente su cui l'utente ha toccato "Elimina": prima si chiede
+  // "Solo questa volta" / "Tutta la serie".
+  const [deleteAsk, setDeleteAsk] = useState<ScheduledMessage | null>(null);
 
   // Recompute every 60s so countdowns stay fresh
   const [, setTick] = useState(0);
@@ -199,7 +224,14 @@ export default function MessagesSection({
 
   // Il toast lo mostra la dashboard SOLO dopo la risposta del server: prima qui
   // usciva "Eliminato" subito, anche quando il server poi rifiutava (409).
+  // Una riga ricorrente è UNA occorrenza di una serie: cancellarla senza
+  // chiedere fermava la serie per sempre (il cron non ricrea una catena che
+  // finisce con una riga cancellata).
   const handleDelete = (msg: ScheduledMessage) => {
+    if (msg.recurrence_rule) {
+      setDeleteAsk(msg);
+      return;
+    }
     onDelete(msg.id);
   };
 
@@ -345,6 +377,58 @@ export default function MessagesSection({
         scheduledAt={actionMsg?.scheduled_at}
         onSnooze={(iso, label) => actionMsg && onSnooze(actionMsg, iso, label)}
       />
+
+      {deleteAsk && (
+        <RecurringDeleteDialog
+          msg={deleteAsk}
+          onCancel={() => setDeleteAsk(null)}
+          onChoose={(scope) => { const id = deleteAsk.id; setDeleteAsk(null); onDelete(id, scope); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function RecurringDeleteDialog({ msg, onCancel, onChoose }: {
+  msg: ScheduledMessage; onCancel: () => void; onChoose: (scope: DeleteScope) => void;
+}) {
+  const label = recurrenceTagLabel(msg.recurrence_rule) || 'ricorrente';
+  return (
+    <div className="fixed inset-0 z-sheet flex items-end sm:items-center justify-center" onClick={onCancel}>
+      <div className="absolute inset-0 bg-black/60" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="recurring-delete-title"
+        data-testid="recurring-delete-dialog"
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full sm:max-w-sm sm:mx-4 bg-[#1F2C33] border-t sm:border border-[#2A3942] rounded-t-2xl sm:rounded-2xl p-5 pb-safe shadow-2xl"
+      >
+        <h3 id="recurring-delete-title" className="text-white font-semibold">Promemoria ricorrente</h3>
+        <p className="text-sm text-gray-400 mt-1">
+          Questo messaggio parte ↻ {label}. Vuoi togliere solo questa volta o fermare tutta la serie?
+        </p>
+        <div className="mt-4 flex flex-col gap-2">
+          <button
+            onClick={() => onChoose('occurrence')}
+            className="w-full py-3 rounded-xl bg-primary/15 text-primary font-semibold hover:bg-primary/25 transition-colors"
+          >
+            Solo questa volta
+          </button>
+          <button
+            onClick={() => onChoose('series')}
+            className="w-full py-3 rounded-xl bg-red-500/10 text-red-400 font-semibold hover:bg-red-500/20 transition-colors"
+          >
+            Tutta la serie
+          </button>
+          <button
+            onClick={onCancel}
+            className="w-full py-2.5 rounded-xl text-gray-400 hover:text-gray-200 transition-colors"
+          >
+            Annulla
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -380,9 +464,16 @@ function isRetryable(msg: ScheduledMessage): boolean {
 }
 
 // Righe in coda che il sistema ha spostato o messo in pausa: il motivo è in
-// error_message (vedi mapPendingReason). Una pausa decisa dall'utente non ha motivo.
+// error_message (vedi mapPendingReason). Una pausa decisa dall'utente non ha
+// motivo: su una riga in pausa si mostrano solo i motivi di pausa veri
+// ("In pausa: ..." di suppressions/logout, trial scaduto). Un vecchio "HTTP
+// 500" o "riprogrammato a domattina" rimasto da prima della pausa diceva
+// "Nuovo tentativo a breve" su un messaggio che non parte.
 function pendingReasonFor(msg: ScheduledMessage): string | null {
-  if (msg.status !== 'pending' && msg.status !== 'paused') return null;
+  if (msg.status === 'pending') return mapPendingReason(msg.error_message);
+  if (msg.status !== 'paused') return null;
+  const s = (msg.error_message || '').trim().toLowerCase();
+  if (!s.startsWith('in pausa') && !s.startsWith('trial scaduto')) return null;
   return mapPendingReason(msg.error_message);
 }
 
@@ -407,7 +498,9 @@ function MessageRow({ msg, tab, onOpenActions }: {
   const unverified = isIndeterminateSend(msg);
   const pendingReason = pendingReasonFor(msg);
 
-  const target = new Date(msg.scheduled_at);
+  // Ora italiana, come nella modale (telefono in un altro fuso: stessi numeri
+  // che l'utente ha scelto). In Italia è identico a new Date().
+  const target = romeWallClock(new Date(msg.scheduled_at));
   const hh = target.getHours().toString().padStart(2, '0');
   const mm = target.getMinutes().toString().padStart(2, '0');
   const time = `${hh}:${mm}`;
@@ -461,6 +554,7 @@ function MessageRow({ msg, tab, onOpenActions }: {
             </>
           )}
           <AttachmentChip msg={msg} />
+          <RecurrenceTag rule={msg.recurrence_rule} />
         </div>
         {pendingReason && (
           <p className="text-[12px] text-gray-500 mt-1.5 leading-snug" data-testid="pending-reason">
@@ -539,6 +633,9 @@ function FailedMessageCard({ msg, connected, onRetry, onDuplicate, onChooseOther
         )}
         {msg.media_type && (
           <div className="mb-1.5"><AttachmentChip msg={msg} /></div>
+        )}
+        {msg.recurrence_rule && (
+          <div className="mb-1.5"><RecurrenceTag rule={msg.recurrence_rule} /></div>
         )}
 
         <p className="text-[12px] text-red-400/80 mb-2.5">{reason.label}</p>
