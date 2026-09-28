@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Paperclip, Image as ImageIcon, Video, FileText, Mic, X, Loader2, AlertCircle, FileScan } from 'lucide-react';
 import { pickUploadRoute, shouldCompressImage, fitWithin, uploadErrorMessage, IMAGE_JPEG_QUALITY } from '../../app/lib/upload-limits';
 import { DocumentScanner } from './DocumentScanner';
+import { useModalHistory } from '../../app/lib/use-modal-history';
 
 export interface MediaAttachment {
   media_url: string;          // Supabase Storage path returned by /api/messages/upload
@@ -131,6 +132,10 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
 
   useEffect(() => () => { uploadRef.current?.abort(); }, []);
 
+  // Indietro (Android/iOS) chiude la graffetta, non l'app. Chiudere annulla l'upload
+  // in volo, esattamente come la X.
+  useModalHistory(open, onClose);
+
   if (!open) return null;
 
   function pick(k: 'image' | 'video' | 'document' | 'audio') {
@@ -147,33 +152,38 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
     scanRef.current?.click();
   }
 
-  async function onFile(original: File) {
+  /** Ritorna il messaggio d'errore se il caricamento fallisce, null altrimenti. */
+  async function onFile(original: File): Promise<string | null> {
     setErr(null);
     setUploading(true);
     const ctrl = new AbortController();
     uploadRef.current = ctrl;
     try {
       const file = shouldCompressImage(original.type, original.size) ? await compressImage(original) : original;
-      if (ctrl.signal.aborted) return;
+      if (ctrl.signal.aborted) return null;
       if (file.size > MAX_MB * 1024 * 1024) {
-        setErr(`File troppo grande (max ${MAX_MB}MB).`);
+        const msg = `File troppo grande (max ${MAX_MB}MB).`;
+        setErr(msg);
         setUploading(false);
-        return;
+        return msg;
       }
       const result = await uploadFile(file, ctrl.signal);
-      if (ctrl.signal.aborted) return; // picker chiuso nel frattempo: scarta il risultato
+      if (ctrl.signal.aborted) return null; // picker chiuso nel frattempo: scarta il risultato
       if (!result.ok) {
         setErr(result.message);
         setUploading(false);
-        return;
+        return result.message;
       }
       onAttached(result.att);
       setUploading(false);
       onClose();
+      return null;
     } catch (e) {
-      if (ctrl.signal.aborted) return; // annullato da noi: nessun errore da mostrare
-      setErr((e as Error)?.message || 'Errore di rete');
+      if (ctrl.signal.aborted) return null; // annullato da noi: nessun errore da mostrare
+      const msg = (e as Error)?.message || 'Errore di rete';
+      setErr(msg);
       setUploading(false);
+      return msg;
     }
   }
 
@@ -278,7 +288,15 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
         <DocumentScanner
           initialPhoto={scanPhoto}
           onCancel={() => setScanPhoto(null)}
-          onDone={(pdf) => { setScanPhoto(null); onFile(pdf); }}
+          // Lo scanner resta montato finché il PDF non è caricato: se l'upload
+          // fallisce (rete, 5xx, sessione scaduta, troppo grande) le pagine sono
+          // ancora lì e «Fatto» riprova. Prima si smontava subito e la scansione,
+          // che non esiste da nessun'altra parte, andava rifatta da capo.
+          onDone={async (pdf) => {
+            const failure = await onFile(pdf);
+            if (failure === null) setScanPhoto(null);
+            return failure;
+          }}
         />
       )}
     </div>

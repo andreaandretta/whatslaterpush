@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Share, CheckCircle2, MoreVertical, SquarePlus } from 'lucide-react';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
+import { hideInstallOnThisDevice } from '../lib/pwa-install-policy';
 import Logo from '@/components/Logo';
 
 // Compact install pill in the dashboard header. Single tap path:
@@ -68,6 +69,10 @@ export default function InstallAppButton() {
   // `deferred`, so the button stays visible on iOS (where deferred is always
   // null) and is the entry point to the install guide.
   if (!mounted || installed) return null;
+  // iPhone/iPad: niente invito a installare finché non è verificato che la sessione
+  // passa da Safari all'icona (cookie separati → 409 senza via d'uscita). Chi l'ha
+  // già installata non vede comunque il bottone (installed). Vedi pwa-install-policy.
+  if (!deferred && hideInstallOnThisDevice(ios)) return null;
 
   const closeSheet = () => setShowSheet(false);
 

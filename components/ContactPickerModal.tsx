@@ -10,6 +10,7 @@ import { getContactsSnapshot, setContactsSnapshot, clearContactsSnapshots } from
 import { Button } from './Button';
 import { ContactAvatar } from './ContactAvatar';
 import { LabelPicker } from './LabelPicker';
+import { useModalHistory } from '../app/lib/use-modal-history';
 import { CsvImportDialog } from './CsvImportDialog';
 import LabelManagerSheet from './LabelManagerSheet';
 
@@ -140,6 +141,10 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     (contact: PickedContact) => onSelectRef.current(contact),
     [],
   );
+
+  // Indietro (Android/iOS) chiude il foglio in cima, poi il selettore: mai l'app intera.
+  useModalHistory(open, onClose);
+  useModalHistory(open && (csvOpen || labelManagerOpen), () => { setCsvOpen(false); setLabelManagerOpen(false); });
 
   useEffect(() => {
     if (!open) return;

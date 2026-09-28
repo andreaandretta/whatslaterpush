@@ -18,12 +18,18 @@ import {
   type ScanMode,
 } from '../../app/lib/scan/browser';
 import { buildScanPdf, scanFilename, type ScanPage } from '../../app/lib/scan/pdf';
+import { useModalHistory } from '../../app/lib/use-modal-history';
 
 interface Props {
   /** Prima foto, scattata da MediaPicker (il tap sull'opzione apre già la fotocamera). */
   initialPhoto: File;
   onCancel: () => void;
-  onDone: (pdf: File) => void;
+  /**
+   * Riceve il PDF e lo carica. Ritorna un messaggio d'errore se il caricamento
+   * fallisce: lo scanner resta aperto sulle pagine, così si riprova con «Fatto»
+   * senza rifotografare tutto (il PDF non esiste da nessun'altra parte).
+   */
+  onDone: (pdf: File) => void | Promise<string | null | void>;
 }
 
 interface Page { id: number; blob: Blob; url: string; width: number; height: number }
@@ -138,35 +144,63 @@ export function DocumentScanner({ initialPhoto, onCancel, onDone }: Props) {
     camRef.current?.click();
   }
 
-  function requestClose() {
-    if (pagesRef.current.length > 0 && !window.confirm('Scartare la scansione? Le pagine fatte andranno perse.')) return;
+  /** true = lo scanner si chiude; false = resta aperto (conferma annullata). */
+  function requestClose(): boolean {
+    if (pagesRef.current.length > 0 && !window.confirm('Scartare la scansione? Le pagine fatte andranno perse.')) return false;
     onCancel();
+    return true;
   }
 
-  /** Indietro: dall'editor con pagine già fatte torna all'elenco, altrimenti chiude. */
-  function back() {
-    if (phase === 'working' || phase === 'loading') return;
+  /**
+   * Indietro: dall'editor con pagine già fatte torna all'elenco, altrimenti chiude.
+   * Ritorna true solo se lo scanner si chiude (serve al tasto Indietro di sistema).
+   */
+  function back(): boolean {
+    if (phase === 'working' || phase === 'loading') return false;
     if (phase === 'edit' && pagesRef.current.length > 0) {
       replaceEdit(null);
       setErr(null);
       setPhase('pages');
-      return;
+      return false;
     }
-    requestClose();
+    return requestClose();
   }
 
-  function onKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Escape') { e.stopPropagation(); back(); return; }
-    if (e.key !== 'Tab' || !rootRef.current) return;
+  // Tasto Indietro di Android / swipe iOS: stesso comportamento della freccia in alto.
+  useModalHistory(true, () => back());
+
+  // Esc e Tab ascoltati su document (fase di cattura), non sul div dello scanner:
+  // Safari non mette il focus sui bottoni toccati e in 'loading'/'working' l'unico
+  // bottone è disattivato, quindi il focus finiva su <body> o sulla modale sotto
+  // e la tastiera "usciva" dallo scanner. Il ref tiene la versione fresca di back().
+  const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyRef.current = (e: KeyboardEvent) => {
+    const root = rootRef.current;
+    if (!root) return;
+    if (e.key === 'Escape') {
+      // Solo lo scanner: la modale e la sheet sotto non devono chiudersi insieme.
+      e.stopPropagation();
+      e.preventDefault();
+      back();
+      return;
+    }
+    if (e.key !== 'Tab') return;
     // Trappola del focus: il Tab resta dentro lo scanner a tutto schermo.
-    const focusables = Array.from(rootRef.current.querySelectorAll<HTMLElement>(
+    const focusables = Array.from(root.querySelectorAll<HTMLElement>(
       'button:not([disabled]), [tabindex]:not([tabindex="-1"])',
     ));
-    if (focusables.length === 0) return;
+    const active = document.activeElement;
+    if (focusables.length === 0) { e.preventDefault(); headingRef.current?.focus(); return; }
     const first = focusables[0], last = focusables[focusables.length - 1];
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-  }
+    if (!active || !root.contains(active)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); return; }
+    if (e.shiftKey && (active === first || active === headingRef.current)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keyRef.current(e);
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, []);
 
   // ── Editor: trascinamento degli angoli ────────────────────────────────────
   function toPhotoPoint(clientX: number, clientY: number): Point | null {
@@ -268,7 +302,14 @@ export function DocumentScanner({ initialPhoto, onCancel, onDone }: Props) {
       for (const p of list) scanPages.push(await blobToScanPage(p));
       const bytes = await buildScanPdf(scanPages);
       if (!alive.current) return;
-      onDone(new File([bytes as BlobPart], scanFilename(new Date()), { type: 'application/pdf' }));
+      setBusyLabel('Carico il PDF…');
+      const failure = await onDone(new File([bytes as BlobPart], scanFilename(new Date()), { type: 'application/pdf' }));
+      if (!alive.current) return; // caricato: MediaPicker ha già chiuso lo scanner
+      if (typeof failure === 'string' && failure) {
+        // Upload fallito: le pagine sono ancora qui, «Fatto» riprova.
+        setErr(`${failure} Tocca «Fatto» per riprovare.`);
+        setPhase('pages');
+      }
     } catch {
       if (!alive.current) return;
       setErr('Non sono riuscito a creare il PDF. Riprova.');
@@ -292,7 +333,6 @@ export function DocumentScanner({ initialPhoto, onCancel, onDone }: Props) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="scanner-title"
-      onKeyDown={onKeyDown}
       className="fixed inset-0 z-dialog bg-[#0B141A] text-white flex flex-col"
     >
       <header className="flex items-center gap-2 px-2 pt-[max(env(safe-area-inset-top),0.5rem)] pb-2 shrink-0">

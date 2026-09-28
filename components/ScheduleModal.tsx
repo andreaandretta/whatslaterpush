@@ -14,6 +14,8 @@ import { SendFab } from './schedule/SendFab';
 import { applyTemplateVariables, hasTemplateVariables, firstNameOf } from '../app/lib/template-variables';
 import { formatSendCta, quickDateChips, isSameDay, courtesyHint } from '../app/lib/schedule-quick';
 import { apiErrorText } from '../app/lib/api-error-text';
+import { useModalHistory } from '../app/lib/use-modal-history';
+import { useScheduleDraft, ScheduleDraftBanner } from './schedule/ScheduleDraftBanner';
 
 // Feature flag: "Richiedi approvazione" e "Promemoria" sono raccolti dalla UI
 // ma NON ancora consegnati end-to-end (handleSubmit non li invia, non c'è cron
@@ -165,6 +167,12 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
     }
   }, [open]);
 
+  // Indietro (Android/iOS) chiude il foglio in cima, poi la modale: mai l'app intera.
+  useModalHistory(open && !!contact, onClose);
+  useModalHistory(open && (calendarOpen || clockOpen || reminderSheetOpen || recurrenceSheetOpen || templateSheetOpen), () => { setCalendarOpen(false); setClockOpen(false); setReminderSheetOpen(false); setRecurrenceSheetOpen(false); setTemplateSheetOpen(false); });
+  // Bozza in sessionStorage: sopravvive a un Indietro, a un reload o alla chiusura della scheda.
+  const draft = useScheduleDraft({ enabled: open && !editMsgId && !!contact, contact, initialMessage, initialMedia, values: { message, date: selectedDate, time: selectedTime, recurrence, media }, apply: (d) => { setMessage(d.message); setMedia(d.media); setRecurrence(d.recurrence); if (d.when) { setSelectedDate(d.when.date); setSelectedTime(d.when.time); } } });
+
   if (!open || !contact) return null;
 
   const scheduledDate = combineDateTime(selectedDate, selectedTime);
@@ -292,6 +300,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
         if (!editMsgId && saveTemplateChecked && message.trim().length > 0) {
           void saveAsTemplate(templateTitle.trim() || defaultTemplateTitle);
         }
+        if (!editMsgId) draft.clear();
         onScheduled();
         onClose();
         return;
@@ -493,6 +502,8 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
               L&apos;allegato originale non è più disponibile: ricaricalo con la graffetta.
             </div>
           )}
+
+          <ScheduleDraftBanner draft={draft} />
 
           <div className="px-4 pt-4">
             {/* Campo stile WhatsApp: la graffetta vive DENTRO il bordo del campo,

@@ -88,3 +88,35 @@ describe('InstallPrompt — visibility gating', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
+
+// iOS: l'app sulla Home ha cookie separati da Safari; senza sessione l'utente
+// finisce nel 409 "Aprilo dallo stesso browser", impossibile da un'icona. Il
+// banner su iPhone resta spento finché il percorso non è verificato.
+describe('InstallPrompt — iPhone', () => {
+  const IPHONE_SAFARI = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+  let ua: jest.SpyInstance;
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem(FIRST_MSG_FLAG, '1');
+    ua = jest.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(IPHONE_SAFARI);
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: (q: string) => ({ matches: false, media: q, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false, onchange: null }),
+    });
+  });
+  afterEach(() => {
+    ua.mockRestore();
+    delete process.env.NEXT_PUBLIC_IOS_INSTALL_VERIFIED;
+  });
+
+  test('non propone "Aggiungi a Home" su iPhone finché il percorso non è verificato', () => {
+    render(<InstallPrompt />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  test('con NEXT_PUBLIC_IOS_INSTALL_VERIFIED=true torna la guida iOS', () => {
+    process.env.NEXT_PUBLIC_IOS_INSTALL_VERIFIED = 'true';
+    render(<InstallPrompt />);
+    expect(screen.getByText(/Tocca Condividi/i)).toBeInTheDocument();
+  });
+});

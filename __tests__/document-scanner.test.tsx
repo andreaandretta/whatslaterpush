@@ -139,6 +139,69 @@ describe('DocumentScanner', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  // Safari non mette il focus sui bottoni toccati, e in 'loading'/'working' l'unico
+  // bottone è disattivato: il focus finiva su <body> o sulla modale DIETRO lo
+  // scanner, e Esc/Tab (gestiti solo dentro lo scanner) non funzionavano più.
+  test('Escape funziona anche col focus fuori dallo scanner (Safari dopo un tap)', async () => {
+    const { onCancel } = await openEditor();
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  test('Esc dentro lo scanner non arriva alla modale sotto (chiude solo lo scanner)', async () => {
+    const below = jest.fn();
+    window.addEventListener('keydown', below);
+    const { onCancel } = await openEditor();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    window.removeEventListener('keydown', below);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(below).not.toHaveBeenCalled();
+  });
+
+  test('Tab in caricamento (nessun bottone attivo) resta nello scanner', async () => {
+    (browser.loadPhotoCanvas as jest.Mock).mockImplementationOnce(() => new Promise(() => {}));
+    const outside = document.createElement('button');
+    outside.textContent = 'controllo della modale sotto';
+    document.body.appendChild(outside);
+    render(<DocumentScanner initialPhoto={photo()} onCancel={() => {}} onDone={() => {}} />);
+    const heading = await screen.findByRole('heading', { name: 'Scansiona documento' });
+    const ev = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    act(() => { document.activeElement!.dispatchEvent(ev); });
+    expect(ev.defaultPrevented).toBe(true);
+    expect(heading).toHaveFocus();
+    outside.remove();
+  });
+
+  test('Tab con il focus finito fuori (su body) torna dentro lo scanner', async () => {
+    await openEditor();
+    (document.activeElement as HTMLElement | null)?.blur();
+    const ev = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    act(() => { document.body.dispatchEvent(ev); });
+    expect(ev.defaultPrevented).toBe(true);
+    expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true);
+  });
+
+  // Upload del PDF fallito (rete, 5xx, sessione scaduta, file troppo grande): prima
+  // lo scanner era già smontato e le pagine perse. Ora resta sulle pagine con l'errore.
+  test('upload fallito: le pagine restano e "Fatto" riprova', async () => {
+    const onDone = jest.fn()
+      .mockResolvedValueOnce('Errore di rete')
+      .mockResolvedValueOnce(null);
+    await openEditor({ onDone });
+    await confirmCrop();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Fatto$/i })); });
+    await screen.findByRole('heading', { name: '1 pagina' });
+    expect(screen.getByRole('alert')).toHaveTextContent(/Errore di rete/);
+    expect(screen.getByRole('img', { name: 'Pagina 1' })).toBeInTheDocument();
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Fatto$/i })); });
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(2));
+    expect((onDone.mock.calls[1][0] as File).type).toBe('application/pdf');
+  });
+
   test('unmounting revokes every thumbnail URL', async () => {
     const { unmount } = render(<DocumentScanner initialPhoto={photo()} onCancel={() => {}} onDone={() => {}} />);
     await screen.findByRole('heading', { name: 'Ritaglia la pagina 1' });
