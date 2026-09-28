@@ -175,6 +175,28 @@ describe('MediaPicker', () => {
       expect(screen.queryByTestId('fake-scanner')).not.toBeInTheDocument();
     });
 
+    test('upload del PDF scansionato fallito: lo scanner resta aperto e si può riprovare', async () => {
+      let call = 0;
+      (global as any).fetch = jest.fn(() => {
+        call += 1;
+        if (call === 1) return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'upload_failed' }) });
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ media_url: '39333/u-Scansione.pdf', media_type: 'document', media_filename: 'Scansione.pdf' }) });
+      });
+      const onAttached = jest.fn();
+      const { container } = render(<MediaPicker open={true} onClose={() => {}} onAttached={onAttached} />);
+      await act(async () => { fireEvent.change(cameraInput(container), { target: { files: [new File(['j'], 'a.jpg', { type: 'image/jpeg' })] } }); });
+
+      await act(async () => { fireEvent.click(screen.getByText('fine-scansione')); });
+      await waitFor(() => expect((global as any).fetch).toHaveBeenCalledTimes(1));
+      // Le pagine vivono nello scanner: se si smontasse, la scansione sarebbe persa.
+      expect(screen.getByTestId('fake-scanner')).toBeInTheDocument();
+      expect(onAttached).not.toHaveBeenCalled();
+
+      await act(async () => { fireEvent.click(screen.getByText('fine-scansione')); });
+      await waitFor(() => expect(onAttached).toHaveBeenCalledTimes(1));
+      expect(screen.queryByTestId('fake-scanner')).not.toBeInTheDocument();
+    });
+
     test('cancelling the scanner goes back to the attach menu without uploading', async () => {
       (global as any).fetch = jest.fn();
       const { container } = render(<MediaPicker open={true} onClose={() => {}} onAttached={() => {}} />);

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Share, X } from 'lucide-react';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
+import { hideInstallOnThisDevice } from '../lib/pwa-install-policy';
 
 const DISMISSED_FLAG = 'wl_install_dismissed';
 const FIRST_MSG_FLAG = 'wl_first_msg_done';
@@ -46,6 +47,9 @@ export default function InstallPrompt() {
   // Visibility gate: only mounted, not installed, not dismissed, and we
   // need either a deferred prompt (Chrome/Android) or the iOS fallback.
   if (!mounted || installed || dismissed || !firstMsgDone) return null;
+  // iPhone/iPad: l'icona sulla Home non ha i cookie di Safari garantiti → rischio
+  // 409 "Aprilo dallo stesso browser". Spento finché non è verificato (vedi policy).
+  if (hideInstallOnThisDevice(ios)) return null;
   if (deferred === null && !ios) return null;
 
   return (

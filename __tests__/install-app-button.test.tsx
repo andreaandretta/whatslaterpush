@@ -23,11 +23,45 @@ const base = {
   install: jest.fn(async () => 'accepted' as const),
 };
 
-describe('InstallAppButton — iOS install bottom sheet', () => {
+// iOS: l'app sulla Home ha cookie separati da Safari e senza sessione finisce nel
+// 409 "Aprilo dallo stesso browser". Finché il percorso non è verificato su un
+// iPhone vero (NEXT_PUBLIC_IOS_INSTALL_VERIFIED=true) il bottone su iOS non c'è.
+describe('InstallAppButton — iOS non verificato', () => {
+  beforeEach(() => {
+    mockHook.mockReset();
+    delete process.env.NEXT_PUBLIC_IOS_INSTALL_VERIFIED;
+  });
+
+  test('su iPhone (Safari) il bottone Installa non compare', () => {
+    mockHook.mockReturnValue({ ...base, ios: true, deferred: null });
+    const { container } = render(<InstallAppButton />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  test('su iPhone con Chrome (ios=false ma UA iPhone) nemmeno', () => {
+    const ua = jest.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/126.0 Mobile/15E148 Safari/604.1',
+    );
+    mockHook.mockReturnValue({ ...base, ios: false, deferred: null });
+    const { container } = render(<InstallAppButton />);
+    expect(container).toBeEmptyDOMElement();
+    ua.mockRestore();
+  });
+
+  test('Android con prompt nativo: il bottone resta', () => {
+    mockHook.mockReturnValue({ ...base, ios: false, deferred: {} });
+    render(<InstallAppButton />);
+    expect(screen.getByRole('button', { name: /Installa/i })).toBeInTheDocument();
+  });
+});
+
+describe('InstallAppButton — iOS install bottom sheet (percorso verificato)', () => {
   beforeEach(() => {
     mockHook.mockReset();
     document.body.style.overflow = '';
+    process.env.NEXT_PUBLIC_IOS_INSTALL_VERIFIED = 'true';
   });
+  afterEach(() => { delete process.env.NEXT_PUBLIC_IOS_INSTALL_VERIFIED; });
 
   test('su iOS il bottone resta visibile anche con deferred null', () => {
     mockHook.mockReturnValue({ ...base, ios: true, deferred: null });
