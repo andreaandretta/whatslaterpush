@@ -205,7 +205,10 @@ describe('Cron integration: disconnected instances (smart-retry)', () => {
     expect(evoCalls.length).toBe(0);
   });
 
-  test('at threshold (12): defers to tomorrow AND attempts best-effort user notification', async () => {
+  // Audit 25 set 2026: l'avviso partiva da /message/sendText/<STESSA istanza
+  // scollegata> e non poteva mai arrivare. Ora niente WhatsApp al titolare
+  // (banner in dashboard + allerta Sentry per l'operatore).
+  test('at threshold (12): defers to tomorrow and sends NO notification through the dead instance', async () => {
     const msg = makePendingMsg({
       user_instances: { connection_status: 'close' },
       disconnect_retry_count: 11, // next attempt → 12 → threshold reached
@@ -225,15 +228,11 @@ describe('Cron integration: disconnected instances (smart-retry)', () => {
     const updateCalls = mockSupa.calls.filter(c => c.table === 'scheduled_messages' && c.operation === 'update');
     const disconnectUpdate = updateCalls.find(c => c.args[0]?.disconnect_retry_count !== undefined);
     expect(disconnectUpdate!.args[0].disconnect_retry_count).toBe(12);
-    // Evolution sendText WAS called (best-effort user notification with
-    // /connect link). Verify the body mentions /connect.
     const evoCalls = fetchMock.calls.filter(c => c.url.includes('/message/sendText/'));
-    expect(evoCalls.length).toBeGreaterThanOrEqual(1);
-    const notifyBody = JSON.parse(evoCalls[0].options.body as string);
-    expect(notifyBody.text).toContain('/connect');
+    expect(evoCalls.length).toBe(0);
   });
 
-  test('5 messages cross threshold in same batch → only 1 notification attempted (instance-level dedupe)', async () => {
+  test('5 messages cross threshold in same batch → no sendText at all', async () => {
     // All 5 msg belong to the SAME disconnected instance and all sit at
     // prev_count=11 (next attempt = 12 = threshold reached). Without dedupe
     // the cron would fire 5 identical sendText. With thresholdNotifiedInstances
@@ -255,11 +254,10 @@ describe('Cron integration: disconnected instances (smart-retry)', () => {
     const body = await res.json();
 
     expect(body.disconnected).toBe(5);
-    // Exactly ONE sendText call across the batch — the threshold notification.
-    // (No other sendText paths fire here because all 5 are disconnected →
-    // they never reach the actual send path.)
+    // Zero sendText: all 5 are disconnected (never reach the send path) and
+    // the threshold no longer notifies through the dead instance.
     const evoCalls = fetchMock.calls.filter(c => c.url.includes('/message/sendText/'));
-    expect(evoCalls.length).toBe(1);
+    expect(evoCalls.length).toBe(0);
   });
 });
 

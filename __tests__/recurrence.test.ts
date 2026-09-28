@@ -222,12 +222,36 @@ describe('nextOccurrence — MONTHLY', () => {
     expect(next.toISOString()).toBe('2026-07-15T18:00:00.000Z');
   });
 
-  test('skips months without day N (June has 30 days, BYMONTHDAY=31 lands on July)', () => {
+  // Audit 25 set 2026: prima i mesi senza il giorno N venivano SALTATI in
+  // silenzio ("Il 31 di ogni mese" perdeva 5 mesi l'anno, il 29-30 perdevano
+  // febbraio). Ora si ripiega sull'ultimo giorno del mese.
+  test('BYMONTHDAY=31 in a 30-day month lands on the 30th (clamp, no skipped month)', () => {
     // May/June/July 2026 are all CEST in Europe/Rome — no DST boundary
     // crossed, so this assertion is timezone-stable.
     const from = new Date('2026-05-31T18:00:00.000Z');
     const next = nextOccurrence('FREQ=MONTHLY;BYMONTHDAY=31', from)!;
-    expect(next.toISOString()).toBe('2026-07-31T18:00:00.000Z');
+    expect(next.toISOString()).toBe('2026-06-30T18:00:00.000Z');
+  });
+
+  test('BYMONTHDAY=31 chain across Oct→Nov→Dec→Jan→Feb→Mar: one reminder EVERY month', () => {
+    // 10:00 Rome. Oct 31 is CET (after the 25 Oct fall-back) = 09:00Z.
+    const out = nextOccurrences('FREQ=MONTHLY;BYMONTHDAY=31', new Date('2026-10-31T09:00:00.000Z'), 5);
+    expect(out.map((d) => d.toISOString())).toEqual([
+      '2026-11-30T09:00:00.000Z',
+      '2026-12-31T09:00:00.000Z',
+      '2027-01-31T09:00:00.000Z',
+      '2027-02-28T09:00:00.000Z',
+      '2027-03-31T08:00:00.000Z', // CEST from 28 Mar 2027
+    ]);
+  });
+
+  test('BYMONTHDAY=29/30 in February: last day of February (leap year too)', () => {
+    expect(nextOccurrence('FREQ=MONTHLY;BYMONTHDAY=30', new Date('2027-01-30T09:00:00.000Z'))!.toISOString())
+      .toBe('2027-02-28T09:00:00.000Z');
+    expect(nextOccurrence('FREQ=MONTHLY;BYMONTHDAY=30', new Date('2028-01-30T09:00:00.000Z'))!.toISOString())
+      .toBe('2028-02-29T09:00:00.000Z');
+    expect(nextOccurrence('FREQ=MONTHLY;BYMONTHDAY=29', new Date('2027-01-29T09:00:00.000Z'))!.toISOString())
+      .toBe('2027-02-28T09:00:00.000Z');
   });
 
   test('handles BYMONTHDAY=1 correctly', () => {
@@ -356,14 +380,46 @@ describe('reconcileRecurringChain — anchor (BUG #2 drift fix)', () => {
   const ANCHOR_1800 = '2026-06-10T16:00:00.000Z'; // 18:00 Rome (CEST)
 
   test('anchor overrides a midnight-drifted scheduled_at (the core fix)', () => {
-    // Latest row was mutated to ~00:15 Rome by the daily-limit branch, then sent.
-    // Without the anchor the next would be tomorrow at 00:15 (the drift). With it,
-    // the next re-anchors to 18:00 Rome (same-day evening skipped → no double).
+    // Latest row (the 15 Jun occurrence) was mutated to 02:15 Rome on 16 Jun by
+    // an operational deferral, then sent. Without the anchor the next would be at
+    // 02:15 (the drift). With it, the next re-anchors to 18:00 Rome.
+    // Audit 25 set 2026: the next is the FIRST occurrence strictly after the
+    // deferred send, i.e. 16 Jun 18:00 — the 16 Jun reminder is that day's own
+    // occurrence, not a double. Before, it seeded from the deferred DATE and
+    // silently dropped 16 Jun (next = 17 Jun).
     const r = reconcileRecurringChain({
       hasLiveRow: false, latestStatus: 'sent',
       latestScheduledAt: '2026-06-16T00:15:00.000Z', rule: DAILY, anchorAt: ANCHOR_1800,
     }, Date.parse('2026-06-16T00:20:00.000Z'));
-    expect(r).toEqual({ insert: true, scheduledAt: '2026-06-17T16:00:00.000Z' });
+    expect(r).toEqual({ insert: true, scheduledAt: '2026-06-16T16:00:00.000Z' });
+  });
+
+  test('DAILY 22:00 deferred to 08:1x next morning: that evening\'s 22:00 is NOT lost', () => {
+    // 22:00 Rome CEST = 20:00Z. Occurrence of 20 Sep deferred (quota/warm-up/
+    // disconnect) to 21 Sep 08:12 Rome (06:12Z) and sent there.
+    const r = reconcileRecurringChain({
+      hasLiveRow: false, latestStatus: 'sent',
+      latestScheduledAt: '2026-09-21T06:12:00.000Z', rule: DAILY, anchorAt: '2026-09-01T20:00:00.000Z',
+    }, Date.parse('2026-09-21T06:13:00.000Z'));
+    expect(r).toEqual({ insert: true, scheduledAt: '2026-09-21T20:00:00.000Z' });
+  });
+
+  test('MONTHLY on the 30th deferred to the 1st: next month\'s 30th is NOT lost', () => {
+    // 30 Sep 22:00 Rome deferred to 1 Oct 08:10 Rome (06:10Z). Next: 30 Oct 22:00
+    // Rome, which is CET (after the 25 Oct fall-back) → 21:00Z.
+    const r = reconcileRecurringChain({
+      hasLiveRow: false, latestStatus: 'sent',
+      latestScheduledAt: '2026-10-01T06:10:00.000Z', rule: 'FREQ=MONTHLY;BYMONTHDAY=30', anchorAt: '2026-09-30T20:00:00.000Z',
+    }, Date.parse('2026-10-01T06:11:00.000Z'));
+    expect(r).toEqual({ insert: true, scheduledAt: '2026-10-30T21:00:00.000Z' });
+  });
+
+  test('a non-deferred occurrence still yields the NEXT one (no same-instant repeat)', () => {
+    const r = reconcileRecurringChain({
+      hasLiveRow: false, latestStatus: 'sent',
+      latestScheduledAt: '2026-06-15T16:00:00.000Z', rule: DAILY, anchorAt: ANCHOR_1800,
+    }, Date.parse('2026-06-15T16:01:00.000Z'));
+    expect(r).toEqual({ insert: true, scheduledAt: '2026-06-16T16:00:00.000Z' });
   });
 
   test('a same-day drift (cooldown +30min) is fully corrected back to the anchor time', () => {

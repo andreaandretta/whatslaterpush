@@ -2,7 +2,8 @@
 // Supported:
 //   FREQ=DAILY
 //   FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA,SU  (one or more days)
-//   FREQ=MONTHLY;BYMONTHDAY=N               (1-31; months without N are skipped)
+//   FREQ=MONTHLY;BYMONTHDAY=N               (1-31; a month without day N uses its
+//                                            LAST day: "il 31" → 30 nov, 28/29 feb)
 //
 // Not supported (intentionally): COUNT, UNTIL, INTERVAL>1, BYSETPOS, etc.
 // Keep the subset narrow until users actually ask for more.
@@ -110,8 +111,7 @@ export function atAnchorTimeOfDay(dateInstant: Date, anchorInstant: Date): Date 
 
 // Returns the next occurrence strictly AFTER `from`, preserving the user's
 // Europe/Rome wall-clock time-of-day across DST (a 09:00 reminder stays 09:00,
-// CEST or CET). Returns null if rule is invalid or no next occurrence exists in a
-// sensible horizon (12 months for MONTHLY day-overflow cases).
+// CEST or CET). Returns null if the rule is invalid.
 //
 // Day/week arithmetic runs on a "floating" date (the Rome wall-clock carried in
 // UTC fields — a DST-free surface), using UTC accessors so it is independent of
@@ -143,18 +143,17 @@ export function nextOccurrence(rule: string, from: Date): Date | null {
   }
 
   if (parsed.freq === 'MONTHLY') {
+    // Clamp to the month's last day (audit 25 set 2026). Before, months without
+    // day N were SKIPPED in silence: the UI promises "Il 31 di ogni mese" and the
+    // chain jumped from 31 Oct to 31 Dec, losing 5 months a year (29/30 lost
+    // February). The target day comes from the rule, never from `from`, so a
+    // clamped 30 Nov still leads to 31 Dec.
     const targetDay = parsed.byMonthDay!;
     let y = p.y;
-    let mo = p.mo; // 1-based
-    for (let tries = 0; tries < 12; tries++) {
-      mo += 1;
-      if (mo > 12) { mo = 1; y += 1; }
-      const lastDayOfMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate(); // last day of month `mo`
-      if (targetDay <= lastDayOfMonth) {
-        return romeWallClockToUtc(y, mo, targetDay, p.h, p.mi, p.s, ms);
-      }
-    }
-    return null;
+    let mo = p.mo + 1; // 1-based
+    if (mo > 12) { mo = 1; y += 1; }
+    const lastDayOfMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate(); // last day of month `mo`
+    return romeWallClockToUtc(y, mo, Math.min(targetDay, lastDayOfMonth), p.h, p.mi, p.s, ms);
   }
 
   return null;
@@ -200,12 +199,29 @@ export function reconcileRecurringChain(chain: {
   // Only revive a chain whose latest row ended terminally as sent/failed. A
   // 'cancelled' latest means the user stopped the chain — never revive it.
   if (chain.latestStatus !== 'sent' && chain.latestStatus !== 'failed') return { insert: false };
-  // Seed from the chain cursor's DATE but the ANCHOR's time-of-day, so operational
+  // With an anchor, the time-of-day always comes from the ANCHOR, so operational
   // reschedules that pushed scheduled_at toward midnight can't ratchet the whole
   // chain to 00:15 forever (BUG #2). Without an anchor, keep the legacy seed.
   const cursor = new Date(chain.latestScheduledAt);
-  const seed = chain.anchorAt ? atAnchorTimeOfDay(cursor, new Date(chain.anchorAt)) : cursor;
-  let next = nextOccurrence(chain.rule, seed);
+  let next: Date | null;
+  if (chain.anchorAt) {
+    // Next occurrence strictly AFTER the latest row's (possibly deferred) send
+    // time (audit 25 set 2026). Seeding from the deferred row's DATE lost one
+    // occurrence: a daily 22:00 deferred to 08:1x next morning made the next one
+    // "the day after", skipping that evening's 22:00; a monthly on the 30th
+    // deferred to the 1st lost the next month. The occurrence date is not stored
+    // (no column yet), so start ~1.5 days before the cursor, at the anchor's
+    // time-of-day, and walk forward past the cursor. For an on-time row this
+    // gives exactly the legacy "next" (the cursor itself is never re-emitted).
+    const anchor = new Date(chain.anchorAt);
+    next = nextOccurrence(chain.rule, atAnchorTimeOfDay(new Date(cursor.getTime() - 36 * 60 * 60 * 1000), anchor));
+    for (let guard = 0; next && next.getTime() <= cursor.getTime(); guard++) {
+      if (guard >= 40) return { insert: false };
+      next = nextOccurrence(chain.rule, next);
+    }
+  } else {
+    next = nextOccurrence(chain.rule, cursor);
+  }
   if (!next) return { insert: false };
   // Fast-forward clamp: a chain that stalled (quota starvation, long
   // disconnect, post-beta backlog) must SKIP its missed occurrences, not

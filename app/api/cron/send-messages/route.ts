@@ -1,18 +1,19 @@
 import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
-import { normalizeItalianPhone } from '../../../lib/phone';
-import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, isNotOnWhatsAppError } from '../../../lib/cron-utils';
+import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, isNotOnWhatsAppError, countBreakerFailures, BREAKER_THRESHOLD, sendTimeoutMs, cooldownReleaseAt, COOLDOWN_MAX_PER_RECIPIENT, disconnectRetryStep, DISCONNECT_RETRY_THRESHOLD, isLateDisconnectBacklog, planBacklogSpread } from '../../../lib/cron-utils';
 import { isBillingEnabled, getEffectivePlan } from '../../../lib/billing';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
 import { reconcileRecurringChain } from '../../../lib/recurrence';
-import { effectiveDailyLimit, nextRomeMorning, newRecipientsPerDay, romeDayStart } from '../../../lib/anti-ban';
+import { effectiveDailyLimit, nextRomeMorning, newRecipientsPerDay, romeDayStart, applyCourtesyWindow, isWithinCourtesyWindow } from '../../../lib/anti-ban';
 import { isKnownRecipient, countNewRecipientsSentToday } from '../../../lib/first-contact';
 import { getSuppression, suppressionsEnabled, suppressionReasonText } from '../../../lib/suppressions';
 import { computeTypingDelay, sendTypingPresence } from '../../../lib/typing-presence';
 import { applyTemplateVariables } from '../../../lib/template-variables';
 import { logAuditEvent, hashContactRef } from '../../../lib/audit';
+import { mapErrorReason } from '../../../lib/message-error';
+import { fetchEvolutionState, type LiveConnectionStatus } from '../../../lib/connection-state';
 
 export const dynamic = 'force-dynamic';
 // Niente Next Data Cache su NESSUNA fetch di questo cron: il POST costante
@@ -21,10 +22,29 @@ export const dynamic = 'force-dynamic';
 // una volta per deployment e mai più. force-dynamic NON basta: copre la Full
 // Route Cache, non la Data Cache delle fetch.
 export const fetchCache = 'force-no-store';
+// Un allegato fino a 16 MB può chiedere fino a 40 s a Evolution (scarica da
+// Supabase, cifra, carica sui server media di WhatsApp, inoltra: vedi
+// sendTimeoutMs). Senza maxDuration la lambda poteva morire prima del timeout
+// e la riga finiva 'send_indeterminate' senza prova. 60 s = 40 s d'invio +
+// jitter + margine; la guardia TIMEOUT_MS sotto resta sugli 8 s per NON
+// iniziare nuovi batch tardi.
+export const maxDuration = 60;
 
 async function checkFailures(supabase: ReturnType<typeof createClient>, userPhone: string) {
-  const { count } = await supabase.from('scheduled_messages').select('id', { count: 'exact', head: true }).eq('instance_phone', userPhone).eq('status', 'failed').gte('created_at', new Date(Date.now() - 86400000).toISOString());
-  if ((count || 0) >= 5) {
+  // Audit 25 set 2026: prima contava OGNI riga 'failed' CREATA nelle ultime
+  // 24h. Cinque numeri inesistenti (exists:false) bloccavano tutti i promemoria
+  // dell'utente, anche ai clienti validi, e la mattina dopo le stesse righe
+  // erano ancora "nelle 24h" della creazione. Ora: finestra sul momento del
+  // FALLIMENTO (updated_at), errori permanenti del destinatario esclusi,
+  // conteggio per destinatario distinto (vedi countBreakerFailures).
+  const { data: failedRows } = await supabase.from('scheduled_messages')
+    .select('recipient_number, error_message')
+    .eq('instance_phone', userPhone)
+    .eq('status', 'failed')
+    .gte('updated_at', new Date(Date.now() - 86400000).toISOString())
+    .limit(200);
+  const count = countBreakerFailures((failedRows || []) as Array<{ recipient_number: string | null; error_message: string | null }>);
+  if (count >= BREAKER_THRESHOLD) {
     await markBlocked(supabase, 'user:' + userPhone, count + ' failed in 24h');
     // Sentry alert: user has crossed the failure-rate circuit breaker.
     // Tag with hashed phone so the same user dedups across events; raw
@@ -37,28 +57,6 @@ async function checkFailures(supabase: ReturnType<typeof createClient>, userPhon
     return true;
   }
   return false;
-}
-
-async function sendEvolutionText(instanceName: string, toPhone: string, text: string) {
-  const evoUrl = process.env.EVOLUTION_API_URL;
-  const evoKey = process.env.EVOLUTION_API_KEY;
-  const normalizedTo = normalizeItalianPhone(toPhone);
-  console.log('CRON: sendText inst=' + instanceName + ' to=' + normalizedTo + ' (raw=' + toPhone + ')');
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  try {
-    const res = await fetch(evoUrl + '/message/sendText/' + instanceName, {
-      method: 'POST',
-      headers: { 'apikey': evoKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ number: normalizedTo, text }),
-      signal: controller.signal,
-    });
-    const body = await res.text();
-    console.log('CRON: Evolution status=' + res.status + ' body=' + body.substring(0, 400));
-    return { ok: res.ok, status: res.status, body };
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 export async function GET(req: NextRequest) {
@@ -157,7 +155,7 @@ export async function GET(req: NextRequest) {
         if (!downgraded || downgraded.length === 0) continue;
         try {
           // 3s timeout: this fetch runs sequentially per downgraded user and,
-          // unlike sendEvolutionText, used to have NO abort — one slow
+          // unlike the per-message sends, used to have NO abort — one slow
           // Evolution response per user was enough to eat the whole lambda
           // budget during a backlog (runbook §2).
           const notifyCtrl = new AbortController();
@@ -293,7 +291,21 @@ export async function GET(req: NextRequest) {
     // starve others. The remaining rows are picked up on the next tick(s).
     const MAX_PER_USER_PER_TICK = 8;
     const perUserCount: Record<string, number> = {};
-    const pendingMessages = (pendingPool || []).filter((m: any) => {
+    // Backlog alla riconnessione (audit 25 set 2026): le righe trattenute per
+    // disconnessione diventano tutte dovute nello stesso tick appena l'istanza
+    // torna 'open' → fino a 5 invii paralleli in ~3 s da un device appena
+    // ricollegato. Per utente ne parte una, le altre slittano di +90 s l'una
+    // (planBacklogSpread). Il guard .eq('status','pending') non scavalca mai
+    // una riga già presa da un trigger concorrente.
+    const spread = planBacklogSpread((pendingPool || []) as any[], Date.now());
+    if (spread.defer.length) {
+      await Promise.all(spread.defer.map((d) => supabase.from('scheduled_messages')
+        .update({ scheduled_at: d.scheduledAt, error_message: 'WhatsApp ricollegato: invii arretrati distanziati per non partire tutti insieme' })
+        .eq('id', d.id)
+        .eq('status', 'pending')));
+      console.log('CRON: reconnect backlog spread — deferred ' + spread.defer.length + ' rows by +90s steps');
+    }
+    const pendingMessages = spread.keep.filter((m: any) => {
       const key = m.instance_phone || m.user_instances?.phone_number || 'unknown';
       perUserCount[key] = (perUserCount[key] || 0) + 1;
       return perUserCount[key] <= MAX_PER_USER_PER_TICK;
@@ -304,11 +316,17 @@ export async function GET(req: NextRequest) {
 
     // Track which disconnected instances we've already logged
     const disconnectedInstances = new Set<string>();
-    // Track which instances we've already attempted the threshold-crossing
-    // user notification for in THIS cron run. Without this, a batch of 5 msg
-    // from the same disconnected user all crossing the 12-retry threshold
-    // would fire 5 identical sendText (all failing because instance is down).
+    // Dedup the threshold-crossing Sentry alert to once per instance per run
+    // (a batch of 5 cross-threshold msg from the same user = 1 alert).
     const thresholdNotifiedInstances = new Set<string>();
+    // Stato vero da Evolution, letto al massimo UNA volta per istanza per tick
+    // e solo quando un invio fallisce con un errore da disconnessione.
+    const liveStateCache = new Map<string, Promise<LiveConnectionStatus | null>>();
+    const liveStateOf = (name: string) => {
+      let p = liveStateCache.get(name);
+      if (!p) { p = fetchEvolutionState(name); liveStateCache.set(name, p); }
+      return p;
+    };
     // Dedup the "invii sospesi" owner notification to once per cron run, per
     // instance — same reason as thresholdNotifiedInstances above.
     const blockedNotifiedInstances = new Set<string>();
@@ -364,40 +382,41 @@ export async function GET(req: NextRequest) {
         const ownerPhone = msg.user_instances.phone_number;
 
         if (decision === 'disconnected') {
-          // Smart-retry staircase: 12 attempts × 5min = ≈1h retry window.
-          // After 12 retries we defer to next day AND notify the user (best-
-          // effort, the notification itself uses the same disconnected
-          // instance and may fail silently — that's accepted).
-          const RETRY_THRESHOLD = 12;
-          const RETRY_MINUTES = 5;
+          // Smart-retry staircase: 12 attempts × 5min = ≈1h retry window, then
+          // tomorrow. The ladder restarts every 12 steps (disconnectRetryStep):
+          // before, a row left at count=12 by a long outage was deferred ANOTHER
+          // full day by a few seconds of 'connecting' the next day.
+          //
+          // Niente più avviso WhatsApp al titolare qui (audit 25 set 2026):
+          // partiva da /message/sendText/<STESSA istanza>, che è proprio quella
+          // scollegata/sloggata → non poteva MAI arrivare (…1526 scollegato 17
+          // giorni senza che nessuno lo sapesse). L'avviso vive nel banner della
+          // dashboard; qui resta l'allerta Sentry per l'operatore.
+          const RETRY_THRESHOLD = DISCONNECT_RETRY_THRESHOLD;
           const prevCount = (msg as any).disconnect_retry_count ?? 0;
-          const newCount = prevCount + 1;
+          const step = disconnectRetryStep(prevCount, msg.user_instances.connection_status);
+          const newCount = step.newCount;
           if (!disconnectedInstances.has(instanceName)) {
             disconnectedInstances.add(instanceName);
-            console.log('CRON: Instance ' + instanceName + ' is ' + (msg.user_instances.connection_status || 'unknown') + ', smart-retry count=' + newCount + '/' + RETRY_THRESHOLD);
+            console.log('CRON: Instance ' + instanceName + ' is ' + (msg.user_instances.connection_status || 'unknown') + ', smart-retry count=' + newCount + ' (tomorrow every ' + RETRY_THRESHOLD + ')');
           }
 
           let newScheduledAt: string;
           let errorMessage: string;
-          if (newCount < RETRY_THRESHOLD) {
-            newScheduledAt = rescheduleSoon(msg.scheduled_at, RETRY_MINUTES);
-            errorMessage = `Istanza disconnessa, retry ${newCount}/${RETRY_THRESHOLD} fra ${RETRY_MINUTES} min`;
+          if (step.retryInMinutes !== null) {
+            newScheduledAt = rescheduleSoon(msg.scheduled_at, step.retryInMinutes);
+            errorMessage = `Istanza disconnessa, retry ${((newCount - 1) % RETRY_THRESHOLD) + 1}/${RETRY_THRESHOLD} fra ${step.retryInMinutes} min`;
           } else {
-            newScheduledAt = rescheduleTomorrow(msg.scheduled_at);
-            errorMessage = `Istanza disconnessa per ${RETRY_THRESHOLD}× ${RETRY_MINUTES}min, riprogrammato a domani`;
-            // Best-effort user notification with /connect link, deduped at
-            // instance level so a batch of 5 cross-threshold msg doesn't
-            // fire 5 identical sendText (all likely to fail because the
-            // instance is still down). The notification fetch itself uses
-            // the same disconnected instance so it may fail silently —
-            // that's accepted, the deferred message will surface next time
-            // the user opens the dashboard.
+            // "Domani" è un orario calcolato dal sistema → fascia di cortesia
+            // (un promemoria delle 20:30 in scaletta fino alle 21:30 non riparte
+            // domani alle 21:30).
+            newScheduledAt = applyCourtesyWindow(new Date(rescheduleTomorrow(msg.scheduled_at)), new Date()).toISOString();
+            errorMessage = `Istanza disconnessa per ${RETRY_THRESHOLD}× 5min, riprogrammato a domani`;
             if (!thresholdNotifiedInstances.has(instanceName)) {
               thresholdNotifiedInstances.add(instanceName);
               // Sentry alert: instance has been disconnected for the full
-              // smart-retry window (12 × 5min). Deduped via the same Set
-              // that gates the user notification so we don't spam Sentry
-              // when a batch of 5 cross-threshold messages share an instance.
+              // smart-retry window (12 × 5min). Deduped per instance per run so
+              // a batch of 5 cross-threshold messages doesn't spam Sentry.
               Sentry.captureMessage('instance_disconnect_threshold', {
                 level: 'error',
                 tags: { user_hash: await hashContactRef(ownerPhone) },
@@ -407,18 +426,6 @@ export async function GET(req: NextRequest) {
                   connection_status: msg.user_instances.connection_status || 'unknown',
                 },
               });
-              try {
-                await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
-                  method: 'POST',
-                  headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    number: ownerPhone,
-                    text: `⚠️ WhatsApp non risponde da più di 1 ora. Ho posticipato i messaggi a domani. Riconnetti su https://${process.env.NEXT_PUBLIC_APP_URL?.replace(/^https?:\/\//, '') || 'whatslaterpush.vercel.app'}/connect`,
-                  }),
-                });
-              } catch (e) {
-                console.warn('CRON: Threshold notification failed for ' + instanceName + ' (instance still down? expected)');
-              }
             }
           }
 
@@ -447,6 +454,19 @@ export async function GET(req: NextRequest) {
         }
 
         // decision === 'send' — proceed with tier limits, cool-down, rate limiting
+
+        // Backlog di una disconnessione, già in ritardo di ≥30 min (o rinviato
+        // a domani): l'orario non è più quello scelto dall'utente ma uno del
+        // sistema, quindi vale la fascia 08-21 come per quota e corsia lenta.
+        // Senza, un re-pair alle 00:18 faceva partire i promemoria a mezzanotte.
+        // Sotto i 30 min l'orario dell'utente resta (isLateDisconnectBacklog).
+        if (isLateDisconnectBacklog((msg as any).disconnect_retry_count) && !isWithinCourtesyWindow(new Date())) {
+          await supabase.from('scheduled_messages').update({
+            scheduled_at: applyJitter(nextRomeMorning(new Date()).toISOString(), 30 * 60_000),
+            error_message: 'WhatsApp ricollegato fuori orario — il promemoria in ritardo parte domattina',
+          }).eq('id', msg.id).eq('status', 'pending');
+          return 'rate_limited' as const;
+        }
 
         // Tier daily limit check — on the EFFECTIVE plan: quota, MAX cap and
         // upsell all follow it (beta: 50/day). With billing on this is the raw
@@ -478,27 +498,38 @@ export async function GET(req: NextRequest) {
         }
 
         // Cool-down: max 3 messages to same recipient in 24h
-        const { count: recentToRecipient } = await supabase
+        const { data: recentSentRows } = await supabase
           .from('scheduled_messages')
-          .select('id', { count: 'exact', head: true })
+          .select('sent_at')
           .eq('instance_phone', ownerPhone)
           .eq('recipient_number', msg.recipient_number)
           .eq('status', 'sent')
-          .gte('sent_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+          .gte('sent_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+          .limit(50);
 
         const recipKey = ownerPhone + '|' + msg.recipient_number;
         const alreadyInRun = inRunSendsToRecipient[recipKey] || 0;
-        if ((recentToRecipient || 0) + alreadyInRun >= 3) {
-          console.log('CRON: COOLDOWN — 3 msgs already sent to ' + msg.recipient_number + ' in 24h (db=' + (recentToRecipient || 0) + ' inRun=' + alreadyInRun + ')');
-          // Smart-retry: a 30-minute deferral lets the natural recipient
-          // gap re-open without punishing the message with a full-day shift.
-          // The cool-down query above re-evaluates each cron cycle, so if
-          // an older "sent" rolls out of the 24h window the next attempt
-          // succeeds without further retries.
-          const soonIso = rescheduleSoon(msg.scheduled_at, 30);
+        const sentTimes = ((recentSentRows || []) as Array<{ sent_at: string | null }>)
+          .map((r) => new Date(r.sent_at || ''))
+          .filter((d) => !isNaN(d.getTime()));
+        // Gli invii di questo stesso giro contano come "adesso".
+        for (let k = 0; k < alreadyInRun; k++) sentTimes.push(new Date());
+        const releaseAt = cooldownReleaseAt(sentTimes, COOLDOWN_MAX_PER_RECIPIENT);
+        if (releaseAt) {
+          console.log('CRON: COOLDOWN — ' + sentTimes.length + ' msgs to ' + msg.recipient_number + ' in 24h (inRun=' + alreadyInRun + ')');
+          // Audit 25 set 2026: prima +30 min ripetuti fino al giorno dopo, col
+          // motivo "+30 min" falso. Ora l'istante vero in cui la finestra
+          // mobile si libera, una volta sola; è un orario calcolato dal
+          // sistema, quindi passa per la fascia di cortesia 08-21.
+          // Fuori fascia → le 08:00 successive (mai PRIMA di releaseAt: le 20:00
+          // di applyCourtesyWindow ricadrebbero ancora dentro il cool-down).
+          const at = isWithinCourtesyWindow(releaseAt) ? releaseAt : nextRomeMorning(releaseAt);
+          const romeLabel = new Intl.DateTimeFormat('it-IT', {
+            timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+          }).format(at);
           await supabase.from('scheduled_messages').update({
-            scheduled_at: soonIso,
-            error_message: 'Cool-down: max 3 messaggi allo stesso contatto in 24h. Riprogrammato +30 min.'
+            scheduled_at: at.toISOString(),
+            error_message: 'Massimo ' + COOLDOWN_MAX_PER_RECIPIENT + ' messaggi in 24 ore alla stessa persona: parte ' + romeLabel,
           }).eq('id', msg.id);
           return 'rate_limited' as const;
         }
@@ -623,11 +654,15 @@ export async function GET(req: NextRequest) {
         // lambda budget on Vercel Hobby (5 parallel × max 2.5s = 2.5s wall).
         await new Promise(r => setTimeout(r, 800 + Math.random() * 1700));
 
+        const hasMedia = !!(msg.media_url && msg.media_type);
+
         // Typing simulation: show "is typing…" indicator on the recipient's
         // device proportional to message length (max 4s). Recipients see a
         // human-shaped activity pattern. Failure of /chat/sendPresence is
-        // graceful — we log and still send the real message.
-        const typingMs = computeTypingDelay((msg.parsed_message || '').length);
+        // graceful — we log and still send the real message. Skipped for media
+        // sends: "sta scrivendo…" before a file is not a human pattern, and
+        // those 4 s belong to the (much longer) media send budget.
+        const typingMs = hasMedia ? 0 : computeTypingDelay((msg.parsed_message || '').length);
         if (typingMs > 0) {
           await sendTypingPresence({
             evoUrl: process.env.EVOLUTION_API_URL!,
@@ -641,10 +676,12 @@ export async function GET(req: NextRequest) {
 
         // If media is attached, sign the storage path and route through
         // Evolution's /message/sendMedia endpoint instead of /sendText.
-        // The signed URL is valid 1h — well above the cron's 8s budget,
-        // so Evolution can fetch it during the send call.
+        // The signed URL is valid 1h — well above the send timeout, so
+        // Evolution can fetch it during the send call.
         let signedMediaUrl: string | null = null;
-        if (msg.media_url && msg.media_type) {
+        let mediaSize: number | null = null;
+        let mediaMime: string | null = null;
+        if (hasMedia) {
           const { data: signed } = await supabase.storage
             .from('message-media')
             .createSignedUrl(msg.media_url, 3600);
@@ -652,6 +689,20 @@ export async function GET(req: NextRequest) {
           if (!signedMediaUrl) {
             throw new Error('Failed to sign media URL for ' + msg.media_url);
           }
+          // Dimensione e mimetype dai metadati dell'oggetto (best-effort): la
+          // dimensione regola il timeout (sendTimeoutMs), il mimetype esplicito
+          // evita che Evolution lo indovini dal nome file o riscaricando l'URL.
+          try {
+            const path = String(msg.media_url);
+            const slash = path.lastIndexOf('/');
+            const { data: objs } = await supabase.storage
+              .from('message-media')
+              .list(slash >= 0 ? path.slice(0, slash) : '', { search: path.slice(slash + 1), limit: 1 });
+            const obj = (objs || []).find((o: any) => o?.name === path.slice(slash + 1)) as any;
+            const size = Number(obj?.metadata?.size);
+            if (Number.isFinite(size) && size > 0) mediaSize = size;
+            if (typeof obj?.metadata?.mimetype === 'string' && obj.metadata.mimetype) mediaMime = obj.metadata.mimetype;
+          } catch {}
         }
 
         const sendKind = signedMediaUrl ? 'media' : 'text';
@@ -684,7 +735,8 @@ export async function GET(req: NextRequest) {
         }
 
         const sendCtrl = new AbortController();
-        const sendTimeout = setTimeout(() => sendCtrl.abort(), 8000);
+        const sendTimeoutUsedMs = sendTimeoutMs(signedMediaUrl ? 'media' : 'text', mediaSize);
+        const sendTimeout = setTimeout(() => sendCtrl.abort(), sendTimeoutUsedMs);
         let res;
         try {
           if (signedMediaUrl) {
@@ -696,6 +748,7 @@ export async function GET(req: NextRequest) {
                 body: JSON.stringify({
                   number: msg.recipient_number,
                   mediatype: msg.media_type,
+                  ...(mediaMime ? { mimetype: mediaMime } : {}),
                   media: signedMediaUrl,
                   caption: outboundCaption || undefined,
                   fileName: msg.media_filename || undefined,
@@ -714,6 +767,11 @@ export async function GET(req: NextRequest) {
               }
             );
           }
+        } catch (sendErr) {
+          // Il gestore degli errori sta fuori dalla closure: gli si porta il
+          // timeout effettivo per scriverlo onesto nel motivo.
+          if (sendErr && typeof sendErr === 'object') (sendErr as any).timeoutMs = sendTimeoutUsedMs;
+          throw sendErr;
         } finally {
           clearTimeout(sendTimeout);
         }
@@ -848,10 +906,15 @@ export async function GET(req: NextRequest) {
           // and do NOT refund the quota slot — the message likely went out.
           const isTimeout = (err as any)?.name === 'AbortError' || (err as any)?.name === 'TimeoutError';
           if (isTimeout) {
+            // Il marcatore 'send_timeout_indeterminate' in testa a error_message
+            // è il contratto con la dashboard ("Da verificare"): non cambiarlo.
+            // Stato 'sent' finché non esiste uno stato dedicato (serve migration).
+            const usedMs = Number((err as any)?.timeoutMs);
+            const timeoutS = Math.round((Number.isFinite(usedMs) && usedMs > 0 ? usedMs : sendTimeoutMs('text')) / 1000);
             await supabase.from('scheduled_messages').update({
               status: 'sent',
               sent_at: new Date().toISOString(),
-              error_message: 'send_timeout_indeterminate: nessuna conferma da Evolution entro 8s, marcato inviato per evitare duplicati (verifica ✓✓ su WhatsApp se critico)',
+              error_message: 'send_timeout_indeterminate: nessuna conferma da Evolution entro ' + timeoutS + ' s, marcato inviato per evitare duplicati (verifica ✓✓ su WhatsApp se critico)',
             }).eq('id', msg.id);
             continue; // skip refund + requeue
           }
@@ -865,6 +928,33 @@ export async function GET(req: NextRequest) {
           // cannot help, so the row goes straight to 'failed' instead of burning
           // two more attempts 5 and 10 minutes later.
           const notOnWhatsApp = isNotOnWhatsAppError(err?.message);
+          const disconnectedKind = !notOnWhatsApp && mapErrorReason(err?.message).kind === 'disconnected';
+          // Errore "da disconnessione" (Connection Closed, logged out, 401…)
+          // con il DB che diceva 'open' (audit 25 set 2026): prima bruciava 3
+          // retry generici in ~15 min e finiva 'failed', perché lo stato lo
+          // scrive solo il webhook e un CONNECTION_UPDATE perso non ha repliche.
+          // Si chiede a Evolution lo stato vero (una GET, una volta per istanza
+          // per tick): se non è 'open' si riallinea il DB e la riga entra nella
+          // scaletta della disconnessione senza consumare retry_count.
+          if (disconnectedKind && instanceName) {
+            const live = await liveStateOf(instanceName);
+            if (live && live !== 'open') {
+              await supabase.from('user_instances').update({ connection_status: live }).eq('instance_name', instanceName);
+              const step = disconnectRetryStep((msg as any).disconnect_retry_count ?? 0, live);
+              await supabase.from('scheduled_messages').update({
+                status: 'pending',
+                send_attempted_at: null,
+                scheduled_at: step.retryInMinutes !== null
+                  ? rescheduleSoon(msg.scheduled_at, step.retryInMinutes)
+                  : applyCourtesyWindow(new Date(rescheduleTomorrow(msg.scheduled_at)), new Date()).toISOString(),
+                disconnect_retry_count: step.newCount,
+                error_message: 'Istanza disconnessa (rilevato all\'invio: ' + live + '), nuovo tentativo ' + (step.retryInMinutes !== null ? 'fra ' + step.retryInMinutes + ' min' : 'domani'),
+              }).eq('id', msg.id);
+              console.log('CRON: send failed on ' + instanceName + ' — Evolution says ' + live + ', DB realigned, row back to the disconnect ladder');
+              disconnected++;
+              continue;
+            }
+          }
           const newRetry = notOnWhatsApp ? Math.max(3, (msg.retry_count || 0) + 1) : (msg.retry_count || 0) + 1;
           // Requeue/terminal: clear send_attempted_at on the way back to 'pending'
           // (and harmlessly on 'failed') so a retried row starts its next attempt
@@ -876,13 +966,18 @@ export async function GET(req: NextRequest) {
             now: Date.now(),
           })).eq('id', msg.id);
           if (newRetry >= 3) {
-            try {
-              await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
-                method: 'POST',
-                headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ number: ownerPhone, text: '\u274c Impossibile inviare a ' + (msg.recipient_name || msg.recipient_number) + (notOnWhatsApp ? ': il numero salvato non è su WhatsApp.' : ' dopo 3 tentativi.') })
-              });
-            } catch (e) {}
+            // Un avviso che parte dalla stessa istanza che ha appena fallito per
+            // disconnessione non può arrivare: si salta (la card "Non inviato"
+            // in dashboard dice già "WhatsApp disconnesso — ricollega").
+            if (!disconnectedKind) {
+              try {
+                await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
+                  method: 'POST',
+                  headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ number: ownerPhone, text: '\u274c Impossibile inviare a ' + (msg.recipient_name || msg.recipient_number) + (notOnWhatsApp ? ': il numero salvato non è su WhatsApp.' : ' dopo 3 tentativi.') })
+                });
+              } catch (e) {}
+            }
             failed++;
             await logAuditEvent({
               userPhone: ownerPhone,
