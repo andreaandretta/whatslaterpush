@@ -3,6 +3,7 @@ import { fetchDropletMetrics, fetchDropletHistory24h } from '../../../lib/drople
 import { stampHeartbeat } from '../../../lib/heartbeat';
 import { getSupabaseAdmin, getSupabaseAdminOrNull } from '../../../lib/supabase-admin';
 import { refreshWebhooksForOpenInstances } from '../../../lib/webhook-config';
+import { reconcileInstanceStates } from '../../../lib/connection-state';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
@@ -259,6 +260,19 @@ export async function GET(req: NextRequest) {
     // Housekeeping: prune audit_events older than retention window.
     // Auto-riparazione webhook (7 set 2026): riallinea gli eventi sottoscritti
     // (MESSAGES_UPDATE incluso) su tutte le istanze aperte, una volta al giorno.
+    // Riconciliazione dello stato (audit 25 set 2026): connection_status lo
+    // scrive solo il webhook, e un CONNECTION_UPDATE perso lascia il DB
+    // sbagliato. Una GET di stato per istanza, una volta al giorno, PRIMA
+    // dell'auto-riparazione webhook: un'istanza rimasta 'close' per errore ma
+    // in realtà aperta rientra così anche nel filtro 'open' qui sotto.
+    let connectionReconciled: { checked: number; fixed: number; unknown: number; skipped: boolean } = { checked: 0, fixed: 0, unknown: 0, skipped: true };
+    try {
+      const admin = getSupabaseAdminOrNull();
+      if (admin) connectionReconciled = await reconcileInstanceStates(admin);
+    } catch (e) {
+      console.error('[daily-report] connection reconcile failed:', (e as any)?.message || e);
+    }
+
     let webhooksRefreshed: { ok: number; failed: number; skipped: boolean } = { ok: 0, failed: 0, skipped: true };
     try {
       const admin = getSupabaseAdminOrNull();
@@ -269,7 +283,7 @@ export async function GET(req: NextRequest) {
 
     const pruned = await pruneOldAuditEvents();
 
-    return NextResponse.json({ status: 'ok', report, audit_pruned: pruned, webhooks_refreshed: webhooksRefreshed });
+    return NextResponse.json({ status: 'ok', report, audit_pruned: pruned, webhooks_refreshed: webhooksRefreshed, connection_reconciled: connectionReconciled });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'Report failed' }, { status: 500 });
   }

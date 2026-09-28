@@ -2,6 +2,8 @@
  * Pure utility functions extracted from cron/send-messages for testability.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isNotOnWhatsAppError as notOnWhatsApp } from './message-error';
+import { SPREAD_STEP_MS } from './anti-ban';
 
 export interface UserInstance {
   id: string;
@@ -210,4 +212,122 @@ export async function claimSendAttempt(supabase: SupabaseClient, msgId: string):
     .is('send_attempted_at', null)
     .select('id');
   return Array.isArray(data) && data.length > 0;
+}
+
+// ── Giro "errori reali" (audit 25 set 2026) ──────────────────────────────────
+
+/** Soglia del circuit breaker per utente (destinatari distinti falliti in 24h). */
+export const BREAKER_THRESHOLD = 5;
+
+/**
+ * Quanti guasti "veri" pesano sul circuit breaker dell'utente.
+ *
+ * Prima contava OGNI riga 'failed' delle ultime 24h: cinque numeri sbagliati
+ * (un fisso d'ufficio, un genitore che ha cambiato SIM) congelavano TUTTI i
+ * promemoria dell'utente, anche quelli ai clienti validi, e ogni "Riprova"
+ * dello stesso numero aggiungeva un'altra riga. Un exists:false dice qualcosa
+ * sul DESTINATARIO, non sulla salute del numero che invia: resta fuori. Il
+ * resto si conta per destinatario distinto.
+ */
+export function countBreakerFailures(rows: Array<{ recipient_number?: string | null; error_message?: string | null }>): number {
+  const recipients = new Set<string>();
+  for (const r of rows || []) {
+    if (notOnWhatsApp(r?.error_message)) continue;
+    recipients.add(String(r?.recipient_number || ''));
+  }
+  return recipients.size;
+}
+
+export const TEXT_SEND_TIMEOUT_MS = 8000;
+export const MEDIA_SEND_TIMEOUT_CAP_MS = 40_000;
+const MEDIA_MS_PER_MB = 2000;
+
+/**
+ * Timeout dell'invio a Evolution. Per un allegato Evolution deve scaricare il
+ * file da Supabase, cifrarlo, caricarlo sui server media di WhatsApp e poi
+ * inoltrare il messaggio: con gli 8 s del testo un PDF da 10-16 MB andava in
+ * abort e la riga finiva 'sent' senza prova. 8 s + 2 s per MB, tetto 40 s
+ * (la route esporta maxDuration=60). Dimensione ignota → il tetto.
+ */
+export function sendTimeoutMs(kind: 'text' | 'media', sizeBytes?: number | null): number {
+  if (kind === 'text') return TEXT_SEND_TIMEOUT_MS;
+  if (typeof sizeBytes !== 'number' || !Number.isFinite(sizeBytes) || sizeBytes <= 0) return MEDIA_SEND_TIMEOUT_CAP_MS;
+  const mb = Math.ceil(sizeBytes / (1024 * 1024));
+  return Math.min(MEDIA_SEND_TIMEOUT_CAP_MS, TEXT_SEND_TIMEOUT_MS + mb * MEDIA_MS_PER_MB);
+}
+
+export const COOLDOWN_MAX_PER_RECIPIENT = 3;
+const COOLDOWN_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Cool-down "max 3 messaggi in 24h alla stessa persona": l'istante in cui il
+ * prossimo può davvero partire, cioè quando nella finestra mobile ne restano
+ * max-1. Prima si spostava +30 min e si riprovava ogni mezz'ora fino al giorno
+ * dopo, con un motivo ("+30 min") falso. null = nessun blocco.
+ */
+export function cooldownReleaseAt(sentTimes: Date[], max: number = COOLDOWN_MAX_PER_RECIPIENT): Date | null {
+  const sorted = (sentTimes || []).map((d) => d.getTime()).filter((t) => Number.isFinite(t)).sort((a, b) => a - b);
+  if (sorted.length < max) return null;
+  return new Date(sorted[sorted.length - max] + COOLDOWN_WINDOW_MS);
+}
+
+export const DISCONNECT_RETRY_THRESHOLD = 12;
+
+/**
+ * Scaletta della disconnessione: 12 giri (circa 1 h), poi domani. Il contatore
+ * è CUMULATIVO (è anche il segnale "questa riga è arretrata"), ma la soglia
+ * scatta ogni 12 giri e non "da 12 in su": prima, dopo un blackout lungo la
+ * riga restava a 12 e il giorno dopo bastava un 'connecting' di pochi secondi
+ * per rinviarla di un altro giorno intero, senza nessuna tolleranza.
+ * 'connecting' è quasi sempre un riaggancio di Baileys: i primi 3 giri di
+ * ogni scaletta ricontrollano dopo 1 minuto invece di 5.
+ */
+export function disconnectRetryStep(prevCount: number, connectionStatus: string | null | undefined): { newCount: number; retryInMinutes: number | null } {
+  const prev = Number.isFinite(prevCount) && prevCount > 0 ? Math.floor(prevCount) : 0;
+  const newCount = prev + 1;
+  const pos = newCount % DISCONNECT_RETRY_THRESHOLD;
+  if (pos === 0) return { newCount, retryInMinutes: null };
+  const minutes = connectionStatus === 'connecting' && pos <= 3 ? 1 : 5;
+  return { newCount, retryInMinutes: minutes };
+}
+
+/**
+ * Riga trattenuta per disconnessione da almeno ~30 min (6 giri da 5 min) o già
+ * rinviata a domani: il suo orario non è più quello scelto a mano dall'utente
+ * ma uno calcolato dal sistema, quindi vale la fascia di cortesia 08-21.
+ * Sotto i 30 min resta l'orario dell'utente (un glitch alle 22:00 non sposta
+ * il promemoria alle 08:00 del giorno dopo).
+ */
+export const LATE_BACKLOG_MIN_RETRIES = 6;
+export function isLateDisconnectBacklog(disconnectRetryCount: number | null | undefined): boolean {
+  return (disconnectRetryCount || 0) >= LATE_BACKLOG_MIN_RETRIES;
+}
+
+/**
+ * Alla riconnessione tutto ciò che era in scaletta diventa dovuto nello stesso
+ * tick: fino a 5 invii in parallelo in ~3 s da un device appena ricollegato,
+ * il pattern "burst da istanza fresca" che anti-ban.ts vuole evitare. Per ogni
+ * utente la prima riga arretrata (disconnect_retry_count > 0) parte, le altre
+ * slittano di +90 s l'una (stesso passo di spreadCoTimed). Solo istanze già
+ * 'open': una riga ancora disconnessa deve fare la sua scaletta.
+ */
+export function planBacklogSpread<T extends {
+  id: string;
+  instance_phone?: string | null;
+  disconnect_retry_count?: number | null;
+  user_instances?: { connection_status?: string | null; phone_number?: string | null } | null;
+}>(rows: T[], nowMs: number, stepMs: number = SPREAD_STEP_MS): { keep: T[]; defer: Array<{ id: string; scheduledAt: string }> } {
+  const keep: T[] = [];
+  const defer: Array<{ id: string; scheduledAt: string }> = [];
+  const seen: Record<string, number> = {};
+  for (const r of rows || []) {
+    const backlog = (r.disconnect_retry_count || 0) > 0 && r.user_instances?.connection_status === 'open';
+    if (!backlog) { keep.push(r); continue; }
+    const owner = r.instance_phone || r.user_instances?.phone_number || 'unknown';
+    const k = seen[owner] || 0;
+    seen[owner] = k + 1;
+    if (k === 0) keep.push(r);
+    else defer.push({ id: r.id, scheduledAt: new Date(nowMs + k * stepMs).toISOString() });
+  }
+  return { keep, defer };
 }
