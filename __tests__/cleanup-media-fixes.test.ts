@@ -103,3 +103,72 @@ describe('sweepOrphanUploads — file senza nessuna riga che li usi', () => {
     expect(storageCalls.filter((c) => c.method === 'remove')).toHaveLength(0);
   });
 });
+
+// Audit 28 set 2026, gruppo cron2.
+describe('pulizia: il tipo di allegato resta come segnale', () => {
+  test('azzera SOLO media_url e media_caption: media_type e media_filename restano (guard media_expired + banner)', async () => {
+    mockSupa.setResponse('scheduled_messages:select', [{ id: 'm1', media_url: 'u/circolare.pdf' }]);
+    mockSupa.setRpcResponse('recurring_media_in_use', []);
+    await runMediaCleanup();
+    const upd = mockSupa.calls.find((c) => c.table === 'scheduled_messages' && c.operation === 'update')!;
+    expect(upd.args[0]).toEqual({ media_url: null, media_caption: null });
+  });
+});
+
+// PostgREST ospitato restituisce al massimo 1000 righe per risposta, in
+// silenzio. Il mock fa lo stesso: se la lista IN contiene il file "popolare"
+// risponde con 1000 righe tutte sue, e il riferimento al secondo file resta
+// oltre il taglio.
+const PAGE_CAP = 1000;
+function truncatingRefs(popular: string, other: string) {
+  return (call: any) => {
+    const inList: string[] = call.chain.find((m: any) => m.method === 'in' && m.args[0] === 'media_url')?.args[1] || [];
+    if (inList.includes(popular)) return { data: Array.from({ length: PAGE_CAP }, () => ({ media_url: popular })), error: null };
+    if (inList.includes(other)) return { data: [{ media_url: other }], error: null };
+    return { data: [], error: null };
+  };
+}
+
+describe('riferimenti oltre il tetto delle 1000 righe', () => {
+  const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+
+  test('BUG: orfani — un file usato da una riga oltre la 1000ª NON viene cancellato', async () => {
+    listing[''] = [{ name: '39333', id: null }];
+    listing['39333'] = [
+      { name: 'ricorrente.pdf', id: '1', created_at: old },   // catena quotidiana: migliaia di righe
+      { name: 'duplicato.pdf', id: '2', created_at: old },    // usato da UNA riga, oltre il taglio
+      { name: 'orfano.pdf', id: '3', created_at: old },       // davvero orfano
+    ];
+    mockSupa.setHandler('scheduled_messages:select', truncatingRefs('39333/ricorrente.pdf', '39333/duplicato.pdf'));
+    const out = await sweepOrphanUploads();
+    const rm = storageCalls.filter((c) => c.method === 'remove');
+    expect(rm).toHaveLength(1);
+    expect(rm[0].args[0]).toEqual(['39333/orfano.pdf']);
+    expect(out.removed).toBe(1);
+  });
+
+  test('BUG: retention — una copia recente (Duplica) oltre la 1000ª riga protegge ancora il suo file', async () => {
+    mockSupa.setHandler('scheduled_messages:select', (call: any) => {
+      const isRecent = call.chain.some((m: any) => m.method === 'or' && String(m.args[0]).includes('created_at.gte'));
+      if (!isRecent) return { data: [{ id: 'a', media_url: 'u/popolare.pdf' }, { id: 'b', media_url: 'u/duplicato.pdf' }], error: null };
+      return truncatingRefs('u/popolare.pdf', 'u/duplicato.pdf')(call);
+    });
+    mockSupa.setRpcResponse('recurring_media_in_use', []);
+    const res = await runMediaCleanup();
+    expect(storageCalls.filter((c) => c.method === 'remove')).toHaveLength(0);
+    expect(res.removed_storage).toBe(0);
+    expect(res.skipped_in_use).toBe(2);
+  });
+
+  test('risposte sempre piene oltre il tetto dei giri → nessuna cancellazione (fail-safe)', async () => {
+    listing[''] = [{ name: '39333', id: null }];
+    listing['39333'] = Array.from({ length: 40 }, (_, i) => ({ name: 'f' + i + '.pdf', id: String(i), created_at: old }));
+    // Ogni risposta è piena e nomina un solo file: non si arriva mai a "visto tutto".
+    mockSupa.setHandler('scheduled_messages:select', (call: any) => {
+      const inList: string[] = call.chain.find((m: any) => m.method === 'in')?.args[1] || [];
+      return { data: Array.from({ length: PAGE_CAP }, () => ({ media_url: inList[0] })), error: null };
+    });
+    await expect(sweepOrphanUploads()).rejects.toThrow(/troncat/i);
+    expect(storageCalls.filter((c) => c.method === 'remove')).toHaveLength(0);
+  });
+});

@@ -125,7 +125,11 @@ describe('GET /api/messages', () => {
     );
     expect(q).toBeDefined();
     const or = q!.chain.find((s: any) => s.method === 'or');
-    expect(String(or!.args[0])).toContain('created_at.gte.');
+    // Finestra ancorata a quando la riga è finita (sent_at/scheduled_at), falliti sempre visibili.
+    expect(String(or!.args[0])).toContain('sent_at.gte.');
+    expect(String(or!.args[0])).toContain('scheduled_at.gte.');
+    expect(String(or!.args[0])).toContain('status.eq.failed');
+    expect(String(or!.args[0])).not.toContain('created_at.gte.');
     expect(String(or!.args[0])).toContain('status.in.(pending,paused,processing,awaiting_time,awaiting_recipient,awaiting_confirm)');
   });
 });
