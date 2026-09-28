@@ -196,7 +196,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-2xl font-bold text-text-primary mb-4">6. Elaborazione AI dei Messaggi</h2>
             <p className="mb-4">
-              Quando scrivi un messaggio a te stesso per programmare un invio, il testo viene elaborato da un modello di intelligenza artificiale (Groq) per estrarre:
+              Questa funzione è <strong>spenta</strong>: le note che scrivi a te stesso su WhatsApp non vengono lette né inviate a servizi esterni. Se in futuro verrà attivata, riguarderà solo i messaggi a te stesso che iniziano con un comando di programmazione (per esempio &laquo;programma&raquo; o &laquo;ricorda a&raquo;): solo quel testo verrà elaborato da un modello di intelligenza artificiale (Groq) per estrarre:
             </p>
             <ul className="list-disc pl-6 space-y-1 mb-4">
               <li>Il destinatario del messaggio</li>

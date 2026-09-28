@@ -45,6 +45,9 @@ const RATE_LIMITED = /\b429\b|rate[\s_-]?limit|too many/;
  */
 export function mapErrorReason(raw?: string | null, opts: { hasMedia?: boolean } = {}): MappedError {
   const s = (raw || '').toLowerCase();
+  // Allegato tolto dalla pulizia dei 30 giorni (MEDIA_EXPIRED_ERROR del cron):
+  // Riprova non serve, "Cambia allegato" (Duplica) sì.
+  if (s.startsWith('allegato non più disponibile')) return { kind: 'media_rejected', label: 'Allegato non più disponibile — ricaricalo con "Duplica"' };
   if (DISCONNECTED.test(s)) return { kind: 'disconnected', label: REASONS.disconnected };
   if (INVALID_NUMBER.test(s)) return { kind: 'invalid_number', label: REASONS.invalid_number };
   if (opts.hasMedia && BAD_REQUEST.test(s)) return { kind: 'media_rejected', label: REASONS.media_rejected };

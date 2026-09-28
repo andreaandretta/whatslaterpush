@@ -147,3 +147,12 @@ test('isNotOnWhatsAppError is unchanged (the cron fast-fails on it)', () => {
   expect(isNotOnWhatsAppError('HTTP 400: {"exists":false}')).toBe(true);
   expect(isNotOnWhatsAppError('HTTP 400: Bad Request')).toBe(false);
 });
+
+describe('allegato scaduto (cleanup dei 30 giorni)', () => {
+  test('the cron\'s MEDIA_EXPIRED_ERROR is a media problem, not a retryable one', () => {
+    const { MEDIA_EXPIRED_ERROR } = require('../app/lib/cron-utils');
+    const r = mapErrorReason(MEDIA_EXPIRED_ERROR, { hasMedia: true });
+    expect(r.kind).toBe('media_rejected');
+    expect(r.label).toMatch(/Duplica/);
+  });
+});

@@ -995,7 +995,11 @@ export async function GET(req: NextRequest) {
           if (disconnectedKind && instanceName) {
             const live = await liveStateOf(instanceName);
             if (live && live !== 'open') {
-              await supabase.from('user_instances').update({ connection_status: live }).eq('instance_name', instanceName);
+              // Compare-and-set: se nel frattempo il webhook ha scritto uno stato
+              // più nuovo, vince il suo (stessa regola del riallineamento giornaliero).
+              const prevStatus = msg.user_instances?.connection_status ?? null;
+              const demote = supabase.from('user_instances').update({ connection_status: live }).eq('instance_name', instanceName);
+              await (prevStatus === null ? demote.is('connection_status', null) : demote.eq('connection_status', prevStatus));
               const step = disconnectRetryStep((msg as any).disconnect_retry_count ?? 0, live);
               await supabase.from('scheduled_messages').update({
                 status: 'pending',
