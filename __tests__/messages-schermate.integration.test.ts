@@ -118,6 +118,21 @@ describe('PATCH action=retry', () => {
     expect(updates).toHaveLength(0);
   });
 
+  test('an attachment already removed by the cleanup: 409 media_expired, no write', async () => {
+    row!.status = 'failed';
+    row!.error_message = 'HTTP 500: boom';
+    (row as any).media_type = 'document';
+    (row as any).media_url = null;
+    const { PATCH } = await import('../app/api/messages/route');
+    const res = await PATCH(makeReq('PATCH', { id: 'msg-1', action: 'retry' }));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toBe('media_expired');
+    expect(body.message).toMatch(/Duplica/);
+    expect(updates).toHaveLength(0);
+    (row as any).media_type = null;
+  });
+
   test('a transient failure is still re-queued', async () => {
     row!.status = 'failed';
     row!.error_message = 'HTTP 500: boom';

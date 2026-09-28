@@ -26,7 +26,9 @@ describe('upload-limits', () => {
     expect(uploadErrorMessage(413, null)).toMatch(/troppo grande/i);
     expect(uploadErrorMessage(400, { error: 'file_too_large', limit_mb: 16 })).toBe('Max 16MB.');
     expect(uploadErrorMessage(400, { error: 'unsupported_mime' })).toMatch(/non supportato/i);
-    expect(uploadErrorMessage(500, { error: 'boom' })).toBe('boom');
-    expect(uploadErrorMessage(500, 'Internal Server Error')).toBe('Errore upload');
+    // Mai il testo tecnico del server (audit 25 set 2026): frase italiana.
+    expect(uploadErrorMessage(500, { error: 'boom' })).toMatch(/dal nostro lato/);
+    expect(uploadErrorMessage(500, 'Internal Server Error')).toMatch(/dal nostro lato/);
+    expect(uploadErrorMessage(400, { error: 'empty_file' })).toBe('Il file è vuoto.');
   });
 });

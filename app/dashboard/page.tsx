@@ -69,7 +69,7 @@ export default function DashboardPage() {
   const [sessionValidated, setSessionValidated] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [selectedContact, setSelectedContact] = useState<{ number: string; name?: string } | null>(null);
+  const [selectedContact, setSelectedContact] = useState<{ number: string; name?: string; manualEntry?: boolean } | null>(null);
   const [showShareToast, setShowShareToast] = useState(false);
   // Toast for inline feedback after duplicate/pause/delete actions. Auto-dismisses in 5s.
   const [toast, setToast] = useState<{ text: string; undo?: () => void; id: number } | null>(null);

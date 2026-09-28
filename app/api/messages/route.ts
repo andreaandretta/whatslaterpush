@@ -218,6 +218,14 @@ export async function PATCH(req: NextRequest) {
         message: 'Riprovare non serve: WhatsApp non conosce questo numero. Programma di nuovo il messaggio con il numero giusto.',
       }, { status: 409 });
     }
+    // La pulizia allegati (cleanup-media) ha già tolto il file: rimesso in coda
+    // partirebbe senza allegato, o fallirebbe di nuovo se era solo allegato.
+    if ((existing as any).media_type && !(existing as any).media_url) {
+      return NextResponse.json({
+        error: 'media_expired',
+        message: 'L\'allegato di questo messaggio non è più disponibile: usa "Duplica" e caricalo di nuovo.',
+      }, { status: 409 });
+    }
     const retryUpdate = {
       status: 'pending',
       scheduled_at: applyJitter(new Date().toISOString()),

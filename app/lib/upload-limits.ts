@@ -1,3 +1,4 @@
+import { apiErrorText } from './api-error-text';
 /**
  * Upload path selection and image compression policy (pure, testable).
  *
@@ -37,6 +38,6 @@ export function uploadErrorMessage(status: number, body: any, maxMb = 16): strin
   if (status === 413) return 'File troppo grande per il caricamento. Riprova con un file più piccolo.';
   if (body?.error === 'file_too_large') return `Max ${body.limit_mb || maxMb}MB.`;
   if (body?.error === 'unsupported_mime') return 'Tipo di file non supportato.';
-  if (typeof body?.error === 'string' && body.error) return body.error;
-  return 'Errore upload';
+  // Mai il codice o il testo tecnico del server: frase italiana o generica.
+  return apiErrorText(body, status);
 }

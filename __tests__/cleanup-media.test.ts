@@ -8,6 +8,18 @@ import { createMockSupabase } from './helpers/mocks';
 
 const mockSupa = createMockSupabase();
 
+// La query "copie recenti che usano lo stesso file" (.or created_at/updated_at
+// >= cutoff, audit 28 set 2026) risponde vuota: nei test le candidate sono
+// tutte vecchie. Il caso della copia recente ha un test suo.
+const baseSetResponse = mockSupa.setResponse;
+(mockSupa as any).setResponse = (key: string, data: any, error: any = null, extra: Record<string, any> = {}) => {
+  if (key !== 'scheduled_messages:select') return baseSetResponse(key, data, error, extra);
+  mockSupa.setHandler(key, (call: any) =>
+    call.chain.some((m: any) => m.method === 'or' && String(m.args[0]).includes('created_at.gte'))
+      ? { data: [], error: null }
+      : { data, error, ...extra });
+};
+
 // Track storage calls so tests can assert remove() was called with the right
 // bucket + paths.
 const storageCalls: Array<{ bucket: string; method: string; args: any[] }> = [];
@@ -220,5 +232,21 @@ describe('runMediaCleanup — H8 in-use exclusion', () => {
     expect(findUpdate()).toBeUndefined();
     expect(result.removed_storage).toBe(0);
     expect(result.skipped_in_use).toBe(1);
+  });
+});
+
+describe('runMediaCleanup — Duplica riusa il file', () => {
+  test('a recent copy (even sent) that points to the same file keeps it', async () => {
+    mockSupa.setHandler('scheduled_messages:select', (call: any) =>
+      call.chain.some((m: any) => m.method === 'or')
+        ? { data: [{ media_url: 'u/shared.pdf' }], error: null }
+        : { data: [{ id: 'old', media_url: 'u/shared.pdf' }, { id: 'old2', media_url: 'u/alone.jpg' }], error: null });
+    mockSupa.setRpcResponse('recurring_media_in_use', []);
+    const { runMediaCleanup } = await import('../app/api/cron/cleanup-media/route');
+    const res: any = await runMediaCleanup();
+    expect(res.removed_storage).toBe(1);
+    const upd = mockSupa.calls.find((c) => c.table === 'scheduled_messages' && c.operation === 'update');
+    const ids = upd!.chain.find((m: any) => m.method === 'in')!.args[1];
+    expect(ids).toEqual(['old2']);
   });
 });

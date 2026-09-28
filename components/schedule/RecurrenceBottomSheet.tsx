@@ -37,7 +37,7 @@ export function RecurrenceBottomSheet({ open, onClose, value, onChange, referenc
     { value: 'none', label: 'Non ripetere' },
     { value: 'daily', label: 'Ogni giorno' },
     { value: 'weekly', label: `Ogni ${dow}` },
-    { value: 'monthly', label: `Il ${dom} di ogni mese` },
+    { value: 'monthly', label: `Il ${dom} di ogni mese${dom >= 29 ? ' (o l\'ultimo giorno)' : ''}` },
   ];
 
   const previewRule = buildRRule(localValue, referenceDate);
@@ -150,6 +150,6 @@ export function recurrenceLabel(recurrence: RecurrenceValue, date: Date): string
   if (recurrence === 'none') return 'Non ripetere';
   if (recurrence === 'daily') return 'Ogni giorno';
   if (recurrence === 'weekly') return `Ogni ${WEEKDAY_NAMES[date.getDay()]}`;
-  if (recurrence === 'monthly') return `Il ${date.getDate()} di ogni mese`;
+  if (recurrence === 'monthly') return `Il ${date.getDate()} di ogni mese${date.getDate() >= 29 ? ' (o l\'ultimo giorno)' : ''}`;
   return 'Non ripetere';
 }

@@ -8,6 +8,18 @@
 import { createMockSupabase } from './helpers/mocks';
 
 const mockSupa = createMockSupabase();
+
+// La query "copie recenti che usano lo stesso file" (.or created_at/updated_at
+// >= cutoff, audit 28 set 2026) risponde vuota: nei test le candidate sono
+// tutte vecchie. Il caso della copia recente ha un test suo.
+const baseSetResponse = mockSupa.setResponse;
+(mockSupa as any).setResponse = (key: string, data: any, error: any = null, extra: Record<string, any> = {}) => {
+  if (key !== 'scheduled_messages:select') return baseSetResponse(key, data, error, extra);
+  mockSupa.setHandler(key, (call: any) =>
+    call.chain.some((m: any) => m.method === 'or' && String(m.args[0]).includes('created_at.gte'))
+      ? { data: [], error: null }
+      : { data, error, ...extra });
+};
 const storageCalls: Array<{ method: string; args: any[] }> = [];
 let listing: Record<string, any[]> = {};
 

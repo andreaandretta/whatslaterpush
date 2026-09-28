@@ -109,3 +109,20 @@ describe('WhatsApp scollegato', () => {
     expect(screen.queryByTestId('disconnected-warning')).not.toBeInTheDocument();
   });
 });
+
+describe('numero scritto a mano', () => {
+  test('manual_entry reaches the server only for a number typed in "Nuovo contatto"', async () => {
+    (global as any).fetch = okFetch();
+    const { unmount } = render(<ScheduleModal {...base} contact={{ ...contact, manualEntry: true }} initialMessage="Ciao" />);
+    fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
+    await waitFor(() => expect((global as any).fetch).toHaveBeenCalledTimes(1));
+    expect(JSON.parse((global as any).fetch.mock.calls[0][1].body).manual_entry).toBe(true);
+    unmount();
+
+    (global as any).fetch = okFetch();
+    render(<ScheduleModal {...base} initialMessage="Ciao" />);
+    fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
+    await waitFor(() => expect((global as any).fetch).toHaveBeenCalledTimes(1));
+    expect(JSON.parse((global as any).fetch.mock.calls[0][1].body).manual_entry).toBeUndefined();
+  });
+});

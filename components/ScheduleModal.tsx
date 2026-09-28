@@ -26,7 +26,7 @@ interface ScheduleModalProps {
   open: boolean;
   onClose: () => void;
   onBack: () => void;
-  contact: { number: string; name?: string } | null;
+  contact: { number: string; name?: string; manualEntry?: boolean } | null;
   onScheduled: () => void;
   /** Pre-fill the message body — used by Duplica/Modifica from the dashboard. */
   initialMessage?: string;
@@ -268,6 +268,9 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           body: JSON.stringify({
             recipient_number: contact.number,
             recipient_name: contact.name || undefined,
+            // Solo un numero scritto a mano in "Nuovo contatto" diventa un
+            // contatto manuale: una scelta dalla rubrica o dai recenti no.
+            ...(contact.manualEntry === true ? { manual_entry: true } : {}),
             message: message.trim(),
             scheduled_at: scheduledDate.toISOString(),
             recurrence_rule: buildRRule(recurrence, scheduledDate),

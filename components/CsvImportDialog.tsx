@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Upload, X, Check, AlertCircle } from 'lucide-react';
 import { parseCsv, normalizeItalianPhoneForCsv } from '../app/lib/csv-parser';
+import { apiErrorText } from '../app/lib/api-error-text';
 
 interface Props {
   open: boolean;
@@ -114,7 +115,7 @@ export function CsvImportDialog({ open, onClose, onImported }: Props) {
       });
       const body = await res.json();
       if (!res.ok) {
-        setErrorMsg(body.error || 'Errore importazione');
+        setErrorMsg(apiErrorText(body, res.status));
         setPhase('error');
         return;
       }

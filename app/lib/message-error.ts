@@ -110,7 +110,10 @@ export function mapPendingReason(raw?: string | null): string | null {
       : 'Spostato a domattina: raggiunto il limite di messaggi del giorno';
   }
   if (s.startsWith('numeri nuovi')) return 'Spostato a domattina: pochi numeri nuovi al giorno, per proteggere il tuo WhatsApp';
-  if (s.startsWith('cool-down')) return 'Spostato di 30 min: già 3 messaggi a questo contatto nelle ultime 24 ore';
+  // Il cron scrive già il motivo per l'utente, con l'orario vero di partenza.
+  if (s.startsWith('massimo 3 messaggi')) return text;
+  if (s.startsWith('whatsapp ricollegato')) return text;
+  if (s.startsWith('cool-down')) return 'Spostato: già 3 messaggi a questo contatto nelle ultime 24 ore';
   if (s.startsWith('invii sospesi')) return 'Spostato a domattina: troppi invii non riusciti nelle ultime 24 ore';
   if (s.startsWith('rate limit')) return 'Spostato a domattina: troppi invii ravvicinati';
   // Il resto è un tentativo fallito che il cron rimette in coda da solo

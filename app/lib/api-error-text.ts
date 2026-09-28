@@ -39,6 +39,17 @@ const CODE_TEXT: Record<string, string> = {
   'User not found': 'Account non trovato: ricollega WhatsApp.',
   'id required': GENERIC_ERROR_TEXT,
   'Message not found or not owned': 'Messaggio non trovato: forse è già stato eliminato. Aggiorna la pagina.',
+  media_expired: 'L\'allegato di questo messaggio non è più disponibile: usa "Duplica" e caricalo di nuovo.',
+  // Upload allegati e importazione contatti
+  empty_file: 'Il file è vuoto.',
+  missing_file: 'Nessun file ricevuto: riprova a sceglierlo.',
+  invalid_form: 'Caricamento non riuscito: riprova.',
+  invalid_json: 'Richiesta non valida: ricarica la pagina e riprova.',
+  invalid_body: 'Richiesta non valida: ricarica la pagina e riprova.',
+  empty_input: 'Il file non contiene contatti.',
+  too_many_rows: 'Il file ha troppe righe: dividilo in più file.',
+  contact_limit_reached: 'Hai raggiunto il numero massimo di contatti.',
+  unsupported_mime: 'Tipo di file non supportato.',
 };
 
 export function apiErrorText(body: ApiErrorBody | null | undefined, status?: number): string {

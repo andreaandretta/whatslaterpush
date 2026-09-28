@@ -92,12 +92,17 @@ describe('mapPendingReason (righe in coda spostate dal cron)', () => {
     ['Limite giornaliero raggiunto (50/50) — riprogrammato a domattina', 'Spostato a domattina: raggiunto il limite di messaggi del giorno'],
     ['Limite giornaliero raggiunto — riprogrammato dopo il reset di mezzanotte', 'Spostato a domattina: raggiunto il limite di messaggi del giorno'],
     ['Numeri nuovi: massimo 5 al giorno a chi non ti ha mai scritto — riprogrammato a domattina', 'Spostato a domattina: pochi numeri nuovi al giorno, per proteggere il tuo WhatsApp'],
-    ['Cool-down: max 3 messaggi allo stesso contatto in 24h. Riprogrammato +30 min.', 'Spostato di 30 min: già 3 messaggi a questo contatto nelle ultime 24 ore'],
+    ['Cool-down: max 3 messaggi allo stesso contatto in 24h. Riprogrammato +30 min.', 'Spostato: già 3 messaggi a questo contatto nelle ultime 24 ore'],
     ['Invii sospesi (troppi fallimenti nelle ultime 24h) — riprogrammato a domattina', 'Spostato a domattina: troppi invii non riusciti nelle ultime 24 ore'],
     ['Rate limit raggiunto — riprogrammato a domattina', 'Spostato a domattina: troppi invii ravvicinati'],
     ['Trial scaduto — messaggio in pausa, riattiva con un piano', 'In pausa: la prova gratuita è scaduta'],
   ])('%s', (raw, expected) => {
     expect(mapPendingReason(raw)).toBe(expected);
+  });
+
+  test('the cron\'s new reasons are already user-facing and pass through', () => {
+    expect(mapPendingReason('Massimo 3 messaggi in 24 ore alla stessa persona: parte domani 09:12')).toBe('Massimo 3 messaggi in 24 ore alla stessa persona: parte domani 09:12');
+    expect(mapPendingReason('WhatsApp ricollegato: invii arretrati distanziati per non partire tutti insieme')).toMatch(/^WhatsApp ricollegato/);
   });
 
   test('suppression pause texts are already user-facing and pass through', () => {

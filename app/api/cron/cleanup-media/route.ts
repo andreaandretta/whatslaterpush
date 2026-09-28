@@ -76,6 +76,20 @@ export async function runMediaCleanup(): Promise<CleanupResult> {
   if (inUseErr) throw new Error('cleanup-media in-use check failed: ' + inUseErr.message);
   const inUse = new Set<string>(((inUseRows || []) as Array<{ media_url: string }>).map((r) => r.media_url));
 
+  // "Duplica" riusa lo stesso file (audit 28 set 2026): una copia recente, anche
+  // già inviata o fallita, lo tiene vivo finché non ha anche lei 30 giorni.
+  // Altrimenti il suo "Riprova" o una nuova "Duplica" partirebbero con un
+  // allegato che non esiste più.
+  const { data: recentRefs, error: recentErr } = await supabase
+    .from('scheduled_messages')
+    .select('media_url')
+    .in('media_url', allPaths)
+    .or(`created_at.gte.${cutoff},updated_at.gte.${cutoff}`);
+  if (recentErr) throw new Error('cleanup-media recent-reference check failed: ' + recentErr.message);
+  for (const r of (recentRefs || []) as Array<{ media_url: string | null }>) {
+    if (r.media_url) inUse.add(r.media_url);
+  }
+
   const { removablePaths, removableIds, skipped } = partitionRemovableMedia(rows, inUse);
 
   if (removablePaths.length === 0) {
