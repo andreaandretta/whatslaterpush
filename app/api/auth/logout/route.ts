@@ -6,6 +6,28 @@ import { getSupabaseAdmin } from '../../../lib/supabase-admin';
 
 export const dynamic = 'force-dynamic';
 
+type QueueChoice = 'pause' | 'cancel' | 'keep';
+
+// Testo letto dalla dashboard (mapPendingReason: le frasi "In pausa: ..."
+// vengono mostrate così come sono sotto la riga in pausa).
+const LOGOUT_PAUSE_REASON = 'In pausa: ti eri disconnesso da WhatsLater. Riprendilo quando vuoi.';
+
+async function applyQueueChoice(phone: string, queue: QueueChoice): Promise<number> {
+  if (queue === 'keep') return 0;
+  const update = queue === 'pause'
+    ? { status: 'paused', error_message: LOGOUT_PAUSE_REASON }
+    : { status: 'cancelled' };
+  const statuses = queue === 'pause' ? ['pending'] : ['pending', 'paused'];
+  const { data, error } = await getSupabaseAdmin()
+    .from('scheduled_messages')
+    .update(update)
+    .eq('instance_phone', phone)
+    .in('status', statuses)
+    .select('id');
+  if (error) throw error;
+  return data?.length || 0;
+}
+
 
 export async function POST(req: NextRequest) {
   // Best-effort attempt to attribute the logout to a user_phone. If the cookie
@@ -32,7 +54,20 @@ export async function POST(req: NextRequest) {
   // user could get stuck unable to log out. Anonymous / invalid-cookie logouts
   // skip teardown (no phone to attribute) — this also keeps the anti-hijack
   // guard intact: you can only disconnect the number carried in YOUR cookie.
+  // Cosa fare della coda (scelta nel dialogo della dashboard). Prima la coda
+  // restava intatta: ai ricollegamenti settimane dopo partiva tutta insieme,
+  // con promemoria di eventi già passati (7 set 2026). Default 'pause': una
+  // chiamata senza scelta non deve lasciare niente che parta da solo.
+  const body = await req.json().catch(() => null) as { queue?: unknown } | null;
+  const queue: QueueChoice = body?.queue === 'cancel' || body?.queue === 'keep' ? body.queue : 'pause';
+  let queueAffected = 0;
+
   if (payload?.phone) {
+    // Prima della chiusura del collegamento: la scrittura è condizionata su
+    // status='pending', quindi una riga già presa dal cron non viene toccata.
+    try {
+      queueAffected = await applyQueueChoice(payload.phone, queue);
+    } catch { /* best-effort — cookie still clears below */ }
     try {
       await getSupabaseAdmin()
         .from('user_instances')
@@ -47,7 +82,7 @@ export async function POST(req: NextRequest) {
   await logAuditEvent({
     userPhone: payload?.phone || null,
     eventType: 'auth_logout',
-    payload: {},
+    payload: payload?.phone ? { queue, queue_affected: queueAffected } : {},
     ipAddress: clientIpFromHeaders(req.headers),
   });
 

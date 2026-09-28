@@ -1,11 +1,12 @@
 'use client';
 import React, { useMemo, useState, useEffect } from 'react';
-import { Search, X, MoreVertical, Calendar, Inbox, Clock, AlertCircle, RotateCcw, Plug, Loader2, Paperclip } from 'lucide-react';
+import { Search, X, MoreVertical, Calendar, Inbox, Clock, AlertCircle, RotateCcw, Plug, Loader2, Paperclip, UserRound } from 'lucide-react';
 import { ContactAvatar } from '../../components/ContactAvatar';
 import { StatusBadge, formatCountdown, formatRelativePast } from './StatusBadge';
 import { MessageActionsSheet } from './MessageActionsSheet';
 import { DeliveryStatusIcon } from './DeliveryStatusIcon';
-import { mapErrorReason, isNotOnWhatsAppError } from '../lib/message-error';
+import { mapErrorReason, isNotOnWhatsAppError, isIndeterminateSend, mapPendingReason } from '../lib/message-error';
+import { looksLikeLidDigits } from '../lib/jid';
 
 export interface ScheduledMessage {
   id: string;
@@ -25,6 +26,9 @@ export interface ScheduledMessage {
   media_type?: 'image' | 'video' | 'document' | 'audio' | string | null;
   media_url?: string | null;
   media_filename?: string | null;
+  // Id di Evolution (key.id): assente su una riga 'sent' = invio mai confermato.
+  evolution_message_id?: string | null;
+  recurrence_rule?: string | null;
 }
 
 const MEDIA_LABEL: Record<string, string> = { image: 'Foto', video: 'Video', document: 'Documento', audio: 'Audio' };
@@ -56,6 +60,9 @@ interface Props {
   onRetry: (msg: ScheduledMessage) => Promise<void> | void;
   onSnooze: (msg: ScheduledMessage, iso: string, label: string) => void;
   onShowToast: (text: string, undo?: () => void) => void;
+  // Numero che WhatsApp non conosce: riprovare non serve, si riprogramma lo
+  // stesso testo scegliendo un altro contatto. Opzionale (senza, niente bottone).
+  onChooseOtherContact?: (msg: ScheduledMessage) => void;
   // Live Evolution link state — drives the "Ricollega WhatsApp" CTA on a
   // failed card even when the stored error string is ambiguous.
   connected: boolean;
@@ -112,7 +119,7 @@ const UPCOMING_STATUSES = new Set([
 const SENT_STATUSES = new Set(['sent', 'cancelled']);
 
 export default function MessagesSection({
-  messages, onDelete, onDuplicate, onEdit, onPauseToggle, onRetry, onSnooze, onShowToast, connected,
+  messages, onDelete, onDuplicate, onEdit, onPauseToggle, onRetry, onSnooze, onShowToast, onChooseOtherContact, connected,
 }: Props) {
   const [tab, setTab] = useState<Tab>('upcoming');
   const [query, setQuery] = useState('');
@@ -190,9 +197,10 @@ export default function MessagesSection({
     }).length;
   }, [sent]);
 
+  // Il toast lo mostra la dashboard SOLO dopo la risposta del server: prima qui
+  // usciva "Eliminato" subito, anche quando il server poi rifiutava (409).
   const handleDelete = (msg: ScheduledMessage) => {
     onDelete(msg.id);
-    onShowToast(`Eliminato — ${msg.recipient_name || msg.recipient_number || 'messaggio'}`);
   };
 
   return (
@@ -281,6 +289,8 @@ export default function MessagesSection({
                     msg={msg}
                     connected={connected}
                     onRetry={onRetry}
+                    onDuplicate={onDuplicate}
+                    onChooseOtherContact={onChooseOtherContact}
                     onOpenActions={() => setActionMsg(msg)}
                   />
                 ))}
@@ -329,7 +339,7 @@ export default function MessagesSection({
         isPaused={actionMsg?.status === 'paused'}
         canEdit={!!actionMsg && UPCOMING_STATUSES.has(actionMsg.status)}
         canPause={!!actionMsg && (actionMsg.status === 'pending' || actionMsg.status === 'paused')}
-        canRetry={!!actionMsg && actionMsg.status === 'failed'}
+        canRetry={!!actionMsg && isRetryable(actionMsg)}
         canDelete={!!actionMsg && (UPCOMING_STATUSES.has(actionMsg.status) || actionMsg.status === 'failed')}
         canSnooze={!!actionMsg && (actionMsg.status === 'pending' || actionMsg.status === 'paused')}
         scheduledAt={actionMsg?.scheduled_at}
@@ -359,6 +369,23 @@ function TabButton({ active, onClick, count, children }: {
   );
 }
 
+// Riprova ha senso solo se un nuovo tentativo può andare diversamente. Numero
+// sconosciuto a WhatsApp ("exists": false) o allegato rifiutato: stesso esito,
+// e ogni tentativo in più avvisa il proprietario e pesa sul freno dei fallimenti.
+// Il menu ⋮ deve dire la stessa cosa della card rossa.
+function isRetryable(msg: ScheduledMessage): boolean {
+  if (msg.status !== 'failed') return false;
+  if (isNotOnWhatsAppError(msg.error_message)) return false;
+  return mapErrorReason(msg.error_message, { hasMedia: !!msg.media_type }).kind !== 'media_rejected';
+}
+
+// Righe in coda che il sistema ha spostato o messo in pausa: il motivo è in
+// error_message (vedi mapPendingReason). Una pausa decisa dall'utente non ha motivo.
+function pendingReasonFor(msg: ScheduledMessage): string | null {
+  if (msg.status !== 'pending' && msg.status !== 'paused') return null;
+  return mapPendingReason(msg.error_message);
+}
+
 function MessageRow({ msg, tab, onOpenActions }: {
   msg: ScheduledMessage; tab: Tab; onOpenActions: () => void;
 }) {
@@ -376,6 +403,9 @@ function MessageRow({ msg, tab, onOpenActions }: {
 
   const countdown = tab === 'upcoming' ? formatCountdown(msg.scheduled_at) || undefined : undefined;
   const relative = tab === 'sent' ? formatRelativePast(msg.scheduled_at) : '';
+  // Invio senza conferma (timeout/lambda morta): non la stessa ✓ di uno confermato.
+  const unverified = isIndeterminateSend(msg);
+  const pendingReason = pendingReasonFor(msg);
 
   const target = new Date(msg.scheduled_at);
   const hh = target.getHours().toString().padStart(2, '0');
@@ -415,10 +445,28 @@ function MessageRow({ msg, tab, onOpenActions }: {
         )}
 
         <div className="flex items-center gap-2 flex-wrap">
-          <StatusBadge status={msg.status} countdown={countdown} />
-          <DeliveryStatusIcon msg={msg} />
+          {unverified ? (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ring-1 bg-amber-500/12 text-amber-400 ring-amber-500/30"
+              title="WhatsApp non ha confermato l'invio: controlla nella chat se è arrivato prima di rimandarlo."
+              data-testid="status-unverified"
+            >
+              <AlertCircle className="w-3 h-3" aria-hidden="true" />
+              Da verificare
+            </span>
+          ) : (
+            <>
+              <StatusBadge status={msg.status} countdown={countdown} />
+              <DeliveryStatusIcon msg={msg} />
+            </>
+          )}
           <AttachmentChip msg={msg} />
         </div>
+        {pendingReason && (
+          <p className="text-[12px] text-gray-500 mt-1.5 leading-snug" data-testid="pending-reason">
+            {pendingReason}
+          </p>
+        )}
       </div>
 
       <button
@@ -437,21 +485,27 @@ function MessageRow({ msg, tab, onOpenActions }: {
 // failure also gets a "Ricollega WhatsApp" CTA, since Riprova alone won't fix
 // it. Riprova shows a spinner while the re-queue request is in flight; the
 // card then disappears (the message becomes 'pending' and rejoins the queue).
-function FailedMessageCard({ msg, connected, onRetry, onOpenActions }: {
+function FailedMessageCard({ msg, connected, onRetry, onDuplicate, onChooseOtherContact, onOpenActions }: {
   msg: ScheduledMessage;
   connected: boolean;
   onRetry: (msg: ScheduledMessage) => Promise<void> | void;
+  onDuplicate: (msg: ScheduledMessage) => void;
+  onChooseOtherContact?: (msg: ScheduledMessage) => void;
   onOpenActions: () => void;
 }) {
   const [retrying, setRetrying] = useState(false);
   const text = msg.parsed_message || msg.caption || '';
   const displayName = msg.recipient_name || `+${msg.recipient_number || '?'}`;
-  const reason = mapErrorReason(msg.error_message);
+  const reason = mapErrorReason(msg.error_message, { hasMedia: !!msg.media_type });
   // Only WhatsApp's own "exists": false is permanent; any other 400 keeps Riprova.
   const notOnWhatsApp = isNotOnWhatsAppError(msg.error_message);
+  // Allegato rifiutato: rimandare lo stesso file dà lo stesso 400. Si riapre il
+  // messaggio (Duplica porta con sé testo e allegato) per cambiare il file.
+  const mediaRejected = reason.kind === 'media_rejected';
+  const canRetry = isRetryable(msg);
   // Offer "Ricollega" when the failure looks like a dropped session OR the
   // Evolution link is currently down — a plain Riprova won't fix either.
-  const showReconnect = reason.kind === 'disconnected' || !connected;
+  const showReconnect = (reason.kind === 'disconnected' || !connected) && !notOnWhatsApp;
 
   const handleRetry = async () => {
     if (retrying) return;
@@ -490,12 +544,21 @@ function FailedMessageCard({ msg, connected, onRetry, onOpenActions }: {
         <p className="text-[12px] text-red-400/80 mb-2.5">{reason.label}</p>
         {notOnWhatsApp && (
           <p className="text-[12px] text-gray-400 -mt-1.5 mb-2.5 leading-snug" data-testid="invalid-number-hint">
-            Riprovare non serve: WhatsApp non conosce questo numero. Spesso il contatto era salvato con un codice interno di WhatsApp invece del numero. Programma di nuovo il messaggio scegliendo la persona dalla rubrica, oppure scrivi il numero a mano.
+            {/* Il "codice interno" si nomina solo se le cifre sembrano davvero un
+                LID: per un numero sbagliato a mano sarebbe una spiegazione falsa. */}
+            {looksLikeLidDigits(msg.recipient_number)
+              ? 'Riprovare non serve: WhatsApp non conosce questo numero. Il contatto era salvato con un codice interno di WhatsApp invece del numero. Programma di nuovo il messaggio scegliendo la persona dalla rubrica, oppure scrivi il numero a mano.'
+              : 'Riprovare non serve: WhatsApp non conosce questo numero. Forse è sbagliato, è un fisso o non ha WhatsApp. Controlla il numero e programma di nuovo il messaggio.'}
+          </p>
+        )}
+        {mediaRejected && (
+          <p className="text-[12px] text-gray-400 -mt-1.5 mb-2.5 leading-snug" data-testid="media-rejected-hint">
+            Riprovare con lo stesso file non serve. Riapri il messaggio e scegli un altro allegato (o toglilo).
           </p>
         )}
 
         <div className="flex items-center gap-2 flex-wrap">
-          {!notOnWhatsApp && <button
+          {canRetry && <button
             onClick={handleRetry}
             disabled={retrying}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -506,7 +569,27 @@ function FailedMessageCard({ msg, connected, onRetry, onOpenActions }: {
             {retrying ? 'Rimetto in coda…' : 'Riprova'}
           </button>}
 
-          {showReconnect && !notOnWhatsApp && (
+          {notOnWhatsApp && onChooseOtherContact && (
+            <button
+              onClick={() => onChooseOtherContact(msg)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 transition-colors"
+            >
+              <UserRound className="w-3.5 h-3.5" />
+              Scegli un altro contatto
+            </button>
+          )}
+
+          {mediaRejected && (
+            <button
+              onClick={() => onDuplicate(msg)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 transition-colors"
+            >
+              <Paperclip className="w-3.5 h-3.5" />
+              Cambia allegato
+            </button>
+          )}
+
+          {showReconnect && (
             <a
               href="/connect"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold bg-white/[0.06] text-gray-200 hover:bg-white/10 transition-colors"

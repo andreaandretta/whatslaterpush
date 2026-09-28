@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
 import { Copy, Pencil, Pause, Play, Trash2, RotateCcw, X, Clock } from 'lucide-react';
-import { snoozePlusHour, snoozeTonight, snoozeTomorrowSameTime } from '../lib/schedule-quick';
+import { snoozeOptions } from '../lib/schedule-quick';
 
 export interface MessageActions {
   onDuplicate: () => void;
@@ -109,17 +109,11 @@ export function MessageActionsSheet({
         <div className="h-px bg-[#2A3942] mx-5 my-2" />
 
         {/* Snooze one-tap: reschedule presets without the full edit modal.
-            Options computed at render so "Stasera" disappears after 19:00. */}
+            Options computed at render so "Stasera" disappears after 19:00.
+            Tutti i preset partono dall'orario del MESSAGGIO (non da adesso):
+            "Posticipa" non deve mai farlo partire prima. */}
         {canSnooze && onSnooze && (() => {
-          const now = new Date();
-          const tonight = snoozeTonight(now);
-          const opts: { label: string; date: Date }[] = [
-            { label: '+1 ora', date: snoozePlusHour(now) },
-            ...(tonight ? [{ label: 'Stasera 20:00', date: tonight }] : []),
-            ...(scheduledAt
-              ? [{ label: 'Domani stessa ora', date: snoozeTomorrowSameTime(new Date(scheduledAt), now) }]
-              : []),
-          ];
+          const opts = snoozeOptions(scheduledAt ? new Date(scheduledAt) : null, new Date());
           return (
             <div className="px-5 pt-1 pb-2">
               <div className="flex items-center gap-2 text-gray-500 text-[11px] uppercase tracking-wider font-semibold mb-2">

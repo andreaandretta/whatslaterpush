@@ -6,6 +6,7 @@ import { validatePhone } from '../../lib/phone';
 import { looksLikeLidDigits, isLegacyLidRow } from '../../lib/jid';
 import { evolutionClient } from '../../../lib/evolution/client';
 import { applyJitter } from '../../lib/cron-utils';
+import { isNotOnWhatsAppError } from '../../lib/message-error';
 import { contactActiveCutoffIso, isRecipientActive } from '../../lib/contact-window';
 import { isValidRule } from '../../lib/recurrence';
 import { logAuditEvent, clientIpFromHeaders, hashContactRef } from '../../lib/audit';
@@ -145,12 +146,15 @@ export async function DELETE(req: NextRequest) {
 
   if (!msg) return NextResponse.json({ error: 'Message not found or not owned' }, { status: 403 });
 
+  // 'failed' incluso: "Elimina" è offerto sulle card rosse ed era l'unico modo di
+  // togliere un non-inviato; prima il 409 lasciava la card lì per sempre.
+  // Mai 'processing'/'sent': una riga già presa dal cron non si tocca.
   const { data: updated, error } = await supabase
     .from('scheduled_messages')
     .update({ status: 'cancelled' })
     .eq('id', id)
     .eq('instance_phone', phone)
-    .in('status', ['pending', 'paused'])   // never cancel a row the cron already claimed
+    .in('status', ['pending', 'paused', 'failed'])
     .select('id');
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -179,7 +183,7 @@ export async function PATCH(req: NextRequest) {
   const supabase = getSupabaseAdmin();
   const { data: existing } = await supabase
     .from('scheduled_messages')
-    .select('id, instance_phone, status, media_type, media_url, media_filename, recurrence_rule, parsed_message, caption')
+    .select('id, instance_phone, status, media_type, media_url, media_filename, recurrence_rule, parsed_message, caption, error_message')
     .eq('id', id)
     .eq('instance_phone', phone)
     .single();
@@ -201,6 +205,16 @@ export async function PATCH(req: NextRequest) {
   if (action === 'retry') {
     if (existing.status !== 'failed') {
       return NextResponse.json({ error: 'not_retryable', current_status: existing.status }, { status: 409 });
+    }
+    // WhatsApp ha già detto che il numero non esiste: un nuovo tentativo
+    // fallisce uguale, riavvisa il proprietario e conta nel freno dei fallimenti
+    // (25 set 2026: righe LID rimesse in coda e fallite di nuovo). Rifiutato
+    // anche qui, non solo nascosto in UI, per i client vecchi.
+    if (isNotOnWhatsAppError((existing as any).error_message)) {
+      return NextResponse.json({
+        error: 'not_retryable_permanent',
+        message: 'Riprovare non serve: WhatsApp non conosce questo numero. Programma di nuovo il messaggio con il numero giusto.',
+      }, { status: 409 });
     }
     const retryUpdate = {
       status: 'pending',
@@ -249,7 +263,7 @@ export async function PATCH(req: NextRequest) {
 
   if (status !== undefined) {
     if (status !== 'paused' && status !== 'pending') {
-      return NextResponse.json({ error: 'invalid_status' }, { status: 400 });
+      return NextResponse.json({ error: 'invalid_status', message: 'Operazione non valida per questo messaggio.' }, { status: 400 });
     }
     update.status = status;
   }
@@ -348,6 +362,15 @@ export async function PATCH(req: NextRequest) {
 
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: 'no_fields_to_update' }, { status: 400 });
+  }
+
+  // Il motivo scritto dal cron ("spostato a domattina: ...", "in pausa: ...")
+  // descrive la SUA decisione. Se l'utente riprogramma o riprende il messaggio,
+  // quel motivo non è più vero e la lista non deve più mostrarlo. Su una riga
+  // che resta in pausa si tiene (es. "ha scritto stop": deve restare visibile).
+  const nextStatus = (update.status as string | undefined) ?? existing.status;
+  if ((update.scheduled_at !== undefined || update.status !== undefined) && nextStatus === 'pending' && (existing as any).error_message) {
+    update.error_message = null;
   }
 
   // Conditional write: refuse if the cron picked up the row between our
