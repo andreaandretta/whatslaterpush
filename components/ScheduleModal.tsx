@@ -13,6 +13,7 @@ import { MediaPicker, MediaAttachmentChip, MediaAttachment } from './schedule/Me
 import { SendFab } from './schedule/SendFab';
 import { applyTemplateVariables, hasTemplateVariables, firstNameOf } from '../app/lib/template-variables';
 import { formatSendCta, quickDateChips, isSameDay, courtesyHint } from '../app/lib/schedule-quick';
+import { apiErrorText } from '../app/lib/api-error-text';
 
 // Feature flag: "Richiedi approvazione" e "Promemoria" sono raccolti dalla UI
 // ma NON ancora consegnati end-to-end (handleSubmit non li invia, non c'è cron
@@ -29,10 +30,18 @@ interface ScheduleModalProps {
   onScheduled: () => void;
   /** Pre-fill the message body — used by Duplica/Modifica from the dashboard. */
   initialMessage?: string;
-  // Allegato già presente sul messaggio che si sta modificando (edit mode).
+  // Allegato già presente sul messaggio che si sta modificando (edit mode) o
+  // duplicando (Duplica): in entrambi i casi la modale lo mostra e lo invia.
   initialMedia?: MediaAttachment | null;
   /** When set, the modal is in edit mode: handleSubmit calls PATCH instead of POST. */
   editMsgId?: string | null;
+  /** Edit mode: orario e ripetizione attuali del messaggio, da cui ripartire. */
+  initialScheduledAt?: string | null;
+  initialRecurrenceRule?: string | null;
+  /** Duplica di un messaggio il cui allegato è già stato rimosso dalla pulizia. */
+  mediaUnavailable?: boolean;
+  /** Stato del collegamento WhatsApp (false = scollegato). */
+  connected?: boolean;
 }
 
 const REMINDER_LABELS: Record<ReminderValue, string> = {
@@ -65,19 +74,30 @@ function combineDateTime(date: Date, time: string): Date {
   return d;
 }
 
-function translateError(code: string): string {
-  switch (code) {
-    case 'invalid_phone': return 'Numero non valido.';
-    case 'invalid_message': return 'Messaggio non valido (vuoto o oltre 3500 caratteri).';
-    case 'invalid_datetime': return 'Data/ora non valida (deve essere almeno 1 minuto nel futuro).';
-    case 'invalid_recurrence_rule': return 'Ripetizione non valida.';
-    case 'self_target': return 'Non puoi schedulare a te stesso.';
-    case 'recipient_is_lid': return 'Questo contatto è salvato con un codice interno di WhatsApp, non con il numero. Cercalo di nuovo in rubrica o scrivi il numero a mano.';
-    default: return 'Errore: ' + code;
-  }
+// Regola salvata → valore del selettore. null = nessuna ripetizione; 'unknown'
+// = una regola che la modale non sa rappresentare (va lasciata com'è).
+function recurrenceFromRule(rule: string | null | undefined, at: Date | null): RecurrenceValue | 'unknown' {
+  if (!rule) return 'none';
+  // Riconosciuta solo se la modale la ricostruirebbe IDENTICA (niente INTERVAL,
+  // BYDAY multipli...): altrimenti 'unknown' e il PATCH non la tocca.
+  const candidates: RecurrenceValue[] = ['daily', 'weekly', 'monthly'];
+  for (const v of candidates) if (at && buildRRule(v, at) === rule) return v;
+  return 'unknown';
 }
 
-export default function ScheduleModal({ open, onClose, onBack, contact, onScheduled, initialMessage = '', editMsgId = null, initialMedia = null }: ScheduleModalProps) {
+// In modifica si riparte dall'orario del messaggio, non da "tra un'ora": prima
+// correggere solo il testo di una convocazione di sabato la spostava a oggi.
+function initialDateTime(editMsgId: string | null, initialScheduledAt: string | null | undefined): { date: Date; time: string } {
+  if (editMsgId && initialScheduledAt) {
+    const d = new Date(initialScheduledAt);
+    if (!isNaN(d.getTime()) && d.getTime() >= Date.now() + 60_000) {
+      return { date: d, time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` };
+    }
+  }
+  return defaultDateTime();
+}
+
+export default function ScheduleModal({ open, onClose, onBack, contact, onScheduled, initialMessage = '', editMsgId = null, initialMedia = null, initialScheduledAt = null, initialRecurrenceRule = null, mediaUnavailable = false, connected = true }: ScheduleModalProps) {
   const init = defaultDateTime();
   const [selectedDate, setSelectedDate] = useState<Date>(init.date);
   const [selectedTime, setSelectedTime] = useState<string>(init.time);
@@ -108,15 +128,24 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
   const [media, setMedia] = useState<MediaAttachment | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  // La ripetizione esistente si rimanda al PATCH solo se l'utente la tocca o se
+  // cambia davvero: prima ogni modifica mandava recurrence_rule=null e un
+  // promemoria settimanale smetteva di ripetersi senza che nessuno lo chiedesse.
+  const [recurrenceTouched, setRecurrenceTouched] = useState(false);
+  const initialRecurrence = recurrenceFromRule(
+    editMsgId ? initialRecurrenceRule : null,
+    initialScheduledAt ? new Date(initialScheduledAt) : null,
+  );
 
   useEffect(() => {
     if (open) {
-      const d = defaultDateTime();
+      const d = initialDateTime(editMsgId, initialScheduledAt);
       setSelectedDate(d.date);
       setSelectedTime(d.time);
       setMessage(initialMessage);
       setReminder('never');
-      setRecurrence('none');
+      setRecurrence(initialRecurrence === 'unknown' ? 'none' : initialRecurrence);
+      setRecurrenceTouched(false);
       setApproval(false);
       setSelectedSeedId(null);
       setSaveTemplateChecked(false);
@@ -129,7 +158,9 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       setRecurrenceSheetOpen(false);
       setTemplateSheetOpen(false);
       setMediaPickerOpen(false);
-      setMedia(editMsgId ? initialMedia : null);
+      // Modifica E Duplica: l'allegato del messaggio d'origine resta. Prima
+      // Duplica lo perdeva in silenzio (partiva solo la didascalia).
+      setMedia(initialMedia);
       setAdvancedOpen(false);
     }
   }, [open]);
@@ -197,6 +228,13 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
     }
   }
 
+  function recurrenceChanged(): boolean {
+    if (recurrenceTouched) return true;
+    if (initialRecurrence === 'unknown') return false;
+    // Stessa scelta ma data spostata: BYDAY/BYMONTHDAY seguono la nuova data.
+    return buildRRule(recurrence, scheduledDate) !== (initialRecurrenceRule || null);
+  }
+
   async function handleSubmit() {
     if (!canSubmit || !contact) return;
     setSubmitting(true);
@@ -215,7 +253,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
             id: editMsgId,
             message: message.trim(),
             scheduled_at: scheduledDate.toISOString(),
-            recurrence_rule: buildRRule(recurrence, scheduledDate) ?? null,
+            ...(recurrenceChanged() ? { recurrence_rule: buildRRule(recurrence, scheduledDate) ?? null } : {}),
             // Allegato: solo se è cambiato rispetto a quello con cui si è aperta
             // la modale (null = tolto, oggetto = nuovo file già caricato).
             ...(mediaChanged(initialMedia, media) ? {
@@ -256,20 +294,10 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
         return;
       }
 
+      // body.message del server se c'è, altrimenti una frase per codice: mai il
+      // codice grezzo (vedi app/lib/api-error-text.ts).
       const body = await res.json().catch(() => ({}));
-      if (res.status === 409) {
-        setError(body.message || 'Il messaggio non è più modificabile (già in invio).');
-      } else if (res.status === 403 && body.error === 'plan_contacts_limit_exceeded') {
-        // plan 'beta' = free beta: no plan name (nothing purchasable) and the
-        // copy must not match the 'Aggiorna piano' link gate below.
-        setError(body.plan === 'beta'
-          ? `Hai raggiunto il limite beta di ${body.limit} contatti attivi.`
-          : `Hai raggiunto il limite di ${body.limit} contatti del piano ${body.plan}.`);
-      } else if (body.error) {
-        setError(translateError(body.error));
-      } else {
-        setError('Errore inatteso. Riprova.');
-      }
+      setError(apiErrorText(body, res.status));
     } catch {
       setError('Errore di rete. Riprova.');
     } finally {
@@ -457,6 +485,11 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
               <MediaAttachmentChip media={media} onClear={() => setMedia(null)} />
             </div>
           )}
+          {!media && mediaUnavailable && (
+            <div className="mx-4 mt-3 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-xs" role="status" data-testid="media-unavailable">
+              L&apos;allegato originale non è più disponibile: ricaricalo con la graffetta.
+            </div>
+          )}
 
           <div className="px-4 pt-4">
             {/* Campo stile WhatsApp: la graffetta vive DENTRO il bordo del campo,
@@ -562,10 +595,19 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
         )}
 
         {/* Microcopy onesta sui casi limite (pattern beta nativa): dichiara il
-            comportamento a istanza disconnessa invece di lasciare il dubbio. */}
-        <div className="px-5 pt-2 text-[11px] text-gray-500 text-center">
-          Se WhatsApp è disconnesso all&apos;orario previsto, il messaggio parte appena si riconnette.
-        </div>
+            comportamento a istanza disconnessa invece di lasciare il dubbio.
+            Se è GIÀ scollegato lo si dice chiaro: il messaggio resta in coda
+            finché l'utente non ricollega, non parte da solo. */}
+        {connected ? (
+          <div className="px-5 pt-2 text-[11px] text-gray-500 text-center">
+            Se WhatsApp è disconnesso all&apos;orario previsto, il messaggio parte appena si riconnette.
+          </div>
+        ) : (
+          <div className="mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-xs text-center" role="status" data-testid="disconnected-warning">
+            WhatsApp è scollegato: ricollegalo prima dell&apos;orario scelto, altrimenti il messaggio resta in coda e non parte.{' '}
+            <a href="/connect" className="underline font-semibold">Ricollega</a>
+          </div>
+        )}
 
         <SendFab
           disabled={!canSubmit}
@@ -596,7 +638,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           open={recurrenceSheetOpen}
           onClose={() => setRecurrenceSheetOpen(false)}
           value={recurrence}
-          onChange={(v) => setRecurrence(v)}
+          onChange={(v) => { setRecurrence(v); setRecurrenceTouched(true); }}
           referenceDate={scheduledDate}
         />
         <TemplateBottomSheet

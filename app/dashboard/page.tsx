@@ -17,6 +17,9 @@ import { DeliveryStatusIcon } from '../components/DeliveryStatusIcon';
 import { MessagesEmptyState } from '../components/MessagesEmptyState';
 import { shouldShowOnboardingHints, markOnboardingDone } from '../../components/onboarding/OnboardingTour';
 import { getPlanLimits, getPlanName } from '../lib/plans';
+import { apiErrorText } from '../lib/api-error-text';
+import { formatShortWhen } from '../lib/schedule-quick';
+import { LogoutDialog } from './LogoutDialog';
 import InstallPrompt from '../components/InstallPrompt';
 import InstallAppButton from '../components/InstallAppButton';
 import Logo from '@/components/Logo';
@@ -74,7 +77,15 @@ export default function DashboardPage() {
   const [prefillText, setPrefillText] = useState<string>('');
   // When editing a message in-place, track its id so ScheduleModal calls PATCH.
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+  // Allegato con cui si apre la modale: in modifica E in Duplica (prima Duplica
+  // lo perdeva in silenzio e partiva solo la didascalia).
   const [editingMedia, setEditingMedia] = useState<{ media_type: 'image' | 'video' | 'document' | 'audio'; media_url: string; media_filename: string; bytes: number } | null>(null);
+  // Duplica di un messaggio il cui file è già stato tolto dalla pulizia dei 30 giorni.
+  const [mediaUnavailable, setMediaUnavailable] = useState(false);
+  // Modifica: orario e ripetizione attuali, così la modale riparte da lì.
+  const [editingScheduledAt, setEditingScheduledAt] = useState<string | null>(null);
+  const [editingRecurrenceRule, setEditingRecurrenceRule] = useState<string | null>(null);
+  const [logoutOpen, setLogoutOpen] = useState(false);
   // Onboarding hints — gated on localStorage. Resolved post-mount to avoid
   // SSR hydration mismatch on localStorage access.
   const [showOnboardingHints, setShowOnboardingHints] = useState(false);
@@ -166,22 +177,23 @@ export default function DashboardPage() {
   }, [sessionValidated, fetchMessages]);
 
 
-  const handleLogout = async () => {
-    // Freno educativo (incidente 23 ago): la stabilità del collegamento È il
-    // prodotto. Sloggarsi non serve mai (i messaggi partono comunque) e per
-    // rientrare serve il supporto finché il recupero self-service (OTP v1.5)
-    // non esiste. Confirm onesto prima di un'azione che oggi è un vicolo cieco.
-    const ok = window.confirm(
-      'Sicuro di volerti disconnettere?\n\n' +
-      '• I tuoi messaggi programmati partono COMUNQUE, anche senza login: ' +
-      'per uscire ti basta chiudere la pagina.\n' +
-      '• Per rientrare dovrai ricollegare WhatsApp contattando il supporto.\n\n' +
-      'Disconnettersi non serve quasi mai: vuoi farlo davvero?'
-    );
-    if (!ok) return;
+  // Freno educativo (incidente 23 ago): la stabilità del collegamento È il
+  // prodotto e per rientrare serve il supporto finché il recupero self-service
+  // (OTP v1.5) non esiste. Prima un window.confirm diceva che i messaggi
+  // "partono COMUNQUE": falso, "Disconnetti" scollega davvero WhatsApp, e la coda
+  // restava lì a partire tutta insieme al ricollegamento, settimane dopo
+  // (7 set 2026). Ora il dialogo chiede cosa fare della coda; di default la
+  // mette in pausa, così niente parte da solo a un ricollegamento futuro.
+  const handleLogout = () => setLogoutOpen(true);
+
+  const doLogout = async (queue: 'pause' | 'cancel' | 'keep') => {
     if (msgTimer.current) clearInterval(msgTimer.current);
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queue }),
+      });
     } catch {
       // ignore
     }
@@ -197,10 +209,13 @@ export default function DashboardPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        showToast(data.message || 'Impossibile annullare: il messaggio è già in invio.');
+        showToast(data.message || apiErrorText(data, res.status));
         return;
       }
-      showToast('Messaggio annullato');
+      // Toast SOLO a eliminazione avvenuta (prima MessagesSection diceva
+      // "Eliminato" subito, anche quando il server rifiutava).
+      const gone = messages.find((m) => m.id === id);
+      showToast(`Eliminato — ${gone?.recipient_name || gone?.recipient_number || 'messaggio'}`);
       fetchMessages();
     } catch {
       showToast('Errore di rete — riprova.');
@@ -239,7 +254,21 @@ export default function DashboardPage() {
       name: msg.recipient_name,
     });
     setPrefillText(msg.parsed_message || msg.caption || '');
+    // Stesso file dello Storage: la nuova riga pending lo protegge dalla pulizia.
+    setEditingMedia(mediaOf(msg));
+    setMediaUnavailable(!!msg.media_type && !msg.media_url);
+    setEditingMsgId(null);
     setScheduleOpen(true);
+  }, []);
+
+  // Numero sconosciuto a WhatsApp: stesso testo (e allegato) verso un altro
+  // contatto scelto dalla rubrica. Riprova qui non servirebbe a niente.
+  const handleChooseOtherContact = useCallback((msg: MessagesSectionMessage) => {
+    setPrefillText(msg.parsed_message || msg.caption || '');
+    setEditingMedia(mediaOf(msg));
+    setMediaUnavailable(!!msg.media_type && !msg.media_url);
+    setEditingMsgId(null);
+    setContactPickerOpen(true);
   }, []);
 
   // Edit — open ScheduleModal in edit mode: pre-fill contact+text and pass the
@@ -252,15 +281,22 @@ export default function DashboardPage() {
     });
     setPrefillText(msg.parsed_message || msg.caption || "");
     setEditingMsgId(msg.id);
+    // La modale riparte dall'orario e dalla ripetizione del messaggio.
+    setEditingScheduledAt(msg.scheduled_at);
+    setEditingRecurrenceRule(msg.recurrence_rule || null);
     // Allegato esistente: la modale lo mostra e permette di toglierlo o sostituirlo.
-    const mt = msg.media_type;
-    setEditingMedia(
-      msg.media_url && (mt === 'image' || mt === 'video' || mt === 'document' || mt === 'audio')
-        ? { media_type: mt, media_url: msg.media_url, media_filename: msg.media_filename || '', bytes: 0 }
-        : null,
-    );
+    setEditingMedia(mediaOf(msg));
     setScheduleOpen(true);
   }, []);
+
+  const resetModalPrefill = () => {
+    setPrefillText('');
+    setEditingMsgId(null);
+    setEditingMedia(null);
+    setMediaUnavailable(false);
+    setEditingScheduledAt(null);
+    setEditingRecurrenceRule(null);
+  };
 
   // Pause/resume — optimistic; backend ignores unknown statuses silently for now.
   const handlePauseToggle = useCallback(async (msg: MessagesSectionMessage) => {
@@ -269,11 +305,15 @@ export default function DashboardPage() {
     setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, status: newStatus } : m)));
     showToast(newStatus === 'paused' ? 'Messaggio in pausa' : 'Messaggio riattivato');
     try {
-      await fetch('/api/messages', {
+      const res = await fetch('/api/messages', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: msg.id, status: newStatus }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(apiErrorText(data, res.status));
+      }
       fetchMessages();
     } catch {
       // Roll back on network error
@@ -287,7 +327,6 @@ export default function DashboardPage() {
   const handleSnooze = useCallback(async (msg: MessagesSectionMessage, iso: string, label: string) => {
     const prev = msg.scheduled_at;
     setMessages((p) => p.map((m) => (m.id === msg.id ? { ...m, scheduled_at: iso } : m)));
-    showToast(`Posticipato: ${label.toLowerCase()}`);
     try {
       const res = await fetch('/api/messages', {
         method: 'PATCH',
@@ -296,9 +335,17 @@ export default function DashboardPage() {
       });
       if (!res.ok) {
         setMessages((p) => p.map((m) => (m.id === msg.id ? { ...m, scheduled_at: prev } : m)));
-        showToast('Non sono riuscito a posticiparlo — riprova.');
+        const data = await res.json().catch(() => ({}));
+        showToast(data.message || 'Non sono riuscito a posticiparlo — riprova.');
         return;
       }
+      // Il toast dice il nuovo orario vero (label resta per chiarezza del preset).
+      // Un messaggio in pausa resta in pausa: prima il toast diceva
+      // "Posticipato" e il messaggio non partiva mai.
+      const when = formatShortWhen(new Date(iso));
+      showToast(msg.status === 'paused'
+        ? `Spostato a ${when} (${label.toLowerCase()}) — resta in pausa finché non lo riprendi`
+        : `Posticipato a ${when} (${label.toLowerCase()})`);
       fetchMessages();
     } catch {
       setMessages((p) => p.map((m) => (m.id === msg.id ? { ...m, scheduled_at: prev } : m)));
@@ -319,7 +366,10 @@ export default function DashboardPage() {
         body: JSON.stringify({ id: msg.id, action: 'retry' }),
       });
       if (!res.ok) {
-        showToast('Non sono riuscito a rimetterlo in coda — riprova.');
+        // Il server spiega perché (es. numero che WhatsApp non conosce).
+        const data = await res.json().catch(() => ({}));
+        showToast(data.message || 'Non sono riuscito a rimetterlo in coda — riprova.');
+        await fetchMessages();
         return;
       }
       showToast('Rimesso in coda — riprovo a inviarlo a breve.');
@@ -422,10 +472,11 @@ export default function DashboardPage() {
       />
 
       <main className="flex-1 flex flex-col w-full max-w-2xl mx-auto px-4 pt-6 pb-12 space-y-8">
+        {/* Banner in pagina (pull-only, niente push: principio silenzioso). */}
         {userPhone && !connected && (
-          <div className="rounded-xl bg-red-500/10 border border-red-500/40 px-4 py-3 flex items-center justify-between gap-3">
+          <div className="rounded-xl bg-red-500/10 border border-red-500/40 px-4 py-3 flex items-center justify-between gap-3" role="status" data-testid="disconnected-banner">
             <div className="text-sm text-red-200">
-              <strong>WhatsApp disconnesso.</strong> I tuoi messaggi programmati non partono finché non ricolleghi.
+              <strong>WhatsApp scollegato</strong> — i messaggi in coda partiranno quando lo ricolleghi.
             </div>
             <a href="/connect" className="shrink-0 rounded-lg bg-red-500 px-3 py-2 text-sm font-semibold text-white">Ricollega</a>
           </div>
@@ -458,6 +509,7 @@ export default function DashboardPage() {
               onRetry={handleRetry}
               onSnooze={handleSnooze}
               onShowToast={showToast}
+              onChooseOtherContact={handleChooseOtherContact}
               connected={connected}
             />
           )
@@ -478,7 +530,8 @@ export default function DashboardPage() {
 
         <ContactPickerModal
           open={contactPickerOpen}
-          onClose={() => setContactPickerOpen(false)}
+          // Chiuso senza scegliere: niente testo/allegato residui nel prossimo messaggio.
+          onClose={() => { setContactPickerOpen(false); setPrefillText(''); setEditingMedia(null); setMediaUnavailable(false); }}
           onSelect={(contact) => {
             setSelectedContact(contact);
             setContactPickerOpen(false);
@@ -488,13 +541,24 @@ export default function DashboardPage() {
 
         <ScheduleModal
           open={scheduleOpen}
-          onClose={() => { setScheduleOpen(false); setSelectedContact(null); setPrefillText(''); setEditingMsgId(null); setEditingMedia(null); }}
-          onBack={() => { setScheduleOpen(false); setContactPickerOpen(true); setPrefillText(''); setEditingMsgId(null); setEditingMedia(null); }}
+          onClose={() => { setScheduleOpen(false); setSelectedContact(null); resetModalPrefill(); }}
+          onBack={() => { setScheduleOpen(false); setContactPickerOpen(true); resetModalPrefill(); }}
           contact={selectedContact}
           onScheduled={fetchMessages}
           initialMessage={prefillText}
           editMsgId={editingMsgId}
           initialMedia={editingMedia}
+          initialScheduledAt={editingScheduledAt}
+          initialRecurrenceRule={editingRecurrenceRule}
+          mediaUnavailable={mediaUnavailable}
+          connected={connected}
+        />
+
+        <LogoutDialog
+          open={logoutOpen}
+          pendingCount={messages.filter((m) => m.status === 'pending').length}
+          onCancel={() => setLogoutOpen(false)}
+          onConfirm={(queue) => { setLogoutOpen(false); void doLogout(queue); }}
         />
 
         {showShareToast && (
@@ -576,6 +640,15 @@ export default function DashboardPage() {
       )}
     </div>
   );
+}
+
+// Allegato di una riga nel formato della modale (null se manca o è stato
+// già rimosso dallo Storage dalla pulizia dei 30 giorni).
+function mediaOf(msg: MessagesSectionMessage): { media_type: 'image' | 'video' | 'document' | 'audio'; media_url: string; media_filename: string; bytes: number } | null {
+  const mt = msg.media_type;
+  return msg.media_url && (mt === 'image' || mt === 'video' || mt === 'document' || mt === 'audio')
+    ? { media_type: mt, media_url: msg.media_url, media_filename: msg.media_filename || '', bytes: 0 }
+    : null;
 }
 
 // --- Status Strip (fuses ConnectedCard + PlanBadge + DailyCapBadge + contextual upgrade) ---
