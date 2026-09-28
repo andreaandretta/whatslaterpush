@@ -2,16 +2,23 @@
 
 import React from 'react';
 
+export type LogoutChoice = 'device' | 'pause' | 'cancel' | 'keep';
+
 // --- Logout dialog ---
-// Onesto su cosa succede: "Disconnetti" scollega WhatsApp, quindi la coda non
-// parte finché non si ricollega. Con messaggi in coda chiede cosa farne; la
-// scelta evidenziata è metterli in pausa (nessuna sorpresa a un ricollegamento
-// futuro, settimane dopo, con promemoria di eventi già passati).
+// Due azioni distinte (fase 1b). Prima esisteva solo "Disconnetti", che
+// scollegava WhatsApp: chi "usciva" a fine giornata da un PC condiviso, come da
+// qualunque sito, fermava tutti i promemoria senza saperlo.
+//  - "Esci da questo dispositivo": solo il cookie, i promemoria continuano.
+//  - "Scollega WhatsApp": scollega davvero; con una coda chiede cosa farne, e
+//    la scelta evidenziata è la pausa (nessuna sorpresa a un ricollegamento
+//    futuro, settimane dopo, con promemoria di eventi già passati).
+// Per rientrare, in entrambi i casi, oggi serve il supporto (il recupero
+// self-service con codice non esiste ancora): il testo lo dice.
 export function LogoutDialog({ open, pendingCount, onCancel, onConfirm }: {
   open: boolean;
   pendingCount: number;
   onCancel: () => void;
-  onConfirm: (queue: 'pause' | 'cancel' | 'keep') => void;
+  onConfirm: (choice: LogoutChoice) => void;
 }) {
   if (!open) return null;
   const n = pendingCount;
@@ -25,35 +32,42 @@ export function LogoutDialog({ open, pendingCount, onCancel, onConfirm }: {
         onClick={(e) => e.stopPropagation()}
         className="w-full sm:max-w-sm sm:mx-4 bg-[#1F2C33] border border-[#2A3942] rounded-t-2xl sm:rounded-2xl p-5 space-y-3"
       >
-        <h2 id="logout-title" className="text-white font-bold text-lg">Disconnettere WhatsApp?</h2>
-        <p className="text-sm text-gray-300 leading-snug">
-          Per uscire ti basta chiudere la pagina: finché resti collegato i messaggi partono da soli.
-        </p>
-        <p className="text-sm text-gray-300 leading-snug">
-          Se ti disconnetti, WhatsLater si scollega dal tuo WhatsApp: <strong className="text-white">nessun messaggio parte</strong> finché non lo ricolleghi, e per rientrare dovrai ricollegarlo contattando il supporto.
-        </p>
-        {n > 0 ? (
-          <>
-            <p className="text-sm text-white font-semibold pt-1">
-              Hai {n} messagg{n === 1 ? 'io' : 'i'} in coda. Cosa ne faccio?
-            </p>
-            <button type="button" onClick={() => onConfirm('pause')} className={`${btn} bg-primary text-white hover:opacity-90`}>
-              Mettili in pausa e disconnetti
-              <span className="block text-xs font-normal opacity-80">Quando ricolleghi li riprendi tu, uno per uno.</span>
+        <h2 id="logout-title" className="text-white font-bold text-lg">Vuoi uscire?</h2>
+        <button type="button" onClick={() => onConfirm('device')} className={`${btn} bg-primary text-white hover:opacity-90`}>
+          Esci da questo dispositivo
+          <span className="block text-xs font-normal opacity-80">
+            WhatsApp resta collegato: i messaggi programmati partono lo stesso. Per rientrare da qui dovrai contattare il supporto.
+          </span>
+        </button>
+
+        <div className="pt-2 border-t border-[#2A3942] space-y-3">
+          <p className="text-sm text-gray-300 leading-snug pt-2">
+            Oppure scollega WhatsLater dal tuo WhatsApp: <strong className="text-white">nessun messaggio parte</strong> finché non lo ricolleghi, e per ricollegarlo dovrai contattare il supporto.
+          </p>
+          {n > 0 ? (
+            <>
+              <p className="text-sm text-white font-semibold">
+                Hai {n} messagg{n === 1 ? 'io' : 'i'} in coda. Cosa ne faccio?
+              </p>
+              <button type="button" onClick={() => onConfirm('pause')} className={`${btn} bg-white/[0.06] text-white hover:bg-white/10`}>
+                Mettili in pausa e scollega
+                <span className="block text-xs font-normal opacity-80">Quando ricolleghi li riprendi tu, uno per uno.</span>
+              </button>
+              <button type="button" onClick={() => onConfirm('cancel')} className={`${btn} bg-white/[0.06] text-red-300 hover:bg-white/10`}>
+                Annullali e scollega
+                <span className="block text-xs font-normal text-gray-400">Solo quest{n === 1 ? 'o' : 'i'} {n}: quelli già in pausa restano in pausa.</span>
+              </button>
+              <button type="button" onClick={() => onConfirm('keep')} className={`${btn} bg-white/[0.06] text-gray-200 hover:bg-white/10`}>
+                Lasciali in coda e scollega
+                <span className="block text-xs font-normal text-gray-400">Partiranno appena ricolleghi, anche se in ritardo.</span>
+              </button>
+            </>
+          ) : (
+            <button type="button" onClick={() => onConfirm('pause')} className={`${btn} bg-white/[0.06] text-red-300 hover:bg-white/10`}>
+              Scollega WhatsApp
             </button>
-            <button type="button" onClick={() => onConfirm('cancel')} className={`${btn} bg-white/[0.06] text-red-300 hover:bg-white/10`}>
-              Annullali e disconnetti
-            </button>
-            <button type="button" onClick={() => onConfirm('keep')} className={`${btn} bg-white/[0.06] text-gray-200 hover:bg-white/10`}>
-              Lasciali in coda e disconnetti
-              <span className="block text-xs font-normal text-gray-400">Partiranno appena ricolleghi, anche se in ritardo.</span>
-            </button>
-          </>
-        ) : (
-          <button type="button" onClick={() => onConfirm('pause')} className={`${btn} bg-white/[0.06] text-red-300 hover:bg-white/10`}>
-            Disconnetti
-          </button>
-        )}
+          )}
+        </div>
         <button type="button" onClick={onCancel} className={`${btn} text-center text-gray-400 hover:text-white`}>
           Resta collegato
         </button>

@@ -4,6 +4,7 @@ import { validatePhone } from '../../../lib/phone';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../../lib/auth-cookie';
 import { logAuditEvent, clientIpFromHeaders, hashContactRefSync } from '../../../lib/audit';
 import { forceDeleteInstance } from '../../../lib/evolution';
+import { fetchEvolutionState } from '../../../lib/connection-state';
 import {
   getEgressForPairing,
   MisconfigError,
@@ -192,6 +193,28 @@ export async function POST(req: NextRequest) {
         { error: 'Questo numero ha gia un account. Aprilo dallo stesso browser dove sei gia loggato, oppure contatta il supporto per recuperare l\'accesso.' },
         { status: 409 }
       );
+    }
+
+    // Owner con sessione valida (fase 1b): mai scollegare da qui un WhatsApp
+    // che funziona. Si arrivava a /connect per un blip di rete all'apertura o
+    // per un 'connecting' transitorio nel banner; l'utente reinseriva il
+    // numero e forceDeleteInstance (logout + delete) toglieva il dispositivo
+    // collegato dal telefono: promemoria fermi e un logout + nuovo device in
+    // più (segnale di ban). Si chiede lo stato VIVO a Evolution — non
+    // connection_status, che può essere stantio — e se è 'open' si rimanda
+    // alla dashboard. Stato ignoto (rete, 404, timeout) → re-pair come prima.
+    const live = await fetchEvolutionState(instanceName);
+    if (live === 'open') {
+      await supabase.from('pending_auth_sessions').delete().eq('id', sessionId);
+      if (existing.connection_status !== 'open') {
+        // Riallinea il DB (il banner rosso l'ha portato qui). Compare-and-set
+        // sul valore letto: un webhook arrivato nel frattempo vince.
+        const upd = supabase.from('user_instances').update({ connection_status: 'open' }).eq('phone_number', cleanPhone);
+        await (existing.connection_status == null
+          ? upd.is('connection_status', null)
+          : upd.eq('connection_status', existing.connection_status));
+      }
+      return NextResponse.json({ already_connected: true, redirect: '/dashboard' });
     }
   }
 

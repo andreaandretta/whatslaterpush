@@ -84,3 +84,32 @@ describe('reconcileInstanceStates — daily-report, una chiamata per istanza al 
     expect(supa.calls).toHaveLength(0);
   });
 });
+
+// Review fase 1b: la GET a Evolution e la scrittura non sono atomiche. Se tra
+// le due arriva il webhook 'open', la riconciliazione scriveva sopra il
+// 'connecting' letto 3 s prima → invii trattenuti fino al giorno dopo.
+// Scrittura condizionata al valore letto PRIMA della GET (compare-and-set).
+describe('reconcileInstanceStates — non sovrascrive un webhook arrivato nel frattempo', () => {
+  test('la scrittura è condizionata allo stato letto prima della GET', async () => {
+    const supa = createMockSupabase();
+    supa.setResponse('user_instances:select', [
+      { instance_name: 'A', connection_status: 'open' },
+      { instance_name: 'N', connection_status: null },
+    ]);
+    const fetchImpl = jest.fn(async () => jsonRes({ instance: { state: 'close' } }));
+    await reconcileInstanceStates(supa.client as any, fetchImpl as any);
+    const updates = supa.calls.filter((c) => c.table === 'user_instances' && c.operation === 'update');
+    expect(updates).toHaveLength(2);
+    expect(updates[0].chain).toContainEqual({ method: 'eq', args: ['connection_status', 'open'] });
+    expect(updates[1].chain).toContainEqual({ method: 'is', args: ['connection_status', null] });
+  });
+
+  test('0 righe toccate (il webhook ha già cambiato lo stato) → non conta come corretta', async () => {
+    const supa = createMockSupabase();
+    supa.setResponse('user_instances:select', [{ instance_name: 'A', connection_status: 'open' }]);
+    supa.setResponse('user_instances:update', []);
+    const fetchImpl = jest.fn(async () => jsonRes({ instance: { state: 'connecting' } }));
+    const out = await reconcileInstanceStates(supa.client as any, fetchImpl as any);
+    expect(out.fixed).toBe(0);
+  });
+});
