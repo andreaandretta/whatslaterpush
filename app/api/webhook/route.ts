@@ -32,6 +32,9 @@ const supabase = createClient(
 // Ricevute (messages.update): tentativi di abbinamento con la riga inviata.
 const RECEIPT_MATCH_ATTEMPTS = 3;
 const RECEIPT_RETRY_DELAY_MS = 1200;
+// Si aspetta la riga solo se su quell'istanza un invio è in volo: 'processing'
+// o sent_at dentro questa finestra (il cron scrive id + sent_at insieme).
+const RECEIPT_RACE_WINDOW_MS = 60_000;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function dbLog(tag: string, data: any) {
@@ -450,8 +453,17 @@ async function handleConnectionUpdate(payload: any): Promise<NextResponse> {
     .update(update)
     .eq('instance_name', instanceName)
     .select('id, phone_number');
-  if (error) console.error(`WEBHOOK: CONNECTION_UPDATE DB error: ${error.message}`);
-  else console.log(`WEBHOOK: CONNECTION_UPDATE saved - instance=${instanceName} status=${connectionStatus}` + (connectionStatus === 'close' ? ` reason=${discCode}/${discReason}` : '') + ` rows=${updated?.length || 0}`);
+  if (error) {
+    // connection_status arriva SOLO da qui: rispondere 200 a una scrittura
+    // fallita (Gateway Timeout Supabase, 9-14 set 2026) faceva perdere l'evento
+    // per sempre — un 'close' vero (logout 401) lasciava la riga 'open' e il
+    // cron bruciava i retry sui messaggi. Con un 5xx Evolution 2.3.7 riprova
+    // (retryWebhookRequest: backoff da 5 s, non riprova solo 400/401/403/404/422).
+    // Il resto (paired_at, audit, sessione di pairing) gira al nuovo tentativo.
+    console.error(`WEBHOOK: CONNECTION_UPDATE DB error (503 → Evolution riprova): ${error.message}`);
+    return NextResponse.json({ ok: false, error: 'connection state not saved' }, { status: 503 });
+  }
+  console.log(`WEBHOOK: CONNECTION_UPDATE saved - instance=${instanceName} status=${connectionStatus}` + (connectionStatus === 'close' ? ` reason=${discCode}/${discReason}` : '') + ` rows=${updated?.length || 0}`);
 
   // Primo pairing completato → timbra paired_at UNA VOLTA (guardia is-null).
   // È il discriminatore del guard #8 in /api/auth/init: righe senza paired_at
@@ -875,6 +887,11 @@ async function getContactList(ownerPhone: string): Promise<string> {
 }
 
 export async function POST(req) {
+  // 25 set 2026: centinaia di 504 ("Task timed out after 30 seconds") SENZA
+  // nessun'altra riga di log → il blocco sta prima di 'WEBHOOK incoming'
+  // (auth / req.text()). Questa riga e i ms sotto dicono dove si ferma.
+  const startedAt = Date.now();
+  console.log('WEBHOOK start');
   let rawBody = '';
   // Tracks a dedup claim THIS request owns, so error paths (the outer catch and
   // the 500-throws funnelled into it) can release it for Evolution's retry. Set
@@ -944,7 +961,7 @@ export async function POST(req) {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
     rawBody = rawText.substring(0, 500);
-    console.log('WEBHOOK incoming (' + rawText.length + ' bytes)'); // no raw body in logs (PII: phone + message text)
+    console.log('WEBHOOK incoming (' + rawText.length + ' bytes, ' + (Date.now() - startedAt) + 'ms)'); // no raw body in logs (PII: phone + message text)
 
     // Audit: structured trail of inbound webhook events. Don't await — the
     // webhook handler is latency-sensitive (Evolution drops if we're slow).
@@ -982,7 +999,10 @@ export async function POST(req) {
       // Feedback "richiesta ricevuta" per la UI di /connect (best-effort).
       if (evoInstance) await syncConnState(supabase, evoInstance, state);
 
-      await handleConnectionUpdate(payload);
+      const connRes = await handleConnectionUpdate(payload);
+      // Stato non salvato → niente onboarding su uno stato che il DB non ha,
+      // e il 5xx fa rimandare l'evento a Evolution.
+      if (connRes.status >= 500) return connRes;
 
       if (state === 'open' || state === 'connected') {
         try {
@@ -1025,25 +1045,69 @@ export async function POST(req) {
       const updates = Array.isArray(payload?.data) ? payload.data : [payload?.data].filter(Boolean);
       let touched = 0;
       const nowIso = new Date().toISOString();
+      const statusCounts: Record<string, number> = {};
+      // "C'è un invio in volo su questa istanza?" — calcolato al massimo una
+      // volta per richiesta (vedi sendInFlight sotto).
+      let inFlight: boolean | null = null;
+      const sendInFlight = async (): Promise<boolean> => {
+        if (inFlight !== null) return inFlight;
+        inFlight = false;
+        try {
+          const ownerPhone = await userPhoneForInstance(evoInstance);
+          if (ownerPhone) {
+            const since = new Date(Date.now() - RECEIPT_RACE_WINDOW_MS).toISOString();
+            const { data: busy } = await supabase
+              .from('scheduled_messages')
+              .select('id')
+              .eq('instance_phone', ownerPhone)
+              .or(`status.eq.processing,sent_at.gte.${since}`)
+              .limit(1);
+            inFlight = !!(busy && busy.length > 0);
+          }
+        } catch { /* nel dubbio niente attese: la ricevuta si perde, l'invio no */ }
+        return inFlight;
+      };
       for (const upd of updates) {
         // Evolution v2 sends the status as a string ('DELIVERY_ACK'), raw
         // Baileys as a number: extractStatusUpdate understands both.
         const { msgId, status, fromMe } = extractStatusUpdate(upd);
         if (!msgId || status === null) continue;
         // Ricevuta di un messaggio RICEVUTO da questa istanza: non è un nostro invio.
+        // (fromMe assente → si prosegue: Evolution 2.3.7 lo manda sempre, ma
+        // non si butta una spunta vera per un payload di forma diversa.)
         if (fromMe === false) continue;
+        statusCounts[status] = (statusCounts[status] || 0) + 1;
 
         // Custody ack (pattern #1, CLAUDE.md): SERVER_ACK(2) = WhatsApp ha
         // preso in carico il messaggio; ERROR(0) = lo ha rifiutato dopo che
         // noi lo avevamo già segnato 'sent'. Colonne dalla migration
         // 20260907_custody_ack_optout; il flag resta spento finché non è applicata.
+        //
+        // A flag spento prima si faceva `continue` PRIMA del log: i rifiuti di
+        // WhatsApp non erano nemmeno contabili. Ora si conta sempre, senza PII
+        // (solo stato e se la riga è nostra). SERVER_ACK arriva per OGNI
+        // messaggio che l'utente scrive dal telefono: si logga solo se è una
+        // nostra riga, altrimenti webhook_logs si riempie di chat personali.
         if (status === 2 || status === 0) {
-          if (process.env.CUSTODY_ACK_ENABLED === 'true') {
-            try {
-              touched += await recordCustodyAck(supabase, msgId, status);
-            } catch (e) {
-              console.error('WEBHOOK: custody ack failed:', (e as any)?.message || e);
+          const custodyOn = process.env.CUSTODY_ACK_ENABLED === 'true';
+          let matched = 0;
+          try {
+            if (custodyOn) {
+              matched = await recordCustodyAck(supabase, msgId, status);
+              touched += matched;
+            } else {
+              const { data: ours } = await supabase
+                .from('scheduled_messages')
+                .select('id')
+                .eq('evolution_message_id', msgId)
+                .limit(1);
+              matched = ours?.length || 0;
             }
+          } catch (e) {
+            console.error('WEBHOOK: custody ack failed:', (e as any)?.message || e);
+          }
+          if (status === 0 || matched > 0) {
+            void dbLog('MSG_STATUS', { status, matched, custody_ack: custodyOn });
           }
           continue;
         }
@@ -1056,6 +1120,11 @@ export async function POST(req) {
         // stringhe): la ricevuta arriva nello stesso secondo dell'invio, PRIMA
         // che il cron abbia scritto evolution_message_id → 0 righe. Se non
         // troviamo nulla aspettiamo un attimo e riproviamo: entro 1-2 s l'id c'è.
+        //
+        // Ma si riprova SOLO se su questa istanza c'è un invio in volo (riga in
+        // 'processing' o inviata nell'ultimo minuto): 601 ricevute su 603 dal
+        // 22 set erano di chat personali, e ognuna pagava 2,4 s di pause + fino
+        // a 9 query mentre /api/webhook andava in 504 (25 set).
         let rowsForThis = 0;
         for (let attempt = 0; attempt < RECEIPT_MATCH_ATTEMPTS; attempt++) {
           if (attempt > 0) await sleep(RECEIPT_RETRY_DELAY_MS);
@@ -1077,20 +1146,16 @@ export async function POST(req) {
             if (readRows?.length) rowsForThis += readRows.length;
           }
           if (rowsForThis > 0) break;
-          // 0 righe: o la spunta era già segnata (idempotenza) o la riga non ha
-          // ancora l'id. Si riprova solo nel secondo caso.
-          const { data: existing } = await supabase
-            .from('scheduled_messages')
-            .select('id')
-            .eq('evolution_message_id', msgId)
-            .limit(1);
-          if (existing && existing.length > 0) break;
+          // 0 righe: spunta già segnata, ricevuta di una chat personale, oppure
+          // la riga non ha ancora l'id. Solo nell'ultimo caso aspettare serve.
+          if (attempt === RECEIPT_MATCH_ATTEMPTS - 1 || !(await sendInFlight())) break;
         }
         touched += rowsForThis;
         // Diagnostica senza PII: solo stato e conteggio (niente id, numeri o testi).
         void dbLog('MSG_STATUS', { status, matched: rowsForThis });
       }
-      console.log('WEBHOOK: messages.update rows_touched=' + touched);
+      console.log('WEBHOOK: messages.update rows_touched=' + touched +
+        ' statuses=' + JSON.stringify(statusCounts) + ' ms=' + (Date.now() - startedAt));
       return NextResponse.json({ ok: true, touched });
     }
 
@@ -1117,11 +1182,20 @@ export async function POST(req) {
         'MESSAGING_HISTORY_SET';
 
       // MESSAGING_HISTORY_SET nests contacts under data.contacts; the other
-      // three put the array directly at data.
+      // three put the array directly at data — EXCEPT the contact event that
+      // Evolution 2.3.7 emits for every received message (baileys service
+      // :1496-1544): a SINGLE object { remoteJid, pushName, profilePicUrl },
+      // with remoteJid already rewritten from the @lid to the phone JID. It is
+      // the only event that carries number + name of a contact we knew only by
+      // LID (hidden since dc40471): taking arrays only threw it away. Groups and
+      // unresolved LIDs still fall out in contactRowsFromPayload.
+      const data = payload?.data;
       const rawList: any[] =
         sourceKey === 'MESSAGING_HISTORY_SET'
-          ? (Array.isArray(payload?.data?.contacts) ? payload.data.contacts : [])
-          : (Array.isArray(payload?.data) ? payload.data : []);
+          ? (Array.isArray(data?.contacts) ? data.contacts : [])
+          : Array.isArray(data) ? data
+          : (data && typeof data === 'object') ? [data]
+          : [];
 
       const rows = contactRowsFromPayload(rawList, userPhone, sourceKey);
       const withPic = rows.filter(r => r.profile_pic_url).length;

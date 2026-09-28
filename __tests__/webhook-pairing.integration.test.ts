@@ -101,3 +101,40 @@ describe('Webhook instance_disconnect — #4 benign-515 guard', () => {
     expect(audit!.args[0].payload.code).toBe(403);
   });
 });
+
+// connection_status arriva SOLO da questo webhook. Con Supabase in Gateway
+// Timeout (9-14 set 2026) l'UPDATE falliva, il webhook rispondeva 200 ed
+// Evolution non lo rimandava: un 'close' vero (logout 401) perso lasciava la
+// riga 'open' per sempre. Con un 5xx Evolution 2.3.7 riprova (webhook.controller
+// retryWebhookRequest: 10 tentativi, backoff; non riprova solo 400/401/403/404/422).
+describe('Webhook CONNECTION_UPDATE — failed DB write is not acknowledged', () => {
+  afterEach(() => { mockSupa.setResponse('user_instances:update', null); });
+
+  test('user_instances update error → 5xx so Evolution retries the event', async () => {
+    mockSupa.setResponse('user_instances:update', null, { message: 'Gateway Timeout' });
+    const res = await postWebhook({
+      event: 'connection.update', instance: 'SchedWhats-393331234567', data: { state: 'close', statusReason: 401 },
+    });
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    // niente onboarding/welcome su uno stato che non abbiamo salvato
+    expect(mockSupa.calls.filter(c => c.table === 'user_instances' && c.operation === 'select')).toHaveLength(0);
+  });
+
+  test('state=open with a failed write is retried too (no welcome sent on an unsaved state)', async () => {
+    mockSupa.setResponse('user_instances:update', null, { message: 'Gateway Timeout' });
+    const res = await postWebhook({
+      event: 'connection.update', instance: 'SchedWhats-393331234567', data: { state: 'open', wuid: '393331234567@s.whatsapp.net' },
+    });
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(mockSupa.calls.filter(c => c.table === 'pending_auth_sessions' && c.operation === 'update'
+      && c.args[0]?.status === 'authenticated')).toHaveLength(0);
+  });
+
+  test('successful write still answers 200', async () => {
+    mockSupa.setResponse('user_instances:update', [{ id: 'ui-1', phone_number: '393331234567' }]);
+    const res = await postWebhook({
+      event: 'connection.update', instance: 'SchedWhats-393331234567', data: { state: 'close', statusReason: 428 },
+    });
+    expect(res.status).toBe(200);
+  });
+});
