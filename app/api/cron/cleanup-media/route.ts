@@ -44,12 +44,19 @@ export async function runMediaCleanup(): Promise<CleanupResult> {
   const supabase = getSupabaseAdmin();
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
+  // updated_at (trigger BEFORE UPDATE) oltre a created_at (audit 25 set 2026):
+  // un promemoria programmato >30 gg prima e fallito IERI era già candidato,
+  // e la domenica dopo perdeva l'allegato; il "Riprova" del lunedì partiva col
+  // solo testo (o vuoto) senza avvisare nessuno. Ora un 'failed' resta intero
+  // per 30 gg dal suo ultimo aggiornamento. Per 'sent' il ritardo massimo è
+  // quello delle ricevute (delivered/read aggiornano la riga): trascurabile.
   const { data: candidates, error: selErr } = await supabase
     .from('scheduled_messages')
     .select('id, media_url')
     .in('status', ['sent', 'cancelled', 'failed'])
     .not('media_url', 'is', null)
     .lt('created_at', cutoff)
+    .lt('updated_at', cutoff)
     .limit(BATCH_SIZE);
 
   if (selErr) throw new Error('cleanup-media select failed: ' + selErr.message);
@@ -109,6 +116,70 @@ export async function runMediaCleanup(): Promise<CleanupResult> {
   };
 }
 
+// ── Upload orfani ────────────────────────────────────────────────────────────
+// Il file si carica PRIMA che esista la riga (upload/route.ts, upload/sign):
+// modale chiusa, file sostituito, POST rifiutato → l'oggetto resta nel bucket
+// per sempre, perché la pulizia sopra cammina solo su scheduled_messages. In
+// prod il 25 set: 6 file su 11 orfani, circolari e PDF di clienti caricati 3
+// volte. Qui: tutti gli oggetti <telefono>/<file> più vecchi della soglia che
+// NESSUNA riga (di qualsiasi stato) referenzia. La soglia lascia margine a una
+// modale rimasta aperta; i file referenziati li gestisce la retention a 30 gg.
+export const ORPHAN_MIN_AGE_HOURS = 48;
+const ORPHAN_SCAN_CAP = 500; // budget del cron: il resto la domenica dopo
+const LIST_PAGE = 1000;
+
+export interface OrphanSweepResult { scanned: number; orphans: number; removed: number }
+
+export async function sweepOrphanUploads(nowMs: number = Date.now()): Promise<OrphanSweepResult> {
+  const supabase = getSupabaseAdmin();
+  const cutoffMs = nowMs - ORPHAN_MIN_AGE_HOURS * 60 * 60 * 1000;
+
+  // Primo livello: le cartelle per telefono (Storage le restituisce con id null).
+  const { data: top, error: topErr } = await supabase.storage.from(BUCKET).list('', { limit: LIST_PAGE });
+  if (topErr) throw new Error('orphan sweep list failed: ' + topErr.message);
+  const folders = ((top || []) as Array<{ name: string; id: string | null }>).filter((e) => e.name && e.id === null);
+
+  let scanned = 0;
+  const oldPaths: string[] = [];
+  for (const folder of folders) {
+    if (scanned >= ORPHAN_SCAN_CAP) break;
+    const { data: files, error: listErr } = await supabase.storage.from(BUCKET).list(folder.name, {
+      limit: LIST_PAGE,
+      sortBy: { column: 'created_at', order: 'asc' },
+    });
+    if (listErr) throw new Error('orphan sweep list failed: ' + listErr.message);
+    for (const f of (files || []) as Array<{ name: string; id: string | null; created_at?: string | null }>) {
+      if (!f.name || f.id === null) continue; // sotto-cartelle: non le creiamo noi
+      scanned++;
+      const created = f.created_at ? new Date(f.created_at).getTime() : NaN;
+      // Data ignota = non provato vecchio → si tiene.
+      if (Number.isFinite(created) && created < cutoffMs) oldPaths.push(folder.name + '/' + f.name);
+      if (scanned >= ORPHAN_SCAN_CAP) break;
+    }
+  }
+  if (oldPaths.length === 0) return { scanned, orphans: 0, removed: 0 };
+
+  // Qualsiasi riga, anche cancelled/failed/sent: se la riga c'è il file lo
+  // gestisce la retention sopra. Errore di query → nessuna cancellazione.
+  const { data: refs, error: refErr } = await supabase
+    .from('scheduled_messages')
+    .select('media_url')
+    .in('media_url', oldPaths);
+  if (refErr) throw new Error('orphan sweep reference check failed: ' + refErr.message);
+  const referenced = new Set(((refs || []) as Array<{ media_url: string | null }>).map((r) => r.media_url));
+  const orphans = oldPaths.filter((p) => !referenced.has(p));
+  if (orphans.length === 0) return { scanned, orphans: 0, removed: 0 };
+
+  const { error: rmErr } = await supabase.storage.from(BUCKET).remove(orphans);
+  if (rmErr) throw new Error('orphan sweep remove failed: ' + rmErr.message);
+
+  await logAuditEvent({
+    eventType: 'media_orphan_cleanup',
+    payload: { removed_count: orphans.length, scanned, min_age_hours: ORPHAN_MIN_AGE_HOURS },
+  });
+  return { scanned, orphans: orphans.length, removed: orphans.length };
+}
+
 export async function GET(req: NextRequest) {
   // Accept CRON_SECRET via `Authorization: Bearer` header (what Vercel Cron
   // sends) OR the legacy ?secret= query — matching send-messages. Reading only
@@ -123,7 +194,16 @@ export async function GET(req: NextRequest) {
 
   try {
     const result = await runMediaCleanup();
-    return NextResponse.json(result);
+    // Best-effort e separato: un errore sugli orfani non deve far fallire la
+    // retention (né viceversa); si riprova la domenica dopo.
+    let orphans: OrphanSweepResult | { error: string };
+    try {
+      orphans = await sweepOrphanUploads();
+    } catch (e: any) {
+      console.error('[cleanup-media] orphan sweep failed:', e?.message || e);
+      orphans = { error: e?.message || 'orphan sweep failed' };
+    }
+    return NextResponse.json({ ...result, orphans });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'cleanup failed' }, { status: 500 });
   }
