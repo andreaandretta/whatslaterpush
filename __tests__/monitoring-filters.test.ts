@@ -42,14 +42,14 @@ describe('isTestInstance — default wltest prefix', () => {
 
 describe('isTestInstance — MONITORING_TEST_NUMBERS (covers SchedWhats-<phone>)', () => {
   test('matches an instance whose embedded number is listed', () => {
-    process.env.MONITORING_TEST_NUMBERS = '393780311526, 393780311599';
-    expect(isTestInstance('SchedWhats-393780311526', '393780311526')).toBe(true);
-    expect(isTestInstance('SchedWhats-393780311599')).toBe(true);
+    process.env.MONITORING_TEST_NUMBERS = '393330004001, 393330004002';
+    expect(isTestInstance('SchedWhats-393330004001', '393330004001')).toBe(true);
+    expect(isTestInstance('SchedWhats-393330004002')).toBe(true);
   });
 
   test('accepts numbers in any format (digits-only normalisation)', () => {
-    process.env.MONITORING_TEST_NUMBERS = '+39 378 0311526';
-    expect(isTestInstance('SchedWhats-393780311526', '393780311526')).toBe(true);
+    process.env.MONITORING_TEST_NUMBERS = '+39 333 0004001';
+    expect(isTestInstance('SchedWhats-393330004001', '393330004001')).toBe(true);
   });
 
   test('matches via owner phone even if name has no digits', () => {
@@ -58,7 +58,7 @@ describe('isTestInstance — MONITORING_TEST_NUMBERS (covers SchedWhats-<phone>)
   });
 
   test('does not match an unrelated number', () => {
-    process.env.MONITORING_TEST_NUMBERS = '393780311526';
+    process.env.MONITORING_TEST_NUMBERS = '393330004001';
     expect(isTestInstance('SchedWhats-393331112233', '393331112233')).toBe(false);
   });
 
@@ -69,11 +69,11 @@ describe('isTestInstance — MONITORING_TEST_NUMBERS (covers SchedWhats-<phone>)
   });
 
   test('uses suffix/exact match, not arbitrary substring (no mid-number collision)', () => {
-    process.env.MONITORING_TEST_NUMBERS = '3780311526';
-    // 3780311526 appears in the MIDDLE of this real number, not as a suffix → no match.
-    expect(isTestInstance('SchedWhats-393780311526999', '393780311526999')).toBe(false);
+    process.env.MONITORING_TEST_NUMBERS = '3330004001';
+    // 3330004001 appears in the MIDDLE of this real number, not as a suffix → no match.
+    expect(isTestInstance('SchedWhats-393330004001999', '393330004001999')).toBe(false);
     // …but a genuine suffix match is caught.
-    expect(isTestInstance('SchedWhats-393780311526', '393780311526')).toBe(true);
+    expect(isTestInstance('SchedWhats-393330004001', '393330004001')).toBe(true);
   });
 });
 

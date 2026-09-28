@@ -527,19 +527,19 @@ describe('Webhook: edge cases', () => {
   });
 
   test('cross-user message: user A sends to user B, both have instances — must be ignored', async () => {
-    // Wife (393780858599, instance SchedWhats-3780858599) sends a message
-    // to operator (393442582226, instance SchedWhats-393442582226).
-    // On wife's instance: fromMe=true, remoteJid=operator's number.
-    // findUserStrict(SchedWhats-3780858599, 393442582226) must NOT match.
+    // User A (393330000003, instance SchedWhats-3330000003) sends a message
+    // to operator (393330000001, instance SchedWhats-393330000001).
+    // On user A's instance: fromMe=true, remoteJid=operator's number.
+    // findUserStrict(SchedWhats-3330000003, 393330000001) must NOT match.
     // The webhook must NOT reassign the operator's instance.
     const body = makeMessagePayload({
-      instance: 'SchedWhats-3780858599',
+      instance: 'SchedWhats-3330000003',
       fromMe: true,
-      remoteJid: '393442582226@s.whatsapp.net', // operator's number — NOT self-chat
+      remoteJid: '393330000001@s.whatsapp.net', // operator's number — NOT self-chat
       text: 'Ciao amore, ci vediamo stasera?',
     });
 
-    // findUserStrict returns null — phone 393442582226 is not under SchedWhats-3780858599
+    // findUserStrict returns null — phone 393330000001 is not under SchedWhats-3330000003
     mockSupa.setResponse('user_instances:select', null);
 
     const res = await callWebhook(body);

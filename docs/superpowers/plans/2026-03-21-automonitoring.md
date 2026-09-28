@@ -230,7 +230,7 @@ export async function shouldAlert(checkName: string): Promise<boolean> {
 
 // --- Alert Cascade ---
 
-const OPERATOR_PHONE = '393442582226';
+const OPERATOR_PHONE = '393330000001';
 const OPERATOR_EMAIL = 'musicizthekey@gmail.com';
 
 const CHECK_DESCRIPTIONS: Record<string, string> = {

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Logo from '@/components/Logo';
 import HelpPopover from './HelpPopover';
+import { readPairingNumber } from '@/app/lib/phone';
 
 interface Props {
   code: string;
@@ -20,7 +21,13 @@ interface Props {
 // Polling for pairing status happens in the parent (app/connect/page.tsx) so
 // this component stays pure presentation + clipboard. Il codice si AGGIORNA
 // da solo quando Evolution lo rigenera (~45s): flash "codice aggiornato".
-export default function StepCodice({ code, expiresAt, connState = null, onBack, onRegenerate }: Props) {
+export default function StepCodice({ code, expiresAt, phoneNumber, connState = null, onBack, onRegenerate }: Props) {
+  // Il numero ripetuto in grande PRIMA di andare su WhatsApp: se è sbagliato
+  // il codice non funzionerà mai (hunt fase 1), meglio accorgersene qui.
+  const shownNumber = (() => {
+    const r = phoneNumber ? readPairingNumber('+' + phoneNumber.replace(/\D/g, '')) : null;
+    return r && r.ok ? r.international : '';
+  })();
   const [copied, setCopied] = useState(false);
   const [remaining, setRemaining] = useState<string>('');
   const [justRotated, setJustRotated] = useState(false);
@@ -114,6 +121,15 @@ export default function StepCodice({ code, expiresAt, connState = null, onBack, 
         <p className="text-[#5A6573] mt-2.5 leading-relaxed text-sm">
           Tocca &ldquo;Apri WhatsApp&rdquo; o copia il codice e incollalo manualmente.
         </p>
+        {shownNumber && (
+          <p className="mt-2 text-sm text-[#5A6573]">
+            Codice per <span className="font-mono text-base font-bold text-[#1A1F2C]">{shownNumber}</span>
+            {' · '}
+            <button type="button" onClick={onBack} className="underline font-semibold text-[#075E54]">
+              Non è il tuo? Correggi
+            </button>
+          </p>
+        )}
 
         {/* Code card */}
         <div className="mt-6 bg-white border border-[#075E54]/10 rounded-2xl p-4 shadow-md shadow-black/5">

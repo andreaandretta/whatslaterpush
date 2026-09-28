@@ -78,7 +78,7 @@ export function extractInlinePhoneAndName(text: string): {
     // Skip if this candidate IS a date
     if (datePattern.test(raw)) continue;
 
-    // Handle stray-leading-digit pattern: "1 393275654257", "03 333...", etc.
+    // Handle stray-leading-digit pattern: "1 393330000006", "03 333...", etc.
     // If raw starts with 1-2 digits (no +) followed by whitespace, ALSO try the
     // tail-only candidate and prefer it when it yields a recognizable Italian
     // or international number.
@@ -91,7 +91,7 @@ export function extractInlinePhoneAndName(text: string): {
 
     // Pick the best candidate. Preference order:
     //   1. tail as Italian mobile (12 digits starting with 39) — handles stray leading digit
-    //      like "1 393275654257" where the "1" is typo/dirty input, not a country code
+    //      like "1 393330000006" where the "1" is typo/dirty input, not a country code
     //   2. full as Italian mobile (no stripping needed)
     //   3. full (preserves valid international prefixes like "44 7700..." UK)
     //   4. tail (last resort)

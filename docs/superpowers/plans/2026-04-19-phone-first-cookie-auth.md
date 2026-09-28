@@ -730,7 +730,7 @@ export async function POST(req: NextRequest) {
   const cleanPhone = validatePhone(body?.phone || '');
   if (!cleanPhone) {
     return NextResponse.json(
-      { error: 'Inserisci numero completo con prefisso internazionale (es: 393509898408)' },
+      { error: 'Inserisci numero completo con prefisso internazionale (es: 393330000002)' },
       { status: 400 }
     );
   }

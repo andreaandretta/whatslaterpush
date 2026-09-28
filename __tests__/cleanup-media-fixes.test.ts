@@ -68,23 +68,23 @@ describe('sweepOrphanUploads — file senza nessuna riga che li usi', () => {
   const fresh = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 
   test('rimuove SOLO gli orfani più vecchi della soglia; tiene i referenziati e quelli appena caricati', async () => {
-    listing[''] = [{ name: '393442582226', id: null }];
-    listing['393442582226'] = [
+    listing[''] = [{ name: '393330000001', id: null }];
+    listing['393330000001'] = [
       { name: 'a-circolare.pdf', id: '1', created_at: old },      // usato da una riga
       { name: 'b-circolare.pdf', id: '2', created_at: old },      // orfano (POST rifiutato)
       { name: 'c-circolare.pdf', id: '3', created_at: old },      // orfano (file sostituito)
       { name: 'd-foto.jpg', id: '4', created_at: fresh },         // modale forse ancora aperta
     ];
-    mockSupa.setResponse('scheduled_messages:select', [{ media_url: '393442582226/a-circolare.pdf' }]);
+    mockSupa.setResponse('scheduled_messages:select', [{ media_url: '393330000001/a-circolare.pdf' }]);
 
     const out = await sweepOrphanUploads();
 
     const sel = mockSupa.calls.find((c) => c.table === 'scheduled_messages' && c.operation === 'select')!;
     const inCall = sel.chain.find((c) => c.method === 'in' && c.args[0] === 'media_url')!;
-    expect(inCall.args[1]).toEqual(['393442582226/a-circolare.pdf', '393442582226/b-circolare.pdf', '393442582226/c-circolare.pdf']);
+    expect(inCall.args[1]).toEqual(['393330000001/a-circolare.pdf', '393330000001/b-circolare.pdf', '393330000001/c-circolare.pdf']);
     const rm = storageCalls.filter((c) => c.method === 'remove');
     expect(rm).toHaveLength(1);
-    expect(rm[0].args[0]).toEqual(['393442582226/b-circolare.pdf', '393442582226/c-circolare.pdf']);
+    expect(rm[0].args[0]).toEqual(['393330000001/b-circolare.pdf', '393330000001/c-circolare.pdf']);
     expect(out).toEqual({ scanned: 4, orphans: 2, removed: 2 });
     expect(ORPHAN_MIN_AGE_HOURS).toBeGreaterThanOrEqual(24);
   });

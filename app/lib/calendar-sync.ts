@@ -107,11 +107,20 @@ const PHONE_CANDIDATE_RE = /(\+?\d[\d\s\-\.\/]{7,17}\d)/g;
 // Dates and times are blanked out BEFORE looking for numbers: "10/09/2026
 // 18:30" used to become the run "10/09/2026 18" = recipient 1009202618, and a
 // number right after a date got glued to it.
-const DATE_RE = /\b\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}\b/g;
-const TIME_RE = /\b\d{1,2}[:.]\d{2}\b/g;
+// Only REAL dates/times, and never a group glued to other digits by the same
+// separator: "333.12.34.567", "081.555.53.77" and "06.12.34.56.78" are phones
+// written with dots, and blanking "12.34.567" / "53.77" / "06.12.34" cut them
+// in pieces (review fase 1: the reminder silently vanished). A date uses one
+// separator throughout (\1), so "10/09/2026-340…" still loses the date only.
+// Times: minutes 00-59 ("45.67" is not a time), and the dot-glue check only
+// for '.', so "18:30-19:30" after a phone is still blanked.
+const DATE_RE = /(?<!\d[\/.\-])\b(?:0?[1-9]|[12]\d|3[01])([\/.\-])(?:0?[1-9]|1[0-2])\1(?:\d{4}|\d{2})\b(?!\1\d)/g;
+const TIME_RE = /(?<!\d\.)\b(?:[01]?\d|2[0-3])[:.][0-5]\d\b(?!\.\d)/g;
 // Digits right after these words are codes, not phones ("P.IVA 01234567890"
-// is a valid-looking Turin landline for the phone library).
-const NOT_A_PHONE_BEFORE = /(\biva|partita\s+iva|\bc\.?\s*f\.?|codice(\s+fiscale)?|\bcod\.?|fattura|pratica|ordine|iban|\bnr?\.|\bn°)\s*[:.#]?\s*$/i;
+// is a valid-looking Turin landline for the phone library). "n.", "n°", "Nr."
+// alone are NOT here: in Italian they mean "numero" ("Chiamare al n° 347…");
+// they count only after a code word ("Pratica n. 0123…", "Fattura nr. …").
+const NOT_A_PHONE_BEFORE = /(\biva|partita\s+iva|\bc\.?\s*f\.?|codice(\s+fiscale)?|\bcod\.?|fattura|pratica|ordine|iban)\s*(?:n[r°]?\.?|numero)?\s*[:.#]?\s*$/i;
 
 // Default normalizer: E.164 digits of a real number, '' otherwise. An event is
 // written by a person and nobody confirms the reading before the automatic

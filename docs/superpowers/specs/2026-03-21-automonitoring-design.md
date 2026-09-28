@@ -20,7 +20,7 @@ Single endpoint `/api/monitoring/health-check` runs 6 checks every 15 minutes (v
 
 ## Alert Recipient
 
-- **WhatsApp:** 393442582226 (operator's personal number)
+- **WhatsApp:** 393330000001 (operator's personal number)
 - **Email:** musicizthekey@gmail.com (Resend fallback)
 
 ## Environment Variables (new)
@@ -33,7 +33,7 @@ Single endpoint `/api/monitoring/health-check` runs 6 checks every 15 minutes (v
 Alerts are sent using the operator's own instance. To find it:
 
 ```sql
-SELECT instance_name FROM user_instances WHERE owner_phone = '393442582226' LIMIT 1;
+SELECT instance_name FROM user_instances WHERE owner_phone = '393330000001' LIMIT 1;
 ```
 
 The `sendAlert` function queries this at runtime — no hardcoded instance name needed. Uses the existing `EVOLUTION_API_URL` and `EVOLUTION_API_KEY` env vars.
@@ -123,7 +123,7 @@ interface CheckResult {
 
 ```
 Problem detected
-  └→ Try WhatsApp (Evolution API → 393442582226)
+  └→ Try WhatsApp (Evolution API → 393330000001)
        ├→ Success → log to monitoring_alerts (channel='whatsapp')
        └→ Fails → Try Email (Resend → musicizthekey@gmail.com)
             ├→ Success → log to monitoring_alerts (channel='email')

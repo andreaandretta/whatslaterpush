@@ -71,7 +71,8 @@ export function isPlausibleE164Digits(digits: unknown): boolean {
  *  3. 10 digits starting with 3 is an Italian mobile without +39 (legacy
  *     rule: "3612345678" would otherwise be a valid Budapest number).
  *  4. otherwise the digits already carry their country code.
- *  5. last chance: an Italian national number (e.g. 9-digit old mobiles).
+ *  5. last chance, up to 9 digits only: an Italian national number (e.g.
+ *     9-digit old mobiles).
  * A reading that is fully valid wins; if none is, the digits as they are
  * (never an Italian guess) are kept when plausible (isPlausibleE164Digits).
  * The digits returned are the ones read, never rewritten by the library.
@@ -90,7 +91,11 @@ function parseStoredDigits(raw: string): string | null {
     asIs = clean;
   }
   if (asIs) tries.push(asIs);
-  if (!raw.trim().startsWith('+') && !clean.startsWith('0')) tries.push('39' + clean);
+  // Last chance only for digits too short to carry a country code (old 9-digit
+  // mobiles, 8xx numbers). A 10+ digit JID/DB number the library does not
+  // know ("4386669739") must stay as is: "39"+digits would be a DIFFERENT,
+  // valid Italian number, maybe a stranger's (review fase 1).
+  if (!raw.trim().startsWith('+') && !clean.startsWith('0') && clean.length <= 9) tries.push('39' + clean);
   for (const t of tries) {
     if (acceptable(parsePhoneNumberFromString('+' + forValidation(t)))) return t;
   }
@@ -182,6 +187,54 @@ export function parsePhoneInput(raw: string): PhoneInputResult {
     country: final.country,
     italian: final.countryCallingCode === '39',
     international: final.formatInternational(),
+  };
+}
+
+export type PairingNumberResult =
+  | {
+      ok: true;
+      /** E.164 digits, no "+" (what /api/auth/init receives). */
+      digits: string;
+      /** Italian number without +39 ("3471234567"), for the field; undefined when foreign. */
+      national?: string;
+      italian: boolean;
+      country?: string;
+      /** "+39 347 123 4567" — repeated on step 2 so the user checks it is HIS. */
+      international: string;
+    }
+  | { ok: false; error: PhoneInputError };
+
+/**
+ * The user's OWN number in /connect (the field shows a fixed +39). Phones
+ * autofill it, and people paste it, as "+39 347 123 4567" or "0039…": the old
+ * field kept only the first 10 digits ("393 471 2345") and, one edit later,
+ * asked WhatsApp for a pairing code for a stranger's number (hunt fase 1).
+ * Reading order:
+ *  1. with "+" / "00": the number as written (foreign ones too);
+ *  2. otherwise Italian, like parsePhoneInput (landlines 06…, 9-11 digits);
+ *  3. otherwise "39" + national number typed without "+" (autofill that drops
+ *     the "+"): 12 digits or "390…" only, and only when that reads as a valid
+ *     ITALIAN number.
+ */
+export function readPairingNumber(raw: string): PairingNumberResult {
+  const text = typeof raw === 'string' ? raw.trim() : '';
+  const clean = text.replace(/\D/g, '');
+  let r = parsePhoneInput(text);
+  // Only 12 digits (39 + mobile) or "390…" (39 + landline, which always starts
+  // with 0): an 11-digit "393…" is a 393 mobile with a digit too many, and
+  // reading it as +39 would silently turn it into ANOTHER, shorter number.
+  if (!r.ok && !/^\s*(\+|00)/.test(text) && clean.startsWith('39') && (clean.length === 12 || (clean[2] === '0' && clean.length <= 13))) {
+    const withPrefix = parsePhoneInput('+' + clean);
+    if (withPrefix.ok && withPrefix.italian) r = withPrefix;
+  }
+  if (!r.ok) return r;
+  return {
+    ok: true,
+    digits: r.digits,
+    national: r.italian && r.digits.startsWith('39') ? r.digits.slice(2) : undefined,
+    italian: r.italian,
+    country: r.country,
+    international: r.international,
   };
 }
 
