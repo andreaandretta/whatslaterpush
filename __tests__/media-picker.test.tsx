@@ -10,6 +10,19 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom';
 import { MediaPicker } from '../components/schedule/MediaPicker';
 
+// Lo scanner vero usa canvas (assente in jsdom): qui basta un finto che, al tap su
+// "fine", consegna un PDF come farebbe quello vero. I pezzi dello scanner hanno i
+// loro test (scan-geometry, scan-filter-detect, scan-pdf, document-scanner).
+jest.mock('../components/schedule/DocumentScanner', () => ({
+  __esModule: true,
+  DocumentScanner: ({ initialPhoto, onCancel, onDone }: any) => (
+    <div data-testid="fake-scanner" data-photo={initialPhoto?.name}>
+      <button type="button" onClick={() => onDone(new File(['%PDF-1.7'], 'Scansione 28-09-2026 14.05.pdf', { type: 'application/pdf' }))}>fine-scansione</button>
+      <button type="button" onClick={onCancel}>annulla-scansione</button>
+    </div>
+  ),
+}));
+
 afterEach(() => { jest.restoreAllMocks(); });
 
 function fileInput(container: HTMLElement): HTMLInputElement {
@@ -116,5 +129,60 @@ describe('MediaPicker', () => {
     const { container } = render(<MediaPicker open={true} onClose={() => {}} onAttached={() => {}} />);
     await act(async () => { fireEvent.change(fileInput(container), { target: { files: [new File(['abc'], 's.pdf', { type: 'application/pdf' })] } }); });
     await waitFor(() => expect(urls).toEqual(['/api/messages/upload']));
+  });
+
+  // 26 set 2026: "se voglio caricare un documento lo voglio scannerizzare come fa
+  // WhatsApp nativo, il pdf lo devo avere già pronto".
+  describe('Scansiona documento', () => {
+    function cameraInput(container: HTMLElement): HTMLInputElement {
+      const el = container.querySelector('input[capture="environment"]');
+      if (!el) throw new Error('camera input not found');
+      return el as HTMLInputElement;
+    }
+
+    test('the attach menu offers "Scansiona documento", which opens the rear camera', () => {
+      const { container } = render(<MediaPicker open={true} onClose={() => {}} onAttached={() => {}} />);
+      const cam = cameraInput(container);
+      expect(cam.getAttribute('accept')).toBe('image/*');
+      const click = jest.spyOn(cam, 'click').mockImplementation(() => {});
+      fireEvent.click(screen.getByRole('button', { name: /Scansiona documento/i }));
+      // Sincrono: iOS apre la fotocamera solo dentro il gesto dell'utente.
+      expect(click).toHaveBeenCalledTimes(1);
+    });
+
+    test('the scanned PDF goes through the same upload path as a picked PDF', async () => {
+      const bodies: any[] = [];
+      (global as any).fetch = jest.fn((url: string, opts: any) => {
+        bodies.push({ url: String(url), body: opts?.body });
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ media_url: '39333/u-Scansione.pdf', media_type: 'document', media_filename: 'Scansione_28-09-2026_14.05.pdf' }) });
+      });
+      const onAttached = jest.fn();
+      const onClose = jest.fn();
+      const { container } = render(<MediaPicker open={true} onClose={onClose} onAttached={onAttached} />);
+      const photo = new File(['jpg'], 'IMG_0001.jpg', { type: 'image/jpeg' });
+      await act(async () => { fireEvent.change(cameraInput(container), { target: { files: [photo] } }); });
+      expect(screen.getByTestId('fake-scanner')).toHaveAttribute('data-photo', 'IMG_0001.jpg');
+
+      await act(async () => { fireEvent.click(screen.getByText('fine-scansione')); });
+      await waitFor(() => expect(onAttached).toHaveBeenCalledTimes(1));
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0].url).toBe('/api/messages/upload');
+      const sent = (bodies[0].body as FormData).get('file') as File;
+      expect(sent.type).toBe('application/pdf');
+      expect(sent.name).toBe('Scansione 28-09-2026 14.05.pdf');
+      expect(onAttached.mock.calls[0][0]).toMatchObject({ media_type: 'document', media_filename: 'Scansione_28-09-2026_14.05.pdf' });
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId('fake-scanner')).not.toBeInTheDocument();
+    });
+
+    test('cancelling the scanner goes back to the attach menu without uploading', async () => {
+      (global as any).fetch = jest.fn();
+      const { container } = render(<MediaPicker open={true} onClose={() => {}} onAttached={() => {}} />);
+      await act(async () => { fireEvent.change(cameraInput(container), { target: { files: [new File(['j'], 'a.jpg', { type: 'image/jpeg' })] } }); });
+      fireEvent.click(screen.getByText('annulla-scansione'));
+      expect(screen.queryByTestId('fake-scanner')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Scansiona documento/i })).toBeInTheDocument();
+      expect((global as any).fetch).not.toHaveBeenCalled();
+    });
   });
 });

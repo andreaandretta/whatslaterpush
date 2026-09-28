@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
-import { Paperclip, Image as ImageIcon, Video, FileText, Mic, X, Loader2, AlertCircle } from 'lucide-react';
+import { Paperclip, Image as ImageIcon, Video, FileText, Mic, X, Loader2, AlertCircle, FileScan } from 'lucide-react';
 import { pickUploadRoute, shouldCompressImage, fitWithin, uploadErrorMessage, IMAGE_JPEG_QUALITY } from '../../app/lib/upload-limits';
+import { DocumentScanner } from './DocumentScanner';
 
 export interface MediaAttachment {
   media_url: string;          // Supabase Storage path returned by /api/messages/upload
@@ -106,6 +107,10 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // "Scansiona documento": foto dalla fotocamera posteriore → scanner a tutto
+  // schermo → PDF. Il PDF rientra da onFile, la stessa strada di un PDF scelto a mano.
+  const scanRef = useRef<HTMLInputElement>(null);
+  const [scanPhoto, setScanPhoto] = useState<File | null>(null);
   // Upload in volo: va annullato quando il picker si chiude o si smonta. Senza,
   // un file pesante caricato per Mario poteva finire allegato alla modale aperta
   // subito dopo per Luigi (ScheduleModal resta montata tra un contatto e l'altro).
@@ -118,6 +123,7 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
       setKind(null);
       return;
     }
+    setScanPhoto(null);
     uploadRef.current?.abort();
     uploadRef.current = null;
     setUploading(false);
@@ -131,6 +137,14 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
     setKind(k);
     setErr(null);
     setTimeout(() => fileRef.current?.click(), 0);
+  }
+
+  function startScan() {
+    setErr(null);
+    // Click sincrono (niente setTimeout): iOS Safari apre la fotocamera solo se il
+    // click arriva dentro il gesto dell'utente. Su desktop `capture` è ignorato e
+    // si apre il normale selettore di immagini.
+    scanRef.current?.click();
   }
 
   async function onFile(original: File) {
@@ -215,6 +229,19 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
                 </button>
               );
             })}
+            <button
+              type="button"
+              onClick={startScan}
+              className="col-span-2 flex items-center gap-3 px-4 py-3 rounded-xl bg-[#2A3942] hover:bg-[#374851] text-white text-left"
+            >
+              <div className="w-12 h-12 shrink-0 rounded-full flex items-center justify-center bg-cyan-500/20">
+                <FileScan className="w-6 h-6 text-cyan-400" />
+              </div>
+              <span className="flex flex-col">
+                <span className="text-sm font-medium">Scansiona documento</span>
+                <span className="text-xs text-gray-400">Fotografa un foglio, diventa un PDF</span>
+              </span>
+            </button>
           </div>
         )}
 
@@ -231,9 +258,29 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
             if (f) onFile(f);
           }}
         />
+        <input
+          ref={scanRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (f) setScanPhoto(f);
+          }}
+        />
 
         <p className="text-xs text-gray-500 text-center mt-3">Max {MAX_MB}MB. Privato, accessibile solo al destinatario.</p>
       </div>
+
+      {scanPhoto && (
+        <DocumentScanner
+          initialPhoto={scanPhoto}
+          onCancel={() => setScanPhoto(null)}
+          onDone={(pdf) => { setScanPhoto(null); onFile(pdf); }}
+        />
+      )}
     </div>
   );
 }
