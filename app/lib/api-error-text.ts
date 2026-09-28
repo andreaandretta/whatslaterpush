@@ -40,6 +40,10 @@ const CODE_TEXT: Record<string, string> = {
   'id required': GENERIC_ERROR_TEXT,
   'Message not found or not owned': 'Messaggio non trovato: forse è già stato eliminato. Aggiorna la pagina.',
   media_expired: 'L\'allegato di questo messaggio non è più disponibile: usa "Duplica" e caricalo di nuovo.',
+  // Il server manda già la frase completa (con i campi mancanti o l'orario):
+  // queste sono solo il ripiego per una risposta senza `message`.
+  unfilled_placeholder: 'Completa i campi tra parentesi prima di inviare.',
+  time_passed: 'L\'orario di questo messaggio è già passato: scegli se inviarlo ora o a un nuovo orario.',
   // Upload allegati e importazione contatti
   empty_file: 'Il file è vuoto.',
   missing_file: 'Nessun file ricevuto: riprova a sceglierlo.',

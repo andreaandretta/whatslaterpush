@@ -74,7 +74,10 @@ describe('Modifica', () => {
     fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
     await waitFor(() => expect((global as any).fetch).toHaveBeenCalledTimes(1));
     const body = JSON.parse((global as any).fetch.mock.calls[0][1].body);
-    expect(new Date(body.scheduled_at).getTime()).toBe(sat.getTime());
+    // Fase 1b: una modifica solo-testo non manda proprio l'orario, così il
+    // server lascia com'è quello salvato (sabato), ancora della ricorrenza inclusa.
+    expect(body).not.toHaveProperty('scheduled_at');
+    expect(screen.getByRole('button', { name: /Invia/i })).toHaveTextContent('18:00');
   });
 
   test('a weekly message keeps its recurrence (no recurrence_rule:null in the PATCH)', async () => {
