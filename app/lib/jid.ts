@@ -66,3 +66,32 @@ export function isLegacyLidRow(row: { contact_number?: unknown; added_manually?:
   const created = row.created_at ? Date.parse(row.created_at) : NaN;
   return !(created >= Date.parse(LID_INGEST_FIX_AT));
 }
+
+// ── Gruppi ──
+// Un gruppo si salva col JID intero in scheduled_messages.recipient_number: il
+// tipo di destinatario si ricava dal suffisso. Formato attuale `120363…@g.us`
+// (15-22 cifre) o vecchio `<telefono creatore>-<timestamp>@g.us`. Broadcast,
+// newsletter, LID e JID malformati (es. `12345@g.us`) NON sono gruppi.
+const GROUP_JID = /^(?:\d{15,22}|\d{8,15}-\d{9,11})@g\.us$/;
+
+/** JID di gruppo canonico (trim + minuscolo), oppure null. */
+export function normalizeGroupJid(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim().toLowerCase();
+  return GROUP_JID.test(s) ? s : null;
+}
+
+export function isGroupJid(raw: unknown): boolean {
+  return normalizeGroupJid(raw) !== null;
+}
+
+/**
+ * Nome da mostrare per una riga di scheduled_messages. Un gruppo senza nome
+ * non mostra mai le cifre del JID: nel formato vecchio sono il telefono di chi
+ * ha creato il gruppo. Le persone restano come prima: nome o `+numero`.
+ */
+export function recipientDisplayName(m: { recipient_name?: string | null; recipient_number?: string | null }): string {
+  const name = m?.recipient_name;
+  if (isGroupJid(m?.recipient_number)) return name && name.trim() ? name : 'Gruppo senza nome';
+  return name || `+${m?.recipient_number || '?'}`;
+}

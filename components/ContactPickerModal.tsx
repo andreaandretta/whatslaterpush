@@ -6,7 +6,8 @@ import { X, Search, UserPlus, ChevronDown, ChevronUp, AlertCircle, Loader2, Uplo
 // quando serve: all'apertura di "Nuovo contatto", non con la dashboard.
 import type { PhoneInputResult } from '../app/lib/phone';
 import { pickerStateForResponseStatus } from '../app/lib/contacts-picker-state';
-import { getContactsSnapshot, setContactsSnapshot, clearContactsSnapshots } from '../app/lib/contacts-client-cache';
+import { getContactsSnapshot, setContactsSnapshot, clearContactsSnapshots, getGroupsSnapshot, setGroupsSnapshot, type PickerGroup } from '../app/lib/contacts-client-cache';
+import { isGroupJid } from '../app/lib/jid';
 import { Button } from './Button';
 import { ContactAvatar } from './ContactAvatar';
 import { LabelPicker } from './LabelPicker';
@@ -46,6 +47,12 @@ function digitsQuery(q: string): string | null {
 // Quante righe si montano per volta. La ricerca lavora SEMPRE sull'intera lista:
 // è solo il render a essere a finestra.
 const PAGE_SIZE = 60;
+
+// Lo snapshot dei gruppi (solo in memoria) vale 10 minuti: dentro questa
+// finestra riaprire il picker non rilegge i gruppi. Ogni lettura costa a
+// WhatsApp 1+2N richieste, e il server ne concede una ogni 30 minuti.
+const GROUPS_FRESH_MS = 10 * 60_000;
+const GROUPS_TIMEOUT_MS = 30_000;
 
 // Misure a richiesta: in console `localStorage.setItem('wl_perf','1')`, poi riapri la rubrica.
 function perfEnabled(): boolean {
@@ -91,10 +98,55 @@ const ContactRow = React.memo(function ContactRow({
   );
 });
 
+// Sottotitolo di un gruppo: "Gruppo · 19 persone", "Gruppo · 1 persona", "Gruppo".
+function groupSubtitle(g: PickerGroup): string {
+  const parts = ['Gruppo'];
+  if (typeof g.size === 'number' && g.size > 0) parts.push(g.size === 1 ? '1 persona' : `${g.size} persone`);
+  if (g.hint) parts.push(g.hint);
+  if (!g.can_send) parts.push('scrivono solo gli amministratori');
+  return parts.join(' · ');
+}
+
+// Riga di un gruppo: stesso layout di ContactRow. Mai le cifre del JID a schermo.
+// Un gruppo in cui scrivono solo gli amministratori resta visibile ma non si sceglie.
+const GroupRow = React.memo(function GroupRow({
+  group: g,
+  onPick,
+}: {
+  group: PickerGroup;
+  onPick: (contact: PickedContact) => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={!g.can_send}
+      onClick={() => onPick({ number: g.jid, name: g.name, kind: 'group', size: g.size, hint: g.hint ?? null })}
+      className={`w-full flex items-center gap-3 px-4 py-2.5 text-left ${g.can_send ? 'hover:bg-[#1F2C34]' : 'opacity-50 cursor-not-allowed'}`}
+    >
+      <ContactAvatar name={g.name} number={g.jid} variant="group" />
+      <div className="flex-1 min-w-0">
+        <div className="font-semibold text-white truncate">{g.name}</div>
+        <div className="text-xs truncate" style={{ color: '#AEBAC1' }}>
+          {groupSubtitle(g)}
+        </div>
+      </div>
+    </button>
+  );
+});
+
 // manualEntry: il numero è stato scritto a mano in "Nuovo contatto" (non scelto
 // dalla rubrica o dai Recenti). La POST /api/messages lo salva come contatto
 // manuale SOLO in quel caso (body.manual_entry).
-export type PickedContact = { number: string; name?: string; manualEntry?: boolean };
+// kind 'group': `number` è il JID del gruppo; size e hint (omonimi) servono
+// solo alla ScheduleModal, il server rilegge nome e persone da WhatsApp.
+export type PickedContact = {
+  number: string;
+  name?: string;
+  manualEntry?: boolean;
+  kind?: 'contact' | 'group';
+  size?: number | null;
+  hint?: string | null;
+};
 
 interface ContactPickerModalProps {
   open: boolean;
@@ -107,6 +159,27 @@ type PickerState =
   | { kind: 'list'; contacts: Contact[]; recents: Contact[] }
   | { kind: 'syncing' } // #3b: fresh instance, address book not synced yet — transient, retryable
   | { kind: 'error'; reason: 'timeout' | 'unavailable' | 'unauthorized' };
+
+// Sezione Gruppi. `visible` sugli stati di attesa/errore: con i gruppi spenti
+// (GROUPS_ENABLED assente) la sezione non deve comparire nemmeno per un attimo,
+// quindi "Carico i gruppi…" e l'errore si mostrano solo se c'è un indizio che i
+// gruppi siano accesi (uno snapshot con gruppi, o groups_status dalla rubrica).
+// `groups` su loading/error: durante e dopo un Aggiorna la lista a schermo resta.
+// `refreshed`: la risposta viene da un Aggiorna, e il motivo va detto anche
+// se sotto c'è la lista (altrimenti Aggiorna sembra non fare niente).
+type GroupsState =
+  | { kind: 'off' }
+  | { kind: 'waiting'; visible: boolean }   // aspetta la risposta di /api/contacts
+  | { kind: 'loading'; visible: boolean; groups: PickerGroup[] }
+  | { kind: 'list'; groups: PickerGroup[] }
+  | { kind: 'throttled'; groups: PickerGroup[]; refreshed: boolean }
+  | { kind: 'slow'; groups: PickerGroup[]; refreshed: boolean }
+  | { kind: 'error'; visible: boolean; groups: PickerGroup[] }
+  | { kind: 'disconnected' };
+
+function validGroups(raw: unknown): PickerGroup[] {
+  return Array.isArray(raw) ? raw.filter((g) => g && isGroupJid(g.jid) && typeof g.name === 'string') : [];
+}
 
 export default function ContactPickerModal({ open, onClose, onSelect }: ContactPickerModalProps) {
   const [state, setState] = useState<PickerState>({ kind: 'loading' });
@@ -129,6 +202,15 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   // when the user creates or deletes a label from the manager.
   const [labelManagerOpen, setLabelManagerOpen] = useState(false);
   const [labelRefetchKey, setLabelRefetchKey] = useState(0);
+  // Gruppi: /api/groups parte solo DOPO la risposta di /api/contacts (che può
+  // già portarli, D18). contactsPendingRef copre il run in cui l'effetto della
+  // rubrica è appena ripartito ma contactsSettled è ancora quello vecchio.
+  const [contactsSettled, setContactsSettled] = useState(false);
+  const contactsPendingRef = useRef(false);
+  const contactsGroupsRef = useRef<{ status: string | null; brought: boolean }>({ status: null, brought: false });
+  const [groupsState, setGroupsState] = useState<GroupsState>({ kind: 'off' });
+  const [groupsRefreshKey, setGroupsRefreshKey] = useState(0);
+  const groupsRefreshRef = useRef(false);
   // Render incrementale: quante righe della lista filtrata sono montate.
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -178,6 +260,10 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), 8000);
     const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
+    contactsPendingRef.current = true;
+    contactsGroupsRef.current = { status: null, brought: false };
+    setContactsSettled(false);
+    const settle = () => { contactsPendingRef.current = false; setContactsSettled(true); };
 
     // Stale-while-revalidate: se per questo filtro c'è già una lista, mostrala subito.
     const snap = getContactsSnapshot(labelFilterId);
@@ -203,9 +289,10 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
         // "syncing…" state with a retry, not a broken picker.
         const errState = pickerStateForResponseStatus(res.status);
         if (errState) {
-          if (errState.kind === 'error') { clearContactsSnapshots(); setState(errState); return; }
+          if (errState.kind === 'error') { clearContactsSnapshots(); setState(errState); settle(); return; }
           // Errore transitorio: se c'è già una lista a schermo, meglio vecchia che niente.
           showLateSnapshotOr(errState);
+          settle();
           return;
         }
         const tHeaders = typeof performance !== 'undefined' ? performance.now() : 0;
@@ -216,9 +303,18 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
         // Una lettura parziale (una pagina della rubrica è fallita lato server) si
         // mostra ma non si mette in cache: alla prossima apertura si rilegge tutto.
         if (res.headers?.get?.('x-contacts-partial') !== '1') setContactsSnapshot(labelFilterId, contacts, recents);
+        // Gruppi letti insieme alla rubrica (solo con i gruppi accesi): niente /api/groups.
+        const broughtGroups = Array.isArray(body.groups);
+        if (broughtGroups) setGroupsSnapshot(validGroups(body.groups));
+        contactsGroupsRef.current = {
+          status: typeof body.groups_status === 'string' ? body.groups_status : null,
+          brought: broughtGroups,
+        };
         setState({ kind: 'list', contacts, recents });
         shown = true;
-        if (contacts.length === 0 && !labelFilterId) setManualOpen(true);
+        settle();
+        // Rubrica vuota → Nuovo contatto aperto, tranne quando ci sono gruppi da scegliere.
+        if (contacts.length === 0 && !labelFilterId && !(getGroupsSnapshot()?.groups.length)) setManualOpen(true);
         if (perfEnabled() && typeof requestAnimationFrame !== 'undefined') {
           const tParsed = performance.now();
           requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -244,10 +340,87 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
         if (cancelled) return; // abort del cleanup: NON è "sincronizzazione"
         // Timeout/network blip. Con una lista già a schermo la teniamo; senza, syncing + retry.
         showLateSnapshotOr({ kind: 'syncing' });
+        settle();
       });
 
     return () => { cancelled = true; clearTimeout(timer); abort.abort(); };
   }, [open, labelFilterId, refetchKey]);
+
+  // Gruppi (D18). Mai in parallelo a /api/contacts: prima lo snapshot fresco,
+  // poi si aspetta la rubrica, che può averli già portati o aver detto che il
+  // server è lento. Un errore qui non tocca mai la rubrica né "Nuovo contatto".
+  useEffect(() => {
+    if (!open || labelFilterId !== null) return;
+    const refresh = groupsRefreshRef.current;
+    const snap = getGroupsSnapshot();
+    const fromContacts = contactsGroupsRef.current;
+    const likelyOn = (snap?.groups.length ?? 0) > 0 || fromContacts.status !== null;
+
+    if (!refresh && snap && Date.now() - snap.fetchedAt < GROUPS_FRESH_MS) {
+      setGroupsState({ kind: 'list', groups: snap.groups });
+      return;
+    }
+    if (!contactsSettled || contactsPendingRef.current) {
+      setGroupsState({ kind: 'waiting', visible: likelyOn });
+      return;
+    }
+    if (!refresh) {
+      if (fromContacts.brought) {
+        setGroupsState({ kind: 'list', groups: snap?.groups ?? [] });
+        return;
+      }
+      // La rubrica ha aspettato i gruppi 5 s senza risposta: niente fetch automatica.
+      if (fromContacts.status === 'timeout') {
+        setGroupsState({ kind: 'slow', groups: snap?.groups ?? [], refreshed: false });
+        return;
+      }
+    }
+
+    groupsRefreshRef.current = false;
+    let cancelled = false;
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), GROUPS_TIMEOUT_MS);
+    const kept = refresh ? (snap?.groups ?? []) : [];
+    setGroupsState({ kind: 'loading', visible: likelyOn, groups: kept });
+    fetch('/api/groups' + (refresh ? '?refresh=1' : ''), { signal: abort.signal })
+      .then(async (res) => {
+        clearTimeout(timer);
+        if (cancelled) return;
+        if (res.status === 401) { setGroupsState({ kind: 'off' }); return; }
+        const body = await res.json().catch(() => null);
+        if (cancelled) return;
+        if (!res.ok) {
+          // groups_timeout / groups_unavailable arrivano solo con i gruppi accesi.
+          const known = typeof body?.error === 'string' && body.error.startsWith('groups_');
+          setGroupsState({ kind: 'error', visible: known || likelyOn, groups: kept });
+          return;
+        }
+        if (body?.enabled === false) { setGroupsState({ kind: 'off' }); return; }
+        if (body?.connected === false) { setGroupsState({ kind: 'disconnected' }); return; }
+        const groups = validGroups(body?.groups);
+        if (body?.slow || body?.throttled) {
+          // Il server non ha letto: si mostra quello che c'è, anche uno snapshot vecchio.
+          if (groups.length > 0) setGroupsSnapshot(groups);
+          const shown = groups.length > 0 ? groups : (getGroupsSnapshot()?.groups ?? []);
+          setGroupsState({ kind: body.slow ? 'slow' : 'throttled', groups: shown, refreshed: refresh });
+          return;
+        }
+        setGroupsSnapshot(groups);
+        setGroupsState({ kind: 'list', groups });
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        if (cancelled) return;
+        setGroupsState({ kind: 'error', visible: likelyOn, groups: kept });
+      });
+
+    return () => { cancelled = true; clearTimeout(timer); abort.abort(); };
+  }, [open, labelFilterId, contactsSettled, groupsRefreshKey]);
+
+  const refreshGroups = useCallback(() => {
+    groupsRefreshRef.current = true;
+    setGroupsRefreshKey((k) => k + 1);
+  }, []);
 
   useEffect(() => {
     if (state.kind === 'error') setManualOpen(true);
@@ -272,13 +445,28 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   );
 
   // La ricerca gira sull'INTERA lista (anche sulle righe non ancora montate).
+  // Difesa: un JID (con '@') non è mai un contatto da mostrare.
   const filtered = useMemo(() => {
     if (view.kind !== 'list') return [];
     const q = search.trim().toLowerCase();
-    if (!q) return view.contacts;
+    if (!q) return view.contacts.filter((c) => !c.number.includes('@'));
     const qd = digitsQuery(q);
-    return view.contacts.filter((c, i) => lowerNames[i].includes(q) || c.number.includes(q) || (qd !== null && c.number.includes(qd)));
+    return view.contacts.filter((c, i) => !c.number.includes('@') && (lowerNames[i].includes(q) || c.number.includes(q) || (qd !== null && c.number.includes(qd))));
   }, [view, lowerNames, search]);
+
+  // Gruppi a schermo: la ricerca guarda solo il nome, mai le cifre del JID.
+  // Con un filtro etichetta la sezione è nascosta: nessun gruppo conta.
+  const allGroups = useMemo(
+    () => (labelFilterId !== null || groupsState.kind === 'off' || groupsState.kind === 'waiting' || groupsState.kind === 'disconnected'
+      ? []
+      : groupsState.groups),
+    [groupsState, labelFilterId],
+  );
+  const filteredGroups = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return allGroups;
+    return allGroups.filter((g) => g.name.toLowerCase().includes(q));
+  }, [allGroups, search]);
 
   // Finestra di render: prime N righe, le altre arrivano scorrendo (o col bottone).
   const visible = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
@@ -357,6 +545,26 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
 
   if (!open) return null;
 
+  const searching = search.trim() !== '';
+  const recents = view.kind === 'list' ? view.recents.filter((c) => !c.number.includes('@')) : [];
+  // Righe di stato della sezione Gruppi (mai durante una ricerca).
+  let groupsStatus: string | null = null;
+  if (!searching) {
+    if ((groupsState.kind === 'waiting' || groupsState.kind === 'loading') && groupsState.visible) groupsStatus = 'Carico i gruppi…';
+    else if (groupsState.kind === 'error' && groupsState.visible) groupsStatus = 'Non riesco a leggere i gruppi. Tocca Aggiorna per riprovare.';
+    else if (groupsState.kind === 'throttled' && (allGroups.length === 0 || groupsState.refreshed)) groupsStatus = 'Gruppi: riprova tra qualche minuto.';
+    else if (groupsState.kind === 'slow' && (allGroups.length === 0 || groupsState.refreshed)) groupsStatus = 'Hai tanti gruppi: la lista non è ancora pronta. Riprova più tardi.';
+    else if (groupsState.kind === 'disconnected') groupsStatus = 'Ricollega WhatsApp per vedere i tuoi gruppi.';
+  }
+  const showGroups = labelFilterId === null && (filteredGroups.length > 0 || groupsStatus !== null);
+  const canRefreshGroups = groupsState.kind === 'list' || groupsState.kind === 'error'
+    || groupsState.kind === 'throttled' || groupsState.kind === 'slow';
+  // Con i gruppi spenti, o nascosti dal filtro etichetta, la ricerca dice "Cerca contatto…" come prima.
+  const groupsOn = labelFilterId === null && (
+    groupsState.kind === 'list' || groupsState.kind === 'throttled' || groupsState.kind === 'slow'
+    || groupsState.kind === 'disconnected'
+    || ((groupsState.kind === 'waiting' || groupsState.kind === 'loading' || groupsState.kind === 'error') && groupsState.visible));
+
   return (
     <div
       className="fixed inset-0 z-modal bg-black/60 sm:flex sm:items-center sm:justify-center sm:px-4"
@@ -430,7 +638,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Cerca contatto…"
+              placeholder={groupsOn ? 'Cerca contatto o gruppo…' : 'Cerca contatto…'}
               className="w-full pl-9 pr-3 py-2 rounded-full text-sm text-white placeholder:text-[#8696A0] focus:outline-none focus:ring-2"
               style={{ backgroundColor: '#2A3942', boxShadow: 'none' }}
             />
@@ -519,7 +727,40 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             </div>
           )}
 
-          {view.kind === 'list' && !search.trim() && view.recents.length > 0 && (
+          {showGroups && (
+            <div data-testid="groups-section">
+              {/* Aggiorna: area di tocco 44×44 che sborda nel padding dell'intestazione
+                  (-my-3 dentro pt-3/pb-3) senza coprire la prima riga di gruppo. */}
+              <div className="flex items-center justify-between min-h-[44px] px-4 pt-3 pb-3">
+                <span className="text-xs font-semibold uppercase" style={{ color: '#25D366' }}>
+                  Gruppi
+                </span>
+                {canRefreshGroups && (
+                  <button
+                    type="button"
+                    onClick={refreshGroups}
+                    className="inline-flex items-center justify-center min-h-[44px] min-w-[44px] -my-3 -mr-3 px-3 rounded-full text-xs font-medium hover:bg-white/5"
+                    style={{ color: '#25D366' }}
+                  >
+                    Aggiorna
+                  </button>
+                )}
+              </div>
+              {filteredGroups.map((g) => (
+                <GroupRow key={`g:${g.jid}`} group={g} onPick={handlePick} />
+              ))}
+              {groupsStatus && (
+                <div className="px-4 py-2 text-xs flex items-center gap-2" style={{ color: '#AEBAC1' }} role="status">
+                  {(groupsState.kind === 'waiting' || groupsState.kind === 'loading') && (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" style={{ color: '#25D366' }} />
+                  )}
+                  <span>{groupsStatus}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {view.kind === 'list' && !searching && recents.length > 0 && (
             <>
               <div
                 className="px-4 pt-3 pb-1 text-xs font-semibold uppercase"
@@ -527,7 +768,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
               >
                 Recenti
               </div>
-              {view.recents.map((c) => (
+              {recents.map((c) => (
                 <ContactRow key={`r:${c.number}`} contact={c} onPick={handlePick} />
               ))}
             </>
@@ -587,7 +828,8 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             </div>
           )}
 
-          {view.kind === 'list' && filtered.length === 0 && view.contacts.length > 0 && (
+          {view.kind === 'list' && searching && filtered.length === 0 && filteredGroups.length === 0
+            && (view.contacts.length > 0 || allGroups.length > 0) && (
             <div className="p-8 text-center text-sm space-y-3" style={{ color: '#AEBAC1' }}>
               <p>Nessun risultato per &quot;{search}&quot;.</p>
               <p className="text-xs">
@@ -605,7 +847,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             </div>
           )}
 
-          {view.kind === 'list' && view.contacts.length === 0 && (
+          {view.kind === 'list' && view.contacts.length === 0 && allGroups.length === 0 && (
             <div className="p-8 text-center text-sm" style={{ color: '#AEBAC1' }}>
               Nessun contatto in rubrica.
             </div>

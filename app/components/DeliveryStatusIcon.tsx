@@ -23,12 +23,22 @@ function formatTime(iso: string | null | undefined): string {
 //   read_at IS NOT NULL → ✓✓          sky   (2 ticks blue)
 // Returns null when the message is not yet sent (status != 'sent') so the
 // caller can keep the existing pending/awaiting badge unchanged.
-export function DeliveryStatusIcon({ msg }: { msg: MsgLike }) {
+// Gruppi: Evolution non inoltra le ricevute dei gruppi, quindi solo ✓ (un
+// delivered_at/read_at su un gruppo non dice niente di tutti i membri).
+export function DeliveryStatusIcon({ msg, isGroup = false }: { msg: MsgLike; isGroup?: boolean }) {
   // Custody ack: WhatsApp ha rifiutato il messaggio DOPO il nostro 'sent'.
   if (msg.ack_error_at) {
     return (
       <span title={`Non accettato da WhatsApp ${formatTime(msg.ack_error_at)}`} aria-label="Non accettato da WhatsApp" data-testid="status-ack-error" className="text-red-400 font-bold">
         !
+      </span>
+    );
+  }
+  if (isGroup) {
+    if (msg.status !== 'sent') return null;
+    return (
+      <span title="Inviato nel gruppo (per i gruppi WhatsApp non ci manda le spunte di consegna)" aria-label="Inviato" data-testid="status-sent">
+        <Check className="w-3.5 h-3.5 text-gray-400 shrink-0" />
       </span>
     );
   }

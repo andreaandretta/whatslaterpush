@@ -96,3 +96,35 @@ describe('runWebhookLogsCleanup — idempotence', () => {
     expect(auditInserts).toHaveLength(1);
   });
 });
+
+describe('runWebhookLogsCleanup — gettoni dei gruppi in rate_limit_state', () => {
+  function findGrpDelete() {
+    return mockSupa.calls.find(c => c.table === 'rate_limit_state' && c.operation === 'delete');
+  }
+
+  test('cancella solo le chiavi grp:% non aggiornate da 24 ore', async () => {
+    mockSupa.setResponse('webhook_logs:delete', null, null, { count: 0 });
+    mockSupa.setResponse('rate_limit_state:delete', null, null, { count: 3 });
+    const { runWebhookLogsCleanup } = await import('../app/api/cron/cleanup-webhook-logs/route');
+    await runWebhookLogsCleanup();
+
+    const del = findGrpDelete()!;
+    expect(del).toBeDefined();
+    expect(del.chain).toContainEqual({ method: 'like', args: ['key', 'grp:%'] });
+    const lt = del.chain.find(c => c.method === 'lt' && c.args[0] === 'updated_at');
+    expect(lt).toBeDefined();
+    const cutoffMs = new Date(lt!.args[1] as string).getTime();
+    expect(Math.abs(cutoffMs - (Date.now() - 24 * 60 * 60 * 1000))).toBeLessThan(5_000);
+  });
+
+  test('un errore sulla pulizia dei gettoni non ferma il cron', async () => {
+    mockSupa.setResponse('webhook_logs:delete', null, null, { count: 5 });
+    mockSupa.setResponse('rate_limit_state:delete', null, { message: 'boom' });
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const { runWebhookLogsCleanup } = await import('../app/api/cron/cleanup-webhook-logs/route');
+    const result = await runWebhookLogsCleanup();
+    expect(result).toEqual({ status: 'ok', removed_count: 5 });
+    expect(errSpy.mock.calls.some(c => String(c[0]).includes('grp:*'))).toBe(true);
+    errSpy.mockRestore();
+  });
+});

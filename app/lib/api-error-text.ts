@@ -54,6 +54,21 @@ const CODE_TEXT: Record<string, string> = {
   too_many_rows: 'Il file ha troppe righe: dividilo in più file.',
   contact_limit_reached: 'Hai raggiunto il numero massimo di contatti.',
   unsupported_mime: 'Tipo di file non supportato.',
+  // Gruppi WhatsApp come destinatario
+  groups_disabled: 'Per ora non si può programmare un messaggio in un gruppo.',
+  whatsapp_disconnected: 'WhatsApp è scollegato: ricollegalo per scrivere in un gruppo.',
+  group_check_rate_limited: 'Hai controllato troppi gruppi in poco tempo: riprova tra qualche minuto.',
+  group_check_unavailable: 'Non riesco a controllare il gruppo adesso: riprova tra un minuto.',
+  recipient_not_group_member: 'Non fai parte di questo gruppo (o ne sei uscito): scegline uno dalla lista.',
+  group_admins_only: 'In questo gruppo scrivono solo gli amministratori.',
+  group_is_community: 'Questa è una community: scegli uno dei suoi gruppi.',
+  placeholder_not_for_group: 'Nei gruppi non si può usare {nome}: il messaggio arriva uguale a tutti. Toglilo o scrivi «Ciao a tutti».',
+  groups_timeout: 'I gruppi ci mettono troppo a rispondere: riprova tra poco.',
+  groups_unavailable: 'Non riesco a leggere i gruppi adesso: riprova tra poco.',
+  // Porta finta "foto del calendario"
+  invalid_answer: 'Risposta non valida.',
+  fake_door_closed: 'Questa domanda non è più attiva.',
+  save_failed: 'Non sono riuscito a salvare la risposta: riprova.',
 };
 
 export function apiErrorText(body: ApiErrorBody | null | undefined, status?: number): string {

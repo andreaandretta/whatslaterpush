@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
-import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, isNotOnWhatsAppError, countBreakerFailures, BREAKER_THRESHOLD, sendTimeoutMs, cooldownReleaseAt, COOLDOWN_MAX_PER_RECIPIENT, disconnectRetryStep, DISCONNECT_RETRY_THRESHOLD, isLateDisconnectBacklog, planBacklogSpread, MEDIA_EXPIRED_ERROR } from '../../../lib/cron-utils';
+import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, isNotOnWhatsAppError, countBreakerFailures, BREAKER_THRESHOLD, sendTimeoutMs, cooldownReleaseAt, COOLDOWN_MAX_PER_RECIPIENT, disconnectRetryStep, DISCONNECT_RETRY_THRESHOLD, isLateDisconnectBacklog, planBacklogSpread, MEDIA_EXPIRED_ERROR, classifyGroupSendFailure } from '../../../lib/cron-utils';
 import { isBillingEnabled, getEffectivePlan } from '../../../lib/billing';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
@@ -14,6 +14,9 @@ import { applyTemplateVariables } from '../../../lib/template-variables';
 import { logAuditEvent, hashContactRef } from '../../../lib/audit';
 import { mapErrorReason } from '../../../lib/message-error';
 import { fetchEvolutionState, type LiveConnectionStatus } from '../../../lib/connection-state';
+import { isGroupJid, recipientDisplayName } from '../../../lib/jid';
+import { groupsEnabled, lookupGroup, logRecipient, type GroupLookup } from '../../../lib/groups';
+import { truncateAtGrapheme } from '../../../lib/text';
 
 export const dynamic = 'force-dynamic';
 // Niente Next Data Cache su NESSUNA fetch di questo cron: il POST costante
@@ -31,6 +34,18 @@ export const fetchCache = 'force-no-store';
 export const maxDuration = 60;
 
 let resetStampWarned = false;
+
+// ── Gruppi WhatsApp: motivi scritti dal cron (iniziano con "In pausa",
+// "Gruppo con più di" o "Controllo del gruppo": mapPendingReason li riconosce) ──
+const GROUPS_OFF_TEXT = 'In pausa: gli invii nei gruppi sono sospesi per ora. Tocca Riprendi più tardi.';
+const GROUP_FROM_SELF_CHAT_TEXT = 'In pausa: i messaggi nei gruppi si programmano solo dall\'app.';
+const BIG_GROUP_WARMUP_TEXT = 'Gruppo con più di 50 persone: nei primi giorni dal collegamento si aspetta — riprogrammato a domattina';
+const BIG_GROUP_WARMUP_SIZE = 50;
+const GROUP_CHECK_RETRY_TEXT = 'Controllo del gruppo non riuscito (WhatsApp non ha risposto): si riprova più tardi, per proteggere il tuo WhatsApp';
+const groupNotMemberText = (name: string) => 'In pausa: non risulti più nel gruppo «' + name + '» (o il gruppo non esiste più). Se ci rientri, tocca Riprendi.';
+const groupAdminsOnlyText = (name: string) => 'In pausa: nel gruppo «' + name + '» ora scrivono solo gli amministratori.';
+const groupCommunityText = (name: string) => 'In pausa: «' + name + '» è una community, non un gruppo in cui scrivere. Scegli uno dei suoi gruppi.';
+const groupUndeliverableText = (name: string) => 'In pausa: WhatsApp non è riuscito a mandare il messaggio nel gruppo «' + name + '» (succede quando il telefono di uno dei membri ha un problema). Tocca Riprendi più tardi.';
 
 async function checkFailures(supabase: ReturnType<typeof createClient>, userPhone: string) {
   // Audit 25 set 2026: prima contava OGNI riga 'failed' CREATA nelle ultime
@@ -373,6 +388,9 @@ export async function GET(req: NextRequest) {
     const inRunSendsToRecipient: Record<string, number> = {};
 
     const inRunNewRecipients: Record<string, Set<string>> = {}; // corsia lenta numeri nuovi (per run)
+    // Controllo del gruppo (D8): uno per istanza+gruppo per giro, condiviso
+    // da tutte le righe verso lo stesso gruppo.
+    const inRunGroupLookup: Record<string, Promise<GroupLookup>> = {};
     // Process messages in batches of 5 for speed (P11: avoid Vercel Hobby 10s timeout)
     const TIMEOUT_MS = 8000; // bail out before Vercel's 10s limit
     const messages = pendingMessages || [];
@@ -416,6 +434,7 @@ export async function GET(req: NextRequest) {
 
         const instanceName = msg.user_instances.instance_name;
         const ownerPhone = msg.user_instances.phone_number;
+        const isGroup = isGroupJid(msg.recipient_number);
 
         if (decision === 'disconnected') {
           // Smart-retry staircase: 12 attempts × 5min = ≈1h retry window, then
@@ -490,6 +509,19 @@ export async function GET(req: NextRequest) {
         }
 
         // decision === 'send' — proceed with tier limits, cool-down, rate limiting
+
+        // Gruppi (D13, D20), senza chiamate a Evolution: interruttore spento, o
+        // riga nata dalla chat con se stessi (non è passata dal controllo del POST).
+        if (isGroup) {
+          const holdText = !groupsEnabled() ? GROUPS_OFF_TEXT : msg.wa_message_id ? GROUP_FROM_SELF_CHAT_TEXT : null;
+          if (holdText) {
+            await supabase.from('scheduled_messages')
+              .update({ status: 'paused', error_message: holdText })
+              .eq('id', msg.id).eq('status', 'pending');
+            console.log('CRON: group row ' + msg.id + ' paused (' + (holdText === GROUPS_OFF_TEXT ? 'groups off' : 'from self-chat') + ')');
+            return 'skipped' as const;
+          }
+        }
 
         // Allegato tolto dalla pulizia dei 30 giorni (cleanup-media lascia
         // media_type come segnale e azzera media_url). Senza questo controllo
@@ -571,7 +603,7 @@ export async function GET(req: NextRequest) {
         for (let k = 0; k < alreadyInRun; k++) sentTimes.push(new Date());
         const releaseAt = cooldownReleaseAt(sentTimes, COOLDOWN_MAX_PER_RECIPIENT);
         if (releaseAt) {
-          console.log('CRON: COOLDOWN — ' + sentTimes.length + ' msgs to ' + msg.recipient_number + ' in 24h (inRun=' + alreadyInRun + ')');
+          console.log('CRON: COOLDOWN — ' + sentTimes.length + ' msgs to ' + logRecipient(msg.recipient_number) + ' in 24h (inRun=' + alreadyInRun + ')');
           // Audit 25 set 2026: prima +30 min ripetuti fino al giorno dopo, col
           // motivo "+30 min" falso. Ora l'istante vero in cui la finestra
           // mobile si libera, una volta sola; è un orario calcolato dal
@@ -584,7 +616,7 @@ export async function GET(req: NextRequest) {
           }).format(at);
           await supabase.from('scheduled_messages').update({
             scheduled_at: at.toISOString(),
-            error_message: 'Massimo ' + COOLDOWN_MAX_PER_RECIPIENT + ' messaggi in 24 ore alla stessa persona: parte ' + romeLabel,
+            error_message: 'Massimo ' + COOLDOWN_MAX_PER_RECIPIENT + ' messaggi in 24 ore ' + (isGroup ? 'nello stesso gruppo' : 'alla stessa persona') + ': parte ' + romeLabel,
           }).eq('id', msg.id);
           return 'rate_limited' as const;
         }
@@ -595,7 +627,7 @@ export async function GET(req: NextRequest) {
           const sup = await getSuppression(supabase, ownerPhone, msg.recipient_number);
           if (sup) {
             await supabase.from('scheduled_messages')
-              .update({ status: 'paused', error_message: suppressionReasonText(sup.reason) })
+              .update({ status: 'paused', error_message: suppressionReasonText(sup.reason, { group: isGroup }) })
               .eq('id', msg.id).eq('status', 'pending');
             console.log('CRON: SUPPRESSED recipient for ' + ownerPhone + ' reason=' + sup.reason);
             return 'skipped' as const;
@@ -679,6 +711,60 @@ export async function GET(req: NextRequest) {
           return 'skipped' as const;
         }
 
+        // Gruppo (D8, D9): ne fai ancora parte? Solo il trigger che ha vinto il
+        // claim lo chiede, prima della quota. Non blocca se Evolution non
+        // risponde (salvo overlimit o rampa: allora rimanda), solo un verdetto
+        // esplicito mette in pausa. Con CACHE_LOCAL_ENABLED un
+        // gruppo lasciato può rispondere 201 "inviato" a vuoto. Se la lambda
+        // muore qui send_attempted_at è ancora NULL: il recupero la rimette in coda.
+        if (isGroup) {
+          const lookupKey = instanceName + '|' + msg.recipient_number;
+          const look = await (inRunGroupLookup[lookupKey] || (inRunGroupLookup[lookupKey] = lookupGroup(instanceName, msg.recipient_number, ownerPhone, 3000)));
+          const groupName = recipientDisplayName(look.kind === 'ok' && look.name ? { ...msg, recipient_name: look.name } : msg);
+          const pauseText = look.kind === 'not_member' ? groupNotMemberText(groupName)
+            : look.kind === 'ok' && look.community ? groupCommunityText(groupName)
+            : look.kind === 'ok' && look.adminOnly && look.self === 'member' ? groupAdminsOnlyText(groupName)
+            : null;
+          if (pauseText) {
+            await supabase.from('scheduled_messages')
+              .update({ status: 'paused', error_message: pauseText, send_attempted_at: null })
+              .eq('id', msg.id).eq('status', 'processing');
+            console.log('CRON: group row ' + msg.id + ' paused after check (' + look.kind + ') to=' + logRecipient(msg.recipient_number));
+            return 'skipped' as const;
+          }
+          // Controllo senza risposta: di norma si prosegue (D8), tranne due casi.
+          // WhatsApp ha risposto "rate-overlimit": inviare subito dopo peggiora.
+          // Oppure siamo nella rampa e non sappiamo quante persone ha il gruppo (D9).
+          // La riga torna in coda tra 15-30 min, dentro la fascia 08-21, senza quota.
+          if (look.kind === 'unavailable' && (look.reason === 'overlimit' || inWarmup)) {
+            const soon = new Date(applyJitter(new Date(Date.now() + 15 * 60_000).toISOString(), 15 * 60_000));
+            const at = isWithinCourtesyWindow(soon) ? soon : new Date(applyJitter(nextRomeMorning(soon).toISOString(), 30 * 60_000));
+            await supabase.from('scheduled_messages')
+              .update({ status: 'pending', scheduled_at: at.toISOString(), error_message: GROUP_CHECK_RETRY_TEXT, send_attempted_at: null })
+              .eq('id', msg.id).eq('status', 'processing');
+            console.log('CRON: group row ' + msg.id + ' requeued, check ' + look.reason + (inWarmup ? ' (warmup)' : '') + ' to=' + logRecipient(msg.recipient_number));
+            return 'rate_limited' as const;
+          }
+          if (look.kind === 'ok' && inWarmup && typeof look.size === 'number' && look.size > BIG_GROUP_WARMUP_SIZE) {
+            await supabase.from('scheduled_messages')
+              .update({
+                status: 'pending',
+                scheduled_at: applyJitter(nextRomeMorning(new Date()).toISOString(), 30 * 60_000),
+                error_message: BIG_GROUP_WARMUP_TEXT,
+                send_attempted_at: null,
+              })
+              .eq('id', msg.id).eq('status', 'processing');
+            return 'rate_limited' as const;
+          }
+          if (look.kind === 'ok' && look.name) {
+            const fresh = truncateAtGrapheme(look.name, 100);
+            if (fresh && fresh !== msg.recipient_name) {
+              await supabase.from('scheduled_messages').update({ recipient_name: fresh }).eq('id', msg.id);
+              msg.recipient_name = fresh;
+            }
+          }
+        }
+
         // Mark this recipient as "sending" in this run so the parallel cooldown
         // check for a 2nd message to the same recipient sees it (#9).
         inRunSendsToRecipient[recipKey] = (inRunSendsToRecipient[recipKey] || 0) + 1;
@@ -717,7 +803,8 @@ export async function GET(req: NextRequest) {
         // graceful — we log and still send the real message. Skipped for media
         // sends: "sta scrivendo…" before a file is not a human pattern, and
         // those 4 s belong to the (much longer) media send budget.
-        const typingMs = hasMedia ? 0 : computeTypingDelay((msg.parsed_message || '').length);
+        // Niente "sta scrivendo" nei gruppi (D9).
+        const typingMs = (hasMedia || isGroup) ? 0 : computeTypingDelay((msg.parsed_message || '').length);
         if (typingMs > 0) {
           await sendTypingPresence({
             evoUrl: process.env.EVOLUTION_API_URL!,
@@ -761,15 +848,17 @@ export async function GET(req: NextRequest) {
         }
 
         const sendKind = signedMediaUrl ? 'media' : 'text';
-        console.log('CRON: Sending msg ' + msg.id + ' kind=' + sendKind + ' via instance=' + instanceName + ' to=' + msg.recipient_number);
+        console.log('CRON: Sending msg ' + msg.id + ' kind=' + sendKind + ' via instance=' + instanceName + ' to=' + logRecipient(msg.recipient_number));
 
         // Resolve {nome} at send time from the row's recipient_name, so every
         // origin (dashboard, self-chat, recurrences) gets substitution and the
-        // queued row keeps the raw token for editing.
-        const outboundText = applyTemplateVariables(msg.parsed_message, msg.recipient_name);
+        // queued row keeps the raw token for editing. In un gruppo il testo
+        // arriva uguale a tutti: il segnaposto si toglie (D11).
+        const tplName = isGroup ? null : msg.recipient_name;
+        const outboundText = applyTemplateVariables(msg.parsed_message, tplName);
         const outboundCaption = applyTemplateVariables(
           msg.media_caption || msg.parsed_message || null,
-          msg.recipient_name
+          tplName
         );
 
         // Atomic point-of-no-return claim (replaces the old unconditional stamp).
@@ -790,7 +879,7 @@ export async function GET(req: NextRequest) {
         }
 
         const sendCtrl = new AbortController();
-        const sendTimeoutUsedMs = sendTimeoutMs(signedMediaUrl ? 'media' : 'text', mediaSize);
+        const sendTimeoutUsedMs = sendTimeoutMs(signedMediaUrl ? 'media' : 'text', mediaSize, { group: isGroup });
         const sendTimeout = setTimeout(() => sendCtrl.abort(), sendTimeoutUsedMs);
         let res;
         try {
@@ -878,6 +967,7 @@ export async function GET(req: NextRequest) {
             drift_ms: driftMs,
             batch_size: batch.length,
             recipient_hash: await hashContactRef(msg.recipient_number),
+            recipient_kind: isGroup ? 'group' : 'person',
             has_recurrence: !!msg.recurrence_rule,
           },
         });
@@ -932,7 +1022,7 @@ export async function GET(req: NextRequest) {
             await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
               method: 'POST',
               headers: { 'apikey': process.env.EVOLUTION_API_KEY!, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ number: ownerPhone, text: '\u2705 Inviato a ' + (msg.recipient_name || msg.recipient_number) + '!' })
+              body: JSON.stringify({ number: ownerPhone, text: '\u2705 Inviato ' + (isGroup ? 'nel gruppo «' + recipientDisplayName(msg) + '»' : 'a ' + (msg.recipient_name || msg.recipient_number)) + '!' })
             });
           } catch (notifyErr) {}
         }
@@ -974,6 +1064,34 @@ export async function GET(req: NextRequest) {
             }).eq('id', msg.id);
             continue; // skip refund + requeue
           }
+          // Gruppo (D10): un doppione in un gruppo lo vedono tutti. Si ritenta
+          // solo ciò che è di sicuro prima dell'inoltro; per le persone nulla cambia.
+          const isGroup = isGroupJid(msg.recipient_number);
+          const groupOutcome = isGroup ? classifyGroupSendFailure(err) : null;
+          if (groupOutcome === 'indeterminate') {
+            // Come il timeout: niente rimborso, niente retry.
+            await supabase.from('scheduled_messages').update({
+              status: 'sent',
+              sent_at: new Date().toISOString(),
+              error_message: 'send_indeterminate: risposta incerta da Evolution durante l\'invio nel gruppo, marcato inviato per evitare doppioni (controlla nel gruppo)',
+            }).eq('id', msg.id);
+            console.log('CRON: group send indeterminate for msg ' + msg.id + ' — marked sent, no retry');
+            continue;
+          }
+          if (groupOutcome === 'unreachable' || groupOutcome === 'undeliverable') {
+            // In pausa col motivo: niente retry_count, niente avviso, niente
+            // 'failed' (non pesa sul freno dei fallimenti).
+            if (ownerPhone) await supabase.rpc('refund_daily_quota', { p_phone: ownerPhone });
+            const name = recipientDisplayName(msg);
+            await supabase.from('scheduled_messages').update({
+              status: 'paused',
+              error_message: groupOutcome === 'unreachable' ? groupNotMemberText(name) : groupUndeliverableText(name),
+              send_attempted_at: null,
+            }).eq('id', msg.id);
+            console.log('CRON: group send ' + groupOutcome + ' for msg ' + msg.id + ' — paused');
+            skipped++;
+            continue;
+          }
           // Refund the quota slot claimed pre-send: this attempt failed. On a
           // retry the next attempt re-claims; if terminal nothing was delivered.
           // Either way this attempt must not consume the user's daily quota.
@@ -984,7 +1102,7 @@ export async function GET(req: NextRequest) {
           // cannot help, so the row goes straight to 'failed' instead of burning
           // two more attempts 5 and 10 minutes later.
           const notOnWhatsApp = isNotOnWhatsAppError(err?.message);
-          const disconnectedKind = !notOnWhatsApp && mapErrorReason(err?.message).kind === 'disconnected';
+          const disconnectedKind = !notOnWhatsApp && mapErrorReason(err?.message, { isGroup }).kind === 'disconnected';
           // Errore "da disconnessione" (Connection Closed, logged out, 401…)
           // con il DB che diceva 'open' (audit 25 set 2026): prima bruciava 3
           // retry generici in ~15 min e finiva 'failed', perché lo stato lo
@@ -1029,7 +1147,8 @@ export async function GET(req: NextRequest) {
             // Un avviso che parte dalla stessa istanza che ha appena fallito per
             // disconnessione non può arrivare: si salta (la card "Non inviato"
             // in dashboard dice già "WhatsApp disconnesso — ricollega").
-            if (!disconnectedKind) {
+            // Per i gruppi mai (D9): basta la card rossa, principio silenzioso.
+            if (!disconnectedKind && !isGroup) {
               try {
                 await fetch(process.env.EVOLUTION_API_URL + '/message/sendText/' + instanceName, {
                   method: 'POST',
@@ -1047,6 +1166,7 @@ export async function GET(req: NextRequest) {
                 error_code: (err as Error)?.message?.substring(0, 200) || 'unknown',
                 attempt: newRetry,
                 recipient_hash: await hashContactRef(msg.recipient_number),
+                recipient_kind: isGroup ? 'group' : 'person',
               },
             });
           }

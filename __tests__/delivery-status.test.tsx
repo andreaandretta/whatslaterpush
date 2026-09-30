@@ -67,4 +67,25 @@ describe('DeliveryStatusIcon — tri-state UI', () => {
     const span = container.querySelector('[data-testid="status-read"]');
     expect(span?.getAttribute('title')).toMatch(/^Letto \d{2}:\d{2}$/);
   });
+  test('gruppo con read_at e delivered_at → solo ✓ col testo del gruppo, mai "Letto"', () => {
+    const { getByLabelText, queryByLabelText, container } = render(
+      <DeliveryStatusIcon isGroup msg={{
+        status: 'sent',
+        sent_at: '2026-05-27T08:00:00Z',
+        delivered_at: '2026-05-27T08:00:30Z',
+        read_at: '2026-05-27T08:05:00Z',
+      }} />
+    );
+    expect(getByLabelText('Inviato')).toBeInTheDocument();
+    expect(queryByLabelText('Letto')).not.toBeInTheDocument();
+    expect(queryByLabelText('Consegnato')).not.toBeInTheDocument();
+    const span = container.querySelector('[data-testid="status-sent"]');
+    expect(span?.getAttribute('title')).toBe('Inviato nel gruppo (per i gruppi WhatsApp non ci manda le spunte di consegna)');
+  });
+
+  test('gruppo non ancora inviato → niente icona; ack_error_at resta visibile', () => {
+    expect(render(<DeliveryStatusIcon isGroup msg={{ status: 'pending' }} />).container.firstChild).toBeNull();
+    const { container } = render(<DeliveryStatusIcon isGroup msg={{ status: 'sent', ack_error_at: '2026-05-27T08:00:30Z' }} />);
+    expect(container.querySelector('[data-testid="status-ack-error"]')).toBeInTheDocument();
+  });
 });

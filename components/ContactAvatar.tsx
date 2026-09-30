@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User } from 'lucide-react';
+import { User, Users } from 'lucide-react';
 import { computeInitials } from '../app/lib/contact-initials';
 
 interface ContactAvatarProps {
@@ -8,6 +8,8 @@ interface ContactAvatarProps {
   size?: 'sm' | 'md' | 'lg';
   className?: string;
   photoSrc?: string;
+  // 'group' = gruppo WhatsApp: fondo verde scuro, icona Users, mai foto.
+  variant?: 'person' | 'group';
 }
 
 const PALETTE = [
@@ -33,7 +35,8 @@ function hashNumber(number: string): number {
   return h;
 }
 
-export function ContactAvatar({ name, number, size = 'md', className = '', photoSrc }: ContactAvatarProps) {
+export function ContactAvatar({ name, number, size = 'md', className = '', photoSrc, variant = 'person' }: ContactAvatarProps) {
+  const isGroup = variant === 'group';
   const initials = computeInitials(name);
   const sizeClass = SIZES[size];
 
@@ -47,20 +50,25 @@ export function ContactAvatar({ name, number, size = 'md', className = '', photo
     setFailed(false);
   }, [photoSrc]);
 
-  const showImage = !!photoSrc && !failed;
+  const showImage = !isGroup && !!photoSrc && !failed;
 
   // Neutral slate background for letter-only avatars so they don't compete
   // with real photo avatars. Photos still get the hashed palette as the
   // loading placeholder, covered by the <img> once it lands.
-  const color = showImage ? PALETTE[hashNumber(number) % PALETTE.length] : 'bg-[#2A3942]';
+  const color = isGroup
+    ? 'bg-[#1F5A45] text-[#BFF0D5]'
+    : `${showImage ? PALETTE[hashNumber(number) % PALETTE.length] : 'bg-[#2A3942]'} text-white`;
 
   return (
     <div
-      className={`${color} ${sizeClass} rounded-full flex items-center justify-center text-white font-semibold shrink-0 relative overflow-hidden ${className}`}
+      className={`${color} ${sizeClass} rounded-full flex items-center justify-center font-semibold shrink-0 relative overflow-hidden ${className}`}
       aria-hidden="true"
+      data-variant={isGroup ? 'group' : undefined}
     >
       <span className={`flex items-center justify-center ${loaded && showImage ? 'opacity-0' : 'opacity-100'}`}>
-        {initials || <User className="w-1/2 h-1/2" aria-hidden="true" />}
+        {initials || (isGroup
+          ? <Users className="w-1/2 h-1/2" aria-hidden="true" />
+          : <User className="w-1/2 h-1/2" aria-hidden="true" />)}
       </span>
       {showImage && (
         <img

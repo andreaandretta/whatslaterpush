@@ -7,6 +7,11 @@ import { hashContactRefSync } from '../../lib/audit';
 // chat con se stessi finivano parola per parola nei log Vercel). Lunghezza e
 // hash bastano per correlare.
 const hRef = (v: unknown) => hashContactRefSync(String(v ?? ''));
+// Nei messaggi al proprietario un gruppo si nomina senza mai le cifre del JID
+// (nel formato vecchio sono il telefono di chi l'ha creato); le persone come prima.
+const whoLabel = (m: any, fallback?: string) => isGroupJid(m?.recipient_number)
+  ? recipientDisplayName(m)
+  : fallback === undefined ? (m?.recipient_name || m?.recipient_number) : (m?.recipient_name || m?.recipient_number || fallback);
 import { getPlanLimits } from '../../lib/plans';
 import { isBillingEnabled, getEffectivePlan } from '../../lib/billing';
 import { containsAmbiguousTimeKeyword, hasExplicitHHMM } from '../../lib/quick-capture-utils';
@@ -17,7 +22,7 @@ import { contactActiveCutoffIso } from '../../lib/contact-window';
 import { handleInboundOptOut } from '../../lib/opt-out';
 import { recordCustodyAck } from '../../lib/custody-ack';
 import { extractStatusUpdate } from '../../lib/message-status';
-import { phoneDigitsFromJid, phoneJidFromContact } from '../../lib/jid';
+import { phoneDigitsFromJid, phoneJidFromContact, isGroupJid, recipientDisplayName } from '../../lib/jid';
 import { fetchEvolutionState } from '../../lib/connection-state';
 import { PENDING_SESSION_GRACE_MS } from '../../lib/auth-session-grace';
 export const dynamic = 'force-dynamic';
@@ -320,6 +325,8 @@ async function findContactByName(ownerPhone, name) {
     .eq('instance_phone', ownerPhone)
     .ilike('recipient_name', `%${safeName}%`)
     .not('recipient_name', 'is', null)
+    // "manda a Luca" non deve risolversi nel gruppo "Genitori di Luca" (D20).
+    .not('recipient_number', 'like', '%@g.us')
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -913,6 +920,8 @@ async function getContactList(ownerPhone: string): Promise<string> {
     .select('recipient_name, recipient_number')
     .eq('instance_phone', ownerPhone)
     .not('recipient_name', 'is', null)
+    // I nomi dei gruppi (scrivibili da qualunque membro) non arrivano all'LLM (D20).
+    .not('recipient_number', 'like', '%@g.us')
     .order('created_at', { ascending: false })
     .limit(30);
 
@@ -1481,7 +1490,7 @@ export async function POST(req) {
           throw new Error(updErr.message); // -> outer catch releases the dedup claim, then 500
         }
         await notifyOwner(instanceName, ownerPhone,
-          '✅ Confermato! Messaggio a ' + (awaiting.recipient_name || awaiting.recipient_number) +
+          '✅ Confermato! Messaggio a ' + whoLabel(awaiting) +
           ' programmato per ' + formatRome(new Date(awaiting.scheduled_at)) + '.\n' +
           'Scrivi "lista" per vedere i messaggi in coda.');
         return NextResponse.json({ ok: true });
@@ -1560,7 +1569,7 @@ export async function POST(req) {
           await notifyOwner(instanceName, ownerPhone, 'Nessun messaggio in coda.');
         } else {
           const listText = pending.map((m, i) => {
-            const name = m.recipient_name || m.recipient_number || '?';
+            const name = whoLabel(m, '?');
             const time = formatRome(new Date(m.scheduled_at));
             const preview = (m.parsed_message || '').substring(0, 30);
             return (i+1) + '. ' + name + ' - ' + time + '\n   "' + preview + (preview.length >= 30 ? '...' : '') + '"';
@@ -1603,7 +1612,7 @@ export async function POST(req) {
             .order('created_at', { ascending: false }).limit(1).maybeSingle();
           if (lastPending) {
             await supabase.from('scheduled_messages').update({ status: 'cancelled' }).eq('id', lastPending.id);
-            await notifyOwner(instanceName, ownerPhone, '❌ Annullato! A: ' + (lastPending.recipient_name || lastPending.recipient_number || '?') + ' Era per: ' + formatRome(new Date(lastPending.scheduled_at)));
+            await notifyOwner(instanceName, ownerPhone, '❌ Annullato! A: ' + whoLabel(lastPending, '?') + ' Era per: ' + formatRome(new Date(lastPending.scheduled_at)));
           } else {
             await notifyOwner(instanceName, ownerPhone, 'Nessun messaggio da annullare.');
           }
@@ -1640,7 +1649,7 @@ export async function POST(req) {
           throw new Error(updErr.message); // -> outer catch releases the dedup claim, then 500
         }
         await notifyOwner(instanceName, ownerPhone,
-          '✅ Confermato! Messaggio a ' + (pendingCtx.recipient_name || pendingCtx.recipient_number) +
+          '✅ Confermato! Messaggio a ' + whoLabel(pendingCtx) +
           ' programmato per ' + formatRome(new Date(pendingCtx.scheduled_at)) + '.\n' +
           'Scrivi "lista" per vedere i messaggi in coda.');
         return NextResponse.json({ ok: true });
@@ -1702,7 +1711,9 @@ export async function POST(req) {
         }
 
         if (aiResult.message_text) {
-          updates.parsed_message = await verifyAndFixMessage(aiResult.message_text, targetMsg.recipient_name || 'il destinatario');
+          // Il nome di un gruppo (scrivibile da qualunque membro) non va all'LLM (D20).
+          const rewriteFor = isGroupJid(targetMsg.recipient_number) ? 'il destinatario' : (targetMsg.recipient_name || 'il destinatario');
+          updates.parsed_message = await verifyAndFixMessage(aiResult.message_text, rewriteFor);
         }
 
         // Recipient updates require explicit mention in the raw text (BUG 3 guard)
@@ -1735,7 +1746,7 @@ export async function POST(req) {
         if (updated) {
           await notifyOwner(instanceName, ownerPhone,
             '✏️ Messaggio ' + (idx + 1) + ' aggiornato!\n' +
-            'A: ' + (updated.recipient_name || updated.recipient_number) + '\n' +
+            'A: ' + whoLabel(updated) + '\n' +
             'Quando: ' + formatRome(new Date(updated.scheduled_at)) + '\n' +
             'Testo: "' + updated.parsed_message + '"');
         }
@@ -2004,7 +2015,7 @@ export async function POST(req) {
     if (/^(lista|list|pending|programmati)$/i.test(rawLower)) {
       const { data: pending } = await supabase.from('scheduled_messages').select('id, recipient_name, recipient_number, parsed_message, scheduled_at').eq('user_instance_id', user.id).eq('status', 'pending').order('scheduled_at', { ascending: true }).limit(10);
       if (!pending || pending.length === 0) { await notifyOwner(instanceName, ownerPhone, 'Nessun messaggio in coda.'); return NextResponse.json({ ok: true }); }
-      const listText = pending.map((m, i) => { const name = m.recipient_name || m.recipient_number || '?'; const time = formatRome(new Date(m.scheduled_at)); const preview = (m.parsed_message || '').substring(0, 30); return (i+1) + '. ' + name + ' - ' + time + '\n   "' + preview + (preview.length >= 30 ? '...' : '') + '"'; }).join('\n\n');
+      const listText = pending.map((m, i) => { const name = whoLabel(m, '?'); const time = formatRome(new Date(m.scheduled_at)); const preview = (m.parsed_message || '').substring(0, 30); return (i+1) + '. ' + name + ' - ' + time + '\n   "' + preview + (preview.length >= 30 ? '...' : '') + '"'; }).join('\n\n');
       await notifyOwner(instanceName, ownerPhone, 'Messaggi programmati (' + pending.length + '):\n\n' + listText + '\n\nScrivi "annulla 1" per cancellare.');
       return NextResponse.json({ ok: true });
     }
@@ -2013,7 +2024,7 @@ export async function POST(req) {
       const { data: lastPending } = await supabase.from('scheduled_messages').select('id, recipient_name, recipient_number, scheduled_at').eq('user_instance_id', user.id).eq('status', 'pending').order('created_at', { ascending: false }).limit(1).maybeSingle();
       if (!lastPending) { await notifyOwner(instanceName, ownerPhone, 'Nessun messaggio da annullare.'); return NextResponse.json({ ok: true }); }
       await supabase.from('scheduled_messages').update({ status: 'cancelled' }).eq('id', lastPending.id);
-      await notifyOwner(instanceName, ownerPhone, 'Annullato! A: ' + (lastPending.recipient_name || lastPending.recipient_number || '?') + ' Era per: ' + formatRome(new Date(lastPending.scheduled_at)));
+      await notifyOwner(instanceName, ownerPhone, 'Annullato! A: ' + whoLabel(lastPending, '?') + ' Era per: ' + formatRome(new Date(lastPending.scheduled_at)));
       return NextResponse.json({ ok: true });
     }
 

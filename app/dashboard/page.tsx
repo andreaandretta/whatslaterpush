@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   Calendar, CheckCircle2, CreditCard, Loader2, LogOut, Send, X,
 } from 'lucide-react';
-import ContactPickerModal from '@/components/ContactPickerModal';
+import ContactPickerModal, { type PickedContact } from '@/components/ContactPickerModal';
 import { prefetchContacts, setContactsCacheOwner } from '@/app/lib/contacts-client-cache';
 import ScheduleModal from '@/components/ScheduleModal';
 import { ContactAvatar } from '@/components/ContactAvatar';
@@ -19,6 +19,7 @@ import { shouldShowOnboardingHints, markOnboardingDone } from '../../components/
 import { getPlanLimits, getPlanName } from '../lib/plans';
 import { apiErrorText } from '../lib/api-error-text';
 import { formatShortWhen } from '../lib/schedule-quick';
+import { isGroupJid, recipientDisplayName } from '../lib/jid';
 import { LogoutDialog, type LogoutChoice } from './LogoutDialog';
 import { checkSession, sessionRetryDelayMs, goTo } from '../lib/session-load';
 import InstallPrompt from '../components/InstallPrompt';
@@ -70,7 +71,7 @@ export default function DashboardPage() {
   const [sessionValidated, setSessionValidated] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [selectedContact, setSelectedContact] = useState<{ number: string; name?: string; manualEntry?: boolean } | null>(null);
+  const [selectedContact, setSelectedContact] = useState<PickedContact | null>(null);
   const [showShareToast, setShowShareToast] = useState(false);
   // Toast for inline feedback after duplicate/pause/delete actions. Auto-dismisses in 5s.
   const [toast, setToast] = useState<{ text: string; undo?: () => void; id: number } | null>(null);
@@ -96,6 +97,9 @@ export default function DashboardPage() {
   // Onboarding hints — gated on localStorage. Resolved post-mount to avoid
   // SSR hydration mismatch on localStorage access.
   const [showOnboardingHints, setShowOnboardingHints] = useState(false);
+  // Porta finta "foto del calendario" (GET /api/feedback, una volta per apertura).
+  const [fakeDoor, setFakeDoor] = useState<{ active: boolean; answered: boolean }>({ active: false, answered: false });
+  const feedbackAskedRef = useRef(false);
 
   const msgTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevLifetimeRef = useRef<number | null>(null);
@@ -151,6 +155,18 @@ export default function DashboardPage() {
       window.removeEventListener('online', onOnline);
     };
   }, []);
+
+  // Una sola GET /api/feedback per apertura: dice se mostrare la porta finta e
+  // registra lato server l'apertura della dashboard (dashboard_seen, max 1 al giorno).
+  // Gli errori si ignorano: la scheda semplicemente non compare.
+  useEffect(() => {
+    if (!sessionValidated || feedbackAskedRef.current) return;
+    feedbackAskedRef.current = true;
+    fetch('/api/feedback')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => setFakeDoor({ active: !!b?.calendar_photo?.active, answered: !!b?.calendar_photo?.answered }))
+      .catch(() => {});
+  }, [sessionValidated]);
 
   const fetchMessages = useCallback(async () => {
     try {
@@ -245,7 +261,10 @@ export default function DashboardPage() {
       // Toast SOLO a eliminazione avvenuta (prima MessagesSection diceva
       // "Eliminato" subito, anche quando il server rifiutava).
       const gone = messages.find((m) => m.id === id);
-      const who = gone?.recipient_name || gone?.recipient_number || 'messaggio';
+      // Gruppo: mai le cifre del JID. Persona: come prima.
+      const who = gone && isGroupJid(gone.recipient_number)
+        ? recipientDisplayName(gone)
+        : gone?.recipient_name || gone?.recipient_number || 'messaggio';
       if (typeof data?.skipped_to === 'string') {
         showToast(`Saltato questa volta — il prossimo parte ${formatShortWhen(new Date(data.skipped_to))}`);
       } else if (scope === 'series') {
@@ -605,6 +624,8 @@ export default function DashboardPage() {
               onShowToast={showToast}
               onChooseOtherContact={handleChooseOtherContact}
               connected={connected}
+              fakeDoor={fakeDoor}
+              onFakeDoorAnswered={() => setFakeDoor((f) => ({ ...f, answered: true }))}
             />
           )
         )}

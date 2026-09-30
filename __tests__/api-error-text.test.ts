@@ -26,6 +26,21 @@ describe('apiErrorText', () => {
     expect(t).not.toMatch(/^Errore:/);
   });
 
+  test.each([
+    'groups_disabled', 'whatsapp_disconnected', 'group_check_rate_limited', 'group_check_unavailable',
+    'recipient_not_group_member', 'group_admins_only', 'group_is_community', 'placeholder_not_for_group',
+    'groups_timeout', 'groups_unavailable', 'invalid_answer', 'fake_door_closed', 'save_failed',
+  ])('gruppi / porta finta: %s has its own Italian sentence', (code) => {
+    const t = apiErrorText({ error: code }, 400);
+    expect(t).not.toBe(GENERIC_ERROR_TEXT);
+    expect(t).not.toContain(code);
+    expect(t).not.toMatch(/^Errore:/);
+  });
+
+  test('placeholder_not_for_group spiega perché {nome} non va nei gruppi', () => {
+    expect(apiErrorText({ error: 'placeholder_not_for_group' }, 400)).toBe('Nei gruppi non si può usare {nome}: il messaggio arriva uguale a tutti. Toglilo o scrivi «Ciao a tutti».');
+  });
+
   test('plan contacts limit keeps the beta wording (no "Aggiorna piano")', () => {
     expect(apiErrorText({ error: 'plan_contacts_limit_exceeded', plan: 'beta', limit: 350 }, 403)).toBe('Hai raggiunto il limite beta di 350 contatti attivi.');
   });

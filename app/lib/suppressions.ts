@@ -10,6 +10,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logAuditEvent } from './audit';
+import { isGroupJid } from './jid';
 
 export type SuppressionReason = 'opt_out' | 'ack_error' | 'manual';
 
@@ -20,11 +21,13 @@ export function suppressionsEnabled(): boolean {
   return process.env.OPT_OUT_ENABLED === 'true' || process.env.CUSTODY_ACK_ENABLED === 'true';
 }
 
-export function suppressionReasonText(reason: SuppressionReason | string): string {
+/** `opts.group`: il destinatario è un gruppo (un "stop" di un membro non sospende mai il gruppo, vedi opt-out.ts). */
+export function suppressionReasonText(reason: SuppressionReason | string, opts: { group?: boolean } = {}): string {
   switch (reason) {
     case 'opt_out':
       return 'In pausa: il destinatario ha chiesto di non ricevere più messaggi (ha scritto "stop"). Riprendi solo se te lo ha chiesto lui.';
     case 'ack_error':
+      if (opts.group) return 'In pausa: WhatsApp ha rifiutato gli ultimi 3 messaggi in questo gruppo (forse non ne fai più parte, o scrivono solo gli amministratori).';
       return 'In pausa: WhatsApp ha rifiutato gli ultimi 3 messaggi a questo numero (bloccato o non attivo). Scrivigli a mano prima di riprendere.';
     default:
       return 'In pausa: destinatario sospeso.';
@@ -65,7 +68,7 @@ export async function listSuppressedRecipients(supabase: SupabaseClient, ownerPh
 export async function pausePendingToRecipient(supabase: SupabaseClient, ownerPhone: string, recipient: string, reason: SuppressionReason): Promise<number> {
   const { data, error } = await supabase
     .from('scheduled_messages')
-    .update({ status: 'paused', error_message: suppressionReasonText(reason) })
+    .update({ status: 'paused', error_message: suppressionReasonText(reason, { group: isGroupJid(recipient) }) })
     .eq('instance_phone', ownerPhone)
     .eq('recipient_number', recipient)
     .eq('status', 'pending')

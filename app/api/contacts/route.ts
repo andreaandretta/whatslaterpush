@@ -5,6 +5,7 @@ import { phoneDigitsFromJid, phoneJidFromContact } from '../../lib/jid';
 import { isUnsendableContactRow, notOnWhatsAppNumbers } from '../../lib/contact-rows';
 import { evolutionClient } from '../../../lib/evolution/client';
 import { getSupabaseAdmin } from '../../lib/supabase-admin';
+import { groupsEnabledFor, readGroups, type GroupsRead, type PickerGroup } from '../../lib/groups';
 
 export const dynamic = 'force-dynamic';
 // GET/RPC deterministico su supabase-js: la Next Data Cache lo congelerebbe
@@ -269,12 +270,14 @@ function applyLabel(out: OutContact[], allowed: Set<string> | null): OutContact[
 type RecentRow = { recipient_number: string; recipient_name: string | null };
 
 // Recenti, parte QUERY (parallelizzabile): ultimi 50 invii non cancellati, DESC.
+// I gruppi non sono contatti: stanno nella loro sezione del picker.
 async function fetchRecentRows(supabase: any, phone: string): Promise<RecentRow[]> {
   const { data: recentRows } = await supabase
     .from('scheduled_messages')
     .select('recipient_number, recipient_name')
     .eq('instance_phone', phone)
     .neq('status', 'cancelled')
+    .not('recipient_number', 'like', '%@g.us')
     .order('created_at', { ascending: false })
     .limit(50);
   return (recentRows || []) as RecentRow[];
@@ -302,9 +305,21 @@ function buildRecents(recentRows: RecentRow[], phone: string, byNumber: Map<stri
   return recents;
 }
 
+// Stati del collegamento in cui si leggono i gruppi (come /api/groups).
+const GROUPS_READ_STATES = ['open', 'connecting'];
+
+// Campi dei gruppi nella risposta (D18), solo con i gruppi accesi per l'utente.
+type GroupsFields = { groups?: PickerGroup[]; groups_fetched_at?: string | null; groups_status?: 'live' | 'timeout' | 'skipped' };
+
+function groupsFields(r: GroupsRead | null): GroupsFields {
+  if (!r) return { groups_status: 'skipped' };
+  if (r.source === 'live' || r.source === 'cache') return { groups: r.groups, groups_fetched_at: r.fetchedAt, groups_status: 'live' };
+  return { groups_status: r.error === 'timeout' ? 'timeout' : 'skipped' };
+}
+
 // Risposta JSON + header di misura. Server-Timing si legge in DevTools → Network →
 // Timing, oppure da JS con performance.getEntriesByType('resource')[i].serverTiming.
-function respond(body: { contacts: OutContact[]; recents: OutContact[] }, source: string, t0: number, dbMs: number, evoMs: number, partial = false) {
+function respond(body: { contacts: OutContact[]; recents: OutContact[] } & GroupsFields, source: string, t0: number, dbMs: number, evoMs: number, partial = false) {
   const total = performance.now() - t0;
   const timing = [`db;dur=${dbMs.toFixed(1)}`];
   if (evoMs > 0) timing.push(`evo;dur=${evoMs.toFixed(1)}`);
@@ -342,8 +357,10 @@ export async function GET(req: NextRequest) {
   //
   // Le 4 letture sono indipendenti → partono INSIEME (prima erano 3-4 round-trip
   // in fila verso Supabase: utente → rubrica → etichetta → recenti).
+  // Gruppi accesi per l'utente (D18): serve anche lo stato del collegamento.
+  const groupsOn = groupsEnabledFor(phone);
   const [userRes, cachedRead, allowed, recentRows, notOnWhatsApp] = await Promise.all([
-    supabase.from('user_instances').select('instance_name').eq('phone_number', phone).single(),
+    supabase.from('user_instances').select(groupsOn ? 'instance_name, connection_status' : 'instance_name').eq('phone_number', phone).single(),
     fetchAllCachedRows(supabase, phone),
     fetchLabelAllowed(supabase, phone, labelId),
     fetchRecentRows(supabase, phone),
@@ -378,7 +395,10 @@ export async function GET(req: NextRequest) {
     // tiene comunque nome e foto.
     const recents = buildRecents(recentRows, phone, new Map(cachedContacts.map((c) => [c.number, c])), lidNumbers);
     console.log('CONTACTS:GET source=cache-only count=' + out.length + ' recents=' + recents.length + ' raw=' + syncedCount + ' db_ms=' + Math.round(dbMs));
-    return respond({ contacts: out, recents }, syncedCount >= CACHE_ONLY_MIN ? 'cache-only' : 'cache-only-prefetch', t0, dbMs, 0, cachedPartial);
+    // Gruppi accesi: nessuna lettura qui, ma il picker deve sapere subito che
+    // arriveranno da /api/groups ("Carico i gruppi…"). Spenti: nessun campo.
+    const groupsHint: GroupsFields = groupsOn ? { groups_status: 'skipped' } : {};
+    return respond({ contacts: out, recents, ...groupsHint }, syncedCount >= CACHE_ONLY_MIN ? 'cache-only' : 'cache-only-prefetch', t0, dbMs, 0, cachedPartial);
   }
 
   // Thin/empty cache (< CACHE_ONLY_MIN) → consult the live Evolution source AND seed
@@ -394,11 +414,23 @@ export async function GET(req: NextRequest) {
   let rawFromContacts: any[] = [];
   let rawFromChats: any[] = [];
   let rawGroups: any[] = [];
+  // D18: con i gruppi accesi la lista passa dal gettone condiviso con /api/groups
+  // (1 lettura ogni 30 min) e dalla cache della lambda, che tiene solo i JID dei
+  // partecipanti; senza gettone né cache l'arricchimento coi partecipanti si salta.
+  // Da scollegato non si legge (e il gettone non si consuma), come /api/groups.
+  // Spenti: fetchAllGroups come prima, senza gettone.
+  const groupsReadable = groupsOn && GROUPS_READ_STATES.includes(user.connection_status);
+  const groupsReadP = groupsReadable ? readGroups(phone, user.instance_name, supabase, { caller: 'contacts' }) : null;
   const [contactsRes, chatsRes, groupsRes] = await Promise.allSettled([
     withTimeout(evolutionClient.findContacts(user.instance_name), LIVE_CALL_TIMEOUT_MS, 'findContacts'),
     withTimeout(evolutionClient.findChats(user.instance_name), LIVE_CALL_TIMEOUT_MS, 'findChats'),
-    withTimeout(evolutionClient.fetchAllGroups(user.instance_name, true), LIVE_CALL_TIMEOUT_MS, 'fetchAllGroups'),
+    groupsReadP
+      ? groupsReadP.then((r) => [{ participants: r.participantJids.map((id) => ({ id })) }])
+      : groupsOn
+        ? Promise.resolve([])
+        : withTimeout(evolutionClient.fetchAllGroups(user.instance_name, true), LIVE_CALL_TIMEOUT_MS, 'fetchAllGroups'),
   ]);
+  const groupsExtra: GroupsFields = groupsOn ? groupsFields(groupsReadP ? await groupsReadP.catch(() => null) : null) : {};
   // Millisecondi rimasti prima di LIVE_TOTAL_BUDGET_MS (misurati dall'inizio della GET).
   const remainingMs = () => LIVE_TOTAL_BUDGET_MS - (performance.now() - t0);
   if (contactsRes.status === 'fulfilled') rawFromContacts = contactsRes.value || [];
@@ -420,7 +452,7 @@ export async function GET(req: NextRequest) {
     const out = [...applyLabel(Array.from(byNumber.values()).filter((c) => isVisibleInPicker(c) && !lidNumbers.has(c.number)), allowed)]
       .sort((a, b) => a.name.localeCompare(b.name, 'it'));
     const recents = buildRecents(recentRows, phone, byNumber, lidNumbers);
-    return respond({ contacts: out, recents }, 'seed-only-evolution-down', t0, dbMs, performance.now() - tEvo, cachedPartial);
+    return respond({ contacts: out, recents, ...groupsExtra }, 'seed-only-evolution-down', t0, dbMs, performance.now() - tEvo, cachedPartial);
   }
 
   // Prefer findChats (richer for Baileys-synced instances), fall back to
@@ -584,5 +616,5 @@ export async function GET(req: NextRequest) {
   // Recents computed here too (was hardcoded []): a thin-cache user can still have
   // send history, and #3a serves this live+seed path for them.
   const recents = buildRecents(recentRows, phone, byNumber, lidNumbers);
-  return respond({ contacts: out, recents }, 'live+seed', t0, dbMs, performance.now() - tEvo, cachedPartial);
+  return respond({ contacts: out, recents, ...groupsExtra }, 'live+seed', t0, dbMs, performance.now() - tEvo, cachedPartial);
 }

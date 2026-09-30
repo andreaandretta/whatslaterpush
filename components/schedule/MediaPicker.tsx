@@ -281,7 +281,7 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
           }}
         />
 
-        <p className="text-xs text-gray-500 text-center mt-3">Max {MAX_MB}MB. Privato, accessibile solo al destinatario.</p>
+        <p className="text-xs text-gray-500 text-center mt-3">Max {MAX_MB}MB. Privato: lo vede solo chi riceve il messaggio.</p>
       </div>
 
       {scanPhoto && (

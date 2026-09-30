@@ -1,4 +1,4 @@
-import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, isNotOnWhatsAppError, PendingMessage, UserInstance } from '../app/lib/cron-utils';
+import { shouldSendMessage, shouldSendUpsell, rescheduleTomorrow, rescheduleSoon, applyJitter, buildQuotaRequeueUpdate, buildFailureRequeueUpdate, claimSendAttempt, isNotOnWhatsAppError, PendingMessage, UserInstance, sendTimeoutMs, classifyGroupSendFailure, countBreakerFailures, GROUP_TEXT_SEND_TIMEOUT_MS } from '../app/lib/cron-utils';
 import { createMockSupabase } from './helpers/mocks';
 
 function makeMessage(overrides: { user_instances?: Partial<UserInstance> | null } & Partial<Omit<PendingMessage, 'user_instances'>> = {}): PendingMessage {
@@ -384,5 +384,81 @@ describe('isNotOnWhatsAppError', () => {
     expect(isNotOnWhatsAppError('fetch failed')).toBe(false);
     expect(isNotOnWhatsAppError('{"exists":true}')).toBe(false);
     expect(isNotOnWhatsAppError(undefined)).toBe(false);
+  });
+});
+
+// ── Gruppi WhatsApp (D10) ──
+const GROUP = '120363000000000001@g.us';
+
+function fetchTypeError(code: string | null, causeName?: string) {
+  const e: any = new TypeError('fetch failed');
+  e.cause = { code, name: causeName || 'Error' };
+  return e;
+}
+
+describe('sendTimeoutMs — gruppi', () => {
+  test('testo di gruppo: 25 s', () => {
+    expect(GROUP_TEXT_SEND_TIMEOUT_MS).toBe(25_000);
+    expect(sendTimeoutMs('text', null, { group: true })).toBe(25_000);
+  });
+  test('allegato di gruppo: tra 25 e 40 s', () => {
+    expect(sendTimeoutMs('media', 260 * 1024, { group: true })).toBe(25_000);
+    expect(sendTimeoutMs('media', 12 * 1024 * 1024, { group: true })).toBe(32_000);
+    expect(sendTimeoutMs('media', 16 * 1024 * 1024, { group: true })).toBe(40_000);
+    expect(sendTimeoutMs('media', null, { group: true })).toBe(40_000);
+  });
+  test('senza opts identico a prima', () => {
+    expect(sendTimeoutMs('text')).toBe(8000);
+    expect(sendTimeoutMs('text', null, {})).toBe(8000);
+    expect(sendTimeoutMs('media', 260 * 1024)).toBe(10_000);
+    expect(sendTimeoutMs('media', 260 * 1024, { group: false })).toBe(10_000);
+  });
+});
+
+describe('classifyGroupSendFailure — si ritenta solo ciò che è di sicuro prima dell\'inoltro', () => {
+  test.each([
+    ['400 [object Object] (gruppo non trovato)', new Error('HTTP 400: {"status":400,"error":"Bad Request","response":{"message":["[object Object]"]}}'), 'unreachable'],
+    ['400 not-acceptable (#2521)', new Error('HTTP 400: {"status":400,"response":{"message":["Error: not-acceptable"]}}'), 'undeliverable'],
+    ['400 No sessions', new Error('HTTP 400: {"response":{"message":["SessionError: No sessions"]}}'), 'undeliverable'],
+    ['400 Connection Closed', new Error('HTTP 400: {"status":400,"response":{"message":["Connection Closed"]}}'), 'retry'],
+    ['400 rate-overlimit', new Error('HTTP 400: {"response":{"message":["Error: rate-overlimit"]}}'), 'retry'],
+    ['400 validazione (text is required)', new Error('HTTP 400: {"response":{"message":["text is required"]}}'), 'retry'],
+    ['400 PrismaClient (dopo l\'inoltro)', new Error('HTTP 400: {"response":{"message":["PrismaClientKnownRequestError: Unique constraint failed"]}}'), 'indeterminate'],
+    ['500', new Error('HTTP 500: {"status":500,"error":"Internal Server Error"}'), 'retry'],
+    ['502', new Error('HTTP 502: Bad Gateway'), 'indeterminate'],
+    ['503', new Error('HTTP 503: Service Unavailable'), 'indeterminate'],
+    ['504', new Error('HTTP 504: Gateway Timeout'), 'indeterminate'],
+    ['404', new Error('HTTP 404: {"status":404,"error":"Not Found"}'), 'retry'],
+    ['401', new Error('HTTP 401: Unauthorized'), 'retry'],
+    ['413', new Error('HTTP 413: Payload Too Large'), 'retry'],
+    ['ECONNREFUSED', fetchTypeError('ECONNREFUSED'), 'retry'],
+    ['UND_ERR_CONNECT_TIMEOUT', fetchTypeError('UND_ERR_CONNECT_TIMEOUT'), 'retry'],
+    ['EHOSTUNREACH', fetchTypeError('EHOSTUNREACH'), 'retry'],
+    ['ConnectTimeoutError', fetchTypeError(null, 'ConnectTimeoutError'), 'retry'],
+    ['ECONNRESET', fetchTypeError('ECONNRESET'), 'indeterminate'],
+    ['UND_ERR_SOCKET', fetchTypeError('UND_ERR_SOCKET'), 'indeterminate'],
+    ['errore nostro prima della fetch', new Error('Failed to sign media URL for 393331234567/x.pdf'), 'retry'],
+  ])('%s', (_label, err, expected) => {
+    expect(classifyGroupSendFailure(err)).toBe(expected);
+  });
+  test('un abort resta incerto (difesa: il chiamante lo gestisce prima)', () => {
+    const e: any = new Error('aborted'); e.name = 'AbortError';
+    expect(classifyGroupSendFailure(e)).toBe('indeterminate');
+  });
+});
+
+describe('countBreakerFailures — gruppi', () => {
+  test('gruppo con [object Object] o not-acceptable non pesa sul breaker', () => {
+    expect(countBreakerFailures([
+      { recipient_number: GROUP, error_message: 'HTTP 400: {"response":{"message":["[object Object]"]}}' },
+      { recipient_number: '120363000000000002@g.us', error_message: 'HTTP 400: {"response":{"message":["Error: not-acceptable"]}}' },
+      { recipient_number: '120363000000000003@g.us', error_message: 'HTTP 400: No sessions' },
+    ])).toBe(0);
+  });
+  test('gruppo con HTTP 500 conta come prima', () => {
+    expect(countBreakerFailures([{ recipient_number: GROUP, error_message: 'HTTP 500: Internal Server Error' }])).toBe(1);
+  });
+  test('persona con [object Object] conta come prima', () => {
+    expect(countBreakerFailures([{ recipient_number: '393331234567', error_message: 'HTTP 400: [object Object]' }])).toBe(1);
   });
 });

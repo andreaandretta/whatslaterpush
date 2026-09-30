@@ -1,6 +1,7 @@
 import { isOptOutText, recipientFromKey, inboundText, OPT_OUT_MAX_CHARS } from '../app/lib/opt-out';
 import { shouldSuspend, ACK_ERRORS_TO_SUSPEND } from '../app/lib/custody-ack';
-import { suppressionReasonText } from '../app/lib/suppressions';
+import { suppressionReasonText, pausePendingToRecipient } from '../app/lib/suppressions';
+import { createMockSupabase } from './helpers/mocks';
 import { WEBHOOK_EVENTS, buildWebhookSetBody, refreshWebhooksForOpenInstances } from '../app/lib/webhook-config';
 
 describe('isOptOutText — solo messaggi che SONO la richiesta', () => {
@@ -49,6 +50,20 @@ describe('custody ack / suppressions', () => {
     expect(suppressionReasonText('opt_out')).toContain('stop');
     expect(suppressionReasonText('ack_error')).toContain('rifiutato');
     expect(suppressionReasonText('altro')).toContain('sospeso');
+  });
+  test('ack_error: testo da gruppo per un gruppo, invariato per una persona', () => {
+    expect(suppressionReasonText('ack_error', { group: true })).toBe('In pausa: WhatsApp ha rifiutato gli ultimi 3 messaggi in questo gruppo (forse non ne fai più parte, o scrivono solo gli amministratori).');
+    expect(suppressionReasonText('ack_error', { group: false })).toBe(suppressionReasonText('ack_error'));
+    expect(suppressionReasonText('ack_error')).toContain('a questo numero');
+  });
+  test('pausePendingToRecipient scrive il testo da gruppo su un JID di gruppo, quello di sempre su un numero', async () => {
+    const supa = createMockSupabase();
+    supa.setResponse('scheduled_messages:update', [{ id: 'a' }]);
+    await pausePendingToRecipient(supa.client as any, '393331234567', '120363000000000001@g.us', 'ack_error');
+    await pausePendingToRecipient(supa.client as any, '393331234567', '393339876543', 'ack_error');
+    const updates = supa.calls.filter((c) => c.table === 'scheduled_messages' && c.operation === 'update');
+    expect(updates[0].args[0].error_message).toContain('in questo gruppo');
+    expect(updates[1].args[0].error_message).toContain('a questo numero');
   });
 });
 

@@ -28,7 +28,7 @@ export default function PrivacyPage() {
       {/* Content */}
       <main className="max-w-4xl mx-auto px-6 py-16">
         <h1 className="text-4xl font-bold text-text-primary mb-2">Informativa sulla Privacy</h1>
-        <p className="text-gray-500 mb-12">Ultimo aggiornamento: 21 settembre 2026</p>
+        <p className="text-gray-500 mb-12">Ultimo aggiornamento: 30 settembre 2026</p>
 
         <div className="prose prose-gray max-w-none space-y-10 text-[15px] leading-relaxed">
 
@@ -49,7 +49,7 @@ export default function PrivacyPage() {
             <h3 className="text-lg font-semibold text-text-primary mb-2">2.1 Dati forniti direttamente dall&apos;utente</h3>
             <ul className="list-disc pl-6 space-y-1 mb-4">
               <li><strong>Numero di telefono WhatsApp:</strong> utilizzato per identificare l&apos;utente e connettere il proprio account WhatsApp tramite la funzionalit&agrave; &ldquo;Dispositivi collegati&rdquo;.</li>
-              <li><strong>Contatti (nome e numero):</strong> i contatti a cui l&apos;utente desidera inviare messaggi programmati, forniti tramite vCard o inserimento manuale.</li>
+              <li><strong>Contatti (nome e numero):</strong> i contatti a cui l&apos;utente desidera inviare messaggi programmati, forniti tramite vCard o inserimento manuale, oppure un gruppo WhatsApp di cui l&apos;utente fa gi&agrave; parte.</li>
               <li><strong>Contenuto dei messaggi programmati:</strong> il testo dei messaggi che l&apos;utente desidera programmare per l&apos;invio.</li>
               <li><strong>Date e orari di invio:</strong> la programmazione temporale scelta dall&apos;utente.</li>
             </ul>
@@ -59,6 +59,8 @@ export default function PrivacyPage() {
               <li><strong>Dati di connessione:</strong> stato della connessione WhatsApp (connesso/disconnesso), timestamp dell&apos;ultima connessione.</li>
               <li><strong>Log di invio:</strong> stato dei messaggi (programmato, inviato, fallito), timestamp di invio, eventuali errori.</li>
               <li><strong>Contatti WhatsApp:</strong> al primo collegamento sincronizziamo nome, numero e, quando disponibile, foto del profilo dei contatti e delle chat del tuo WhatsApp. Li usiamo solo per farti scegliere i destinatari senza riscriverli e per riconoscere i numeri che ti conoscono gi&agrave;.</li>
+              <li><strong>Gruppi WhatsApp:</strong> quando scegli a chi scrivere leggiamo dal tuo WhatsApp l&apos;elenco dei gruppi di cui fai parte: nome, numero di partecipanti, se puoi scriverci e i numeri dei partecipanti. I partecipanti ci servono a capire se sei amministratore e, finch&eacute; la tua rubrica non &egrave; sincronizzata, a proporti come contatti le persone con cui condividi un gruppo, con il nome pubblico che usano su WhatsApp (preso da WhatsApp o dall&apos;intestazione dei messaggi recenti, mai dal testo). L&apos;elenco dei partecipanti non lo salviamo nel nostro database: resta in memoria al massimo 30 minuti. Sul messaggio che programmi in un gruppo salviamo il nome del gruppo e il suo codice WhatsApp.</li>
+              <li><strong>Uso dell&apos;app e domande facoltative:</strong> registriamo quando apri l&apos;app (al massimo una volta al giorno) per contare quante persone la usano. Se rispondi a una breve domanda sul prodotto, salviamo la risposta con il tuo numero. Rispondere non &egrave; obbligatorio.</li>
               <li><strong>Dati di navigazione:</strong> informazioni tecniche standard (browser, dispositivo) tramite cookie tecnici strettamente necessari.</li>
             </ul>
 
@@ -182,7 +184,7 @@ export default function PrivacyPage() {
               <li>La connessione avviene tramite scansione di un QR code o inserimento di un codice di accoppiamento, esattamente come per WhatsApp Web.</li>
               <li>WhatsLater opera come un dispositivo collegato al tuo account. Puoi disconnetterlo in qualsiasi momento dalle impostazioni di WhatsApp.</li>
               <li>Non archiviamo le credenziali di accesso al tuo account WhatsApp. La sessione &egrave; gestita da WhatsApp stesso.</li>
-              <li>Non abbiamo accesso ai messaggi che ricevi, alle tue chat, ai tuoi gruppi o ai tuoi media, ad eccezione dei messaggi che invii a te stesso per programmare l&apos;invio.</li>
+              <li>Non abbiamo accesso ai messaggi che ricevi, alle tue chat o ai tuoi media, ad eccezione dei messaggi che invii a te stesso per programmare l&apos;invio. Dei tuoi gruppi leggiamo nome, numero di partecipanti e numeri dei partecipanti (vedi sezione 2.2), non il testo dei messaggi. Scriviamo in un gruppo solo quando lo programmi tu, e solo se ne fai parte.</li>
             </ul>
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm">
               <p className="font-semibold text-amber-800 mb-1">Nota importante</p>
@@ -266,7 +268,7 @@ export default function PrivacyPage() {
             <ul className="list-disc pl-6 space-y-1">
               <li><strong>Messaggi inviati:</strong> visibili nell&apos;app per il periodo di storico del piano; conservati fino all&apos;eliminazione dell&apos;account, che li cancella tutti.</li>
               <li><strong>Contatti salvati:</strong> conservati per la durata dell&apos;account.</li>
-              <li><strong>Log di servizio:</strong> conservati per 30 giorni.</li>
+              <li><strong>Log di servizio e registro delle attivit&agrave; (comprese le risposte alle domande facoltative):</strong> conservati fino a 90 giorni.</li>
               <li><strong>Dati di fatturazione:</strong> conservati per 10 anni come richiesto dalla normativa fiscale italiana.</li>
               <li><strong>Alla cancellazione dell&apos;account:</strong> tutti i dati personali vengono eliminati entro 72 ore, ad eccezione dei dati di fatturazione soggetti a obbligo di conservazione.</li>
             </ul>

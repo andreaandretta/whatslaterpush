@@ -3,7 +3,7 @@ import { getPlanLimits } from '../../lib/plans';
 import { isBillingEnabled, getEffectivePlan } from '../../lib/billing';
 import { verifyCookie, AUTH_COOKIE_NAME } from '../../lib/auth-cookie';
 import { validatePhone } from '../../lib/phone';
-import { looksLikeLidDigits, isLegacyLidRow } from '../../lib/jid';
+import { looksLikeLidDigits, isLegacyLidRow, normalizeGroupJid, isGroupJid } from '../../lib/jid';
 import { isUnsendableContactRow } from '../../lib/contact-rows';
 import { evolutionClient } from '../../../lib/evolution/client';
 import { applyJitter } from '../../lib/cron-utils';
@@ -13,6 +13,10 @@ import { isValidRule, reconcileRecurringChain } from '../../lib/recurrence';
 import { unfilledPlaceholders, unfilledPlaceholderMessage } from '../../lib/placeholders';
 import { logAuditEvent, clientIpFromHeaders, hashContactRef } from '../../lib/audit';
 import { getSupabaseAdmin } from '../../lib/supabase-admin';
+import { hasTemplateVariables } from '../../lib/template-variables';
+import { truncateAtGrapheme } from '../../lib/text';
+import { apiErrorText } from '../../lib/api-error-text';
+import { groupsEnabledFor, lookupGroup, takeGroupsToken, rememberGroupCheck, recentGroupCheck, type GroupLookup } from '../../lib/groups';
 
 // Tipi di allegato accettati (POST e PATCH). Il CHECK in DB è identico.
 const ALLOWED_MEDIA = ['image', 'video', 'document', 'audio', 'sticker', 'location', 'contact'];
@@ -30,6 +34,53 @@ function unfilledPlaceholderResponse(text: string): NextResponse | null {
     error: 'unfilled_placeholder',
     message: unfilledPlaceholderMessage(text),
   }, { status: 400 });
+}
+
+// ── Gruppi WhatsApp come destinatario ──
+// Errori con il testo per l'utente già pronto (lo stesso ripiego del client).
+function groupError(code: string, status: number): NextResponse {
+  return NextResponse.json({ error: code, message: apiErrorText({ error: code }) }, { status });
+}
+
+// Evolution si interroga solo con WhatsApp collegato o in riaggancio (D7).
+const GROUP_CHECK_STATES = ['open', 'connecting'];
+
+// Esito del controllo live di un gruppo (POST, ripresa, retry): null = si può
+// scrivere. Timeout, 5xx, overlimit o risposte incomprensibili → 503, mai
+// l'inserimento: è la regola "mai scrivere in gruppi di cui non fai parte".
+function groupLookupFailure(look: GroupLookup): NextResponse | null {
+  if (look.kind === 'unavailable') return groupError('group_check_unavailable', 503);
+  if (look.kind === 'not_member') return groupError('recipient_not_group_member', 400);
+  if (look.community) return groupError('group_is_community', 400);
+  if (look.adminOnly && look.self !== 'admin') return groupError('group_admins_only', 400);
+  return null;
+}
+
+// Ripresa e retry di una riga di gruppo (D21): controllo live SENZA
+// scorciatoie. Una riga in pausa per "non risulti più nel gruppo" non torna
+// in invio col solo controllo permissivo del cron.
+async function recheckGroup(supabase: any, phone: string, jid: string): Promise<{ fail: NextResponse } | { name: string | null }> {
+  if (!groupsEnabledFor(phone)) return { fail: groupError('groups_disabled', 403) };
+  const { data: inst } = await supabase
+    .from('user_instances')
+    .select('instance_name, connection_status')
+    .eq('phone_number', phone)
+    .maybeSingle();
+  const instanceName = (inst as any)?.instance_name;
+  if (!instanceName) return { fail: groupError('group_check_unavailable', 503) };
+  if (!GROUP_CHECK_STATES.includes((inst as any)?.connection_status)) return { fail: groupError('whatsapp_disconnected', 409) };
+  if (!(await takeGroupsToken(supabase, 'check', phone))) return { fail: groupError('group_check_rate_limited', 429) };
+  const look = await lookupGroup(instanceName, jid, phone, 5000);
+  const fail = groupLookupFailure(look);
+  if (fail || look.kind !== 'ok') return { fail: fail || groupError('group_check_unavailable', 503) };
+  rememberGroupCheck(phone, jid, { name: look.name, size: look.size });
+  return { name: look.name };
+}
+
+// Nome del gruppo da salvare quando il controllo ne porta uno diverso.
+function renamedGroup(checkedName: string | null, current: unknown): string | null {
+  const name = checkedName ? truncateAtGrapheme(checkedName, 100) : '';
+  return name && name !== current ? name : null;
 }
 
 export const dynamic = 'force-dynamic';
@@ -101,11 +152,12 @@ export async function GET(req: NextRequest) {
 
   // Attach cached profile photos from whatsapp_contacts so the dashboard
   // avatars can render WhatsApp pictures without a second client round-trip.
+  // I gruppi non stanno in whatsapp_contacts: il loro JID non va nella query.
   const recipientNumbers = Array.from(
     new Set(
       ((data || []) as Array<{ recipient_number: string | null }>)
         .map((m) => m.recipient_number)
-        .filter((n): n is string => typeof n === 'string' && n.length > 0)
+        .filter((n): n is string => typeof n === 'string' && n.length > 0 && !isGroupJid(n))
     )
   );
 
@@ -300,7 +352,7 @@ export async function PATCH(req: NextRequest) {
   const supabase = getSupabaseAdmin();
   const { data: existing } = await supabase
     .from('scheduled_messages')
-    .select('id, instance_phone, status, scheduled_at, media_type, media_url, media_filename, recurrence_rule, parsed_message, caption, error_message')
+    .select('id, instance_phone, status, scheduled_at, media_type, media_url, media_filename, recurrence_rule, parsed_message, caption, error_message, recipient_number, recipient_name')
     .eq('id', id)
     .eq('instance_phone', phone)
     .single();
@@ -341,7 +393,7 @@ export async function PATCH(req: NextRequest) {
         message: 'L\'allegato di questo messaggio non è più disponibile: usa "Duplica" e caricalo di nuovo.',
       }, { status: 409 });
     }
-    const retryUpdate = {
+    const retryUpdate: Record<string, unknown> = {
       status: 'pending',
       scheduled_at: applyJitter(new Date().toISOString()),
       retry_count: 0,
@@ -349,6 +401,12 @@ export async function PATCH(req: NextRequest) {
       error_message: null,
       send_attempted_at: null,
     };
+    if (isGroupJid((existing as any).recipient_number)) {
+      const checked = await recheckGroup(supabase, phone, (existing as any).recipient_number);
+      if ('fail' in checked) return checked.fail;
+      const renamed = renamedGroup(checked.name, (existing as any).recipient_name);
+      if (renamed) retryUpdate.recipient_name = renamed;
+    }
     // Conditional write scoped to status='failed' so a concurrent retry (double
     // tap) or any race can't re-queue an already-requeued row twice.
     const { data: retried, error: retryErr } = await supabase
@@ -477,6 +535,10 @@ export async function PATCH(req: NextRequest) {
     }
     const unfilled = unfilledPlaceholderResponse(clean);
     if (unfilled) return unfilled;
+    // {nome} in un gruppo partirebbe come "Ciao Under": il testo arriva uguale a tutti.
+    if (isGroupJid((existing as any).recipient_number) && hasTemplateVariables(clean)) {
+      return groupError('placeholder_not_for_group', 400);
+    }
     update.parsed_message = clean;
     update.caption = clean;
     if (hasMedia) update.media_caption = clean.length > 0 ? clean : null;
@@ -534,6 +596,15 @@ export async function PATCH(req: NextRequest) {
     if (!reason.startsWith('in pausa') && !reason.startsWith('trial scaduto')) {
       update.error_message = null;
     }
+  }
+
+  // Ripresa di una riga di gruppo in pausa (D21): controllo live, dopo tutte
+  // le verifiche gratuite, così una richiesta respinta non costa nulla a WhatsApp.
+  if (update.status === 'pending' && existing.status === 'paused' && isGroupJid((existing as any).recipient_number)) {
+    const checked = await recheckGroup(supabase, phone, (existing as any).recipient_number);
+    if ('fail' in checked) return checked.fail;
+    const renamed = renamedGroup(checked.name, (existing as any).recipient_name);
+    if (renamed) update.recipient_name = renamed;
   }
 
   // Conditional write: refuse if the cron picked up the row between our
@@ -608,14 +679,22 @@ export async function POST(req: NextRequest) {
   // rows (manual rows are always shown and exempt from the LID filters).
   const manualEntry = body?.manual_entry === true;
 
-  if (typeof rawNumber !== 'string' || rawNumber.includes('@g.us') || rawNumber.includes('@broadcast')) {
+  // Un gruppo si riconosce dal JID intero (D1, D2). Broadcast, newsletter,
+  // LID e JID malformati (es. "12345@g.us") restano invalid_phone.
+  const groupJid = normalizeGroupJid(rawNumber);
+  const isGroup = groupJid !== null;
+  if (typeof rawNumber !== 'string' || (!isGroup && rawNumber.includes('@'))) {
     return NextResponse.json({
       error: 'invalid_phone',
-      message: 'Si può programmare un messaggio solo verso un numero di telefono.',
+      message: groupsEnabledFor(phone)
+        ? 'Si può programmare un messaggio solo verso un numero di telefono o un gruppo di cui fai parte.'
+        : 'Si può programmare un messaggio solo verso un numero di telefono.',
     }, { status: 400 });
   }
+  if (isGroup && !groupsEnabledFor(phone)) return groupError('groups_disabled', 403);
 
-  const normalized = validatePhone(rawNumber);
+  // Gruppo: niente validatePhone, niente ricerca LID, niente self_target.
+  const normalized = isGroup ? groupJid : validatePhone(rawNumber);
   if (!normalized) {
     // A Linked ID from an old address-book row cannot be a number at all
     // (e.g. 15 digits after +1): say so instead of "numero non valido", which
@@ -638,7 +717,7 @@ export async function POST(req: NextRequest) {
     }, { status: 400 });
   }
 
-  if (normalized === phone) {
+  if (!isGroup && normalized === phone) {
     return NextResponse.json({ error: 'self_target' }, { status: 400 });
   }
 
@@ -668,6 +747,10 @@ export async function POST(req: NextRequest) {
 
   const unfilled = unfilledPlaceholderResponse(messageStr);
   if (unfilled) return unfilled;
+  // {nome} in un gruppo partirebbe come "Ciao Under": il testo arriva uguale a tutti (D11).
+  if (isGroup && (hasTemplateVariables(messageStr) || hasTemplateVariables(typeof media_caption === 'string' ? media_caption : null))) {
+    return groupError('placeholder_not_for_group', 400);
+  }
 
   if (typeof scheduled_at !== 'string') {
     return NextResponse.json({ error: 'invalid_datetime' }, { status: 400 });
@@ -692,7 +775,7 @@ export async function POST(req: NextRequest) {
 
   const { data: user } = await supabase
     .from('user_instances')
-    .select('id, subscription_plan')
+    .select('id, subscription_plan, instance_name, connection_status')
     .eq('phone_number', phone)
     .single();
 
@@ -770,6 +853,43 @@ export async function POST(req: NextRequest) {
     }, { status: 429 });
   }
 
+  // Gruppo: controllo LIVE che blocca (D7), per ultimo dopo ogni controllo
+  // gratuito. Scorciatoie senza chiamate a WhatsApp: un verdetto positivo in
+  // memoria (10 min) o una riga dell'app verso lo stesso gruppo creata negli
+  // ultimi 10 min (già verificata): un allenatore che inserisce 20 date di
+  // fila nello stesso gruppo non deve prendere 429 all'11ª. Nome e numero di
+  // persone vengono dal server; quelli del client si ignorano.
+  let verifiedGroup: { name: string | null; size: number | null } | null = null;
+  if (isGroup) {
+    const instanceName = (user as any).instance_name;
+    if (!instanceName) return groupError('group_check_unavailable', 503);
+    if (!GROUP_CHECK_STATES.includes((user as any).connection_status)) return groupError('whatsapp_disconnected', 409);
+    verifiedGroup = recentGroupCheck(phone, normalized);
+    if (!verifiedGroup) {
+      const { data: recentRows } = await supabase
+        .from('scheduled_messages')
+        .select('recipient_name')
+        .eq('instance_phone', phone)
+        .eq('recipient_number', normalized)
+        .in('status', ['pending', 'processing', 'sent'])
+        .is('parent_recurrence_id', null)
+        // Le righe del self-chat (wa_message_id) non sono mai passate dal controllo.
+        .is('wa_message_id', null)
+        .gte('created_at', new Date(Date.now() - 10 * 60_000).toISOString())
+        .limit(1);
+      const row = Array.isArray(recentRows) ? recentRows[0] : null;
+      if (row) verifiedGroup = { name: (row as any).recipient_name ?? null, size: null };
+    }
+    if (!verifiedGroup) {
+      if (!(await takeGroupsToken(supabase, 'check', phone))) return groupError('group_check_rate_limited', 429);
+      const look = await lookupGroup(instanceName, normalized, phone, 5000);
+      const fail = groupLookupFailure(look);
+      if (fail || look.kind !== 'ok') return fail || groupError('group_check_unavailable', 503);
+      verifiedGroup = { name: look.name, size: look.size };
+      rememberGroupCheck(phone, normalized, verifiedGroup);
+    }
+  }
+
   // Does WhatsApp know this number? Asked once, only for a recipient this user
   // never reached ('sent' row), so a typo, a landline or a dead number is
   // caught now and not days later at send time (prod: 3466…2716 failed
@@ -777,37 +897,41 @@ export async function POST(req: NextRequest) {
   // A Linked ID (WhatsApp's internal code, 14-15 digits) stored in the address
   // book before the webhook learned to skip it gets its own message. If
   // WhatsApp cannot be asked in 4 s, nothing is blocked.
-  let legacyLid = false;
-  if (looksLikeLidDigits(normalized)) {
-    const { data: lidRow } = await supabase
-      .from('whatsapp_contacts')
-      .select('added_manually, created_at')
-      .eq('user_phone', phone)
-      .eq('contact_number', normalized)
-      .maybeSingle();
-    legacyLid = !!lidRow && isLegacyLidRow({ contact_number: normalized, ...(lidRow as any) });
-  }
-  const { data: sentBefore } = await supabase
-    .from('scheduled_messages')
-    .select('id')
-    .eq('instance_phone', phone)
-    .eq('recipient_number', normalized)
-    .eq('status', 'sent')
-    .limit(1);
-  const reachedBefore = Array.isArray(sentBefore) && sentBefore.length > 0;
-  if ((legacyLid || !reachedBefore) && !(await whatsappKnowsNumber(supabase, phone, normalized))) {
-    return NextResponse.json(legacyLid
-      ? { error: 'recipient_is_lid', message: RECIPIENT_IS_LID_MESSAGE }
-      : {
-          error: 'recipient_not_on_whatsapp',
-          message: 'Questo numero non risulta su WhatsApp. Controlla le cifre (e il prefisso, se è estero).',
-        }, { status: 400 });
+  if (!isGroup) {
+    let legacyLid = false;
+    if (looksLikeLidDigits(normalized)) {
+      const { data: lidRow } = await supabase
+        .from('whatsapp_contacts')
+        .select('added_manually, created_at')
+        .eq('user_phone', phone)
+        .eq('contact_number', normalized)
+        .maybeSingle();
+      legacyLid = !!lidRow && isLegacyLidRow({ contact_number: normalized, ...(lidRow as any) });
+    }
+    const { data: sentBefore } = await supabase
+      .from('scheduled_messages')
+      .select('id')
+      .eq('instance_phone', phone)
+      .eq('recipient_number', normalized)
+      .eq('status', 'sent')
+      .limit(1);
+    const reachedBefore = Array.isArray(sentBefore) && sentBefore.length > 0;
+    if ((legacyLid || !reachedBefore) && !(await whatsappKnowsNumber(supabase, phone, normalized))) {
+      return NextResponse.json(legacyLid
+        ? { error: 'recipient_is_lid', message: RECIPIENT_IS_LID_MESSAGE }
+        : {
+            error: 'recipient_not_on_whatsapp',
+            message: 'Questo numero non risulta su WhatsApp. Controlla le cifre (e il prefisso, se è estero).',
+          }, { status: 400 });
+    }
   }
 
   const cleanMessage = messageStr.trim();
-  const cleanName = typeof recipient_name === 'string' && recipient_name.trim().length > 0
-    ? recipient_name.trim().slice(0, 100)
-    : null;
+  const cleanName = isGroup
+    ? truncateAtGrapheme(verifiedGroup?.name ?? '', 100) || null
+    : typeof recipient_name === 'string' && recipient_name.trim().length > 0
+      ? recipient_name.trim().slice(0, 100)
+      : null;
   const cleanMediaCaption = typeof media_caption === 'string' && media_caption.length > 0
     ? media_caption.slice(0, 3500)
     : null;
@@ -854,6 +978,7 @@ export async function POST(req: NextRequest) {
       scheduled_at: inserted.scheduled_at,
       has_recurrence: normalizedRule !== null,
       recipient_hash: await hashContactRef(normalized),
+      recipient_kind: isGroup ? 'group' : 'person',
       body_length: cleanMessage.length,
     },
     ipAddress: clientIpFromHeaders(req.headers),
@@ -869,7 +994,8 @@ export async function POST(req: NextRequest) {
   // Only for numbers typed in "Nuovo contatto" (manual_entry): before, a pick
   // from Recents with no row became a permanent 'manual' contact, exempt from
   // the LID filters (prod: LID 1154…3692 saved as MANUAL the day it failed).
-  if (manualEntry) {
+  // Un gruppo non è un contatto: mai in whatsapp_contacts.
+  if (manualEntry && !isGroup) {
     try {
       const { error: contactErr } = await supabase
         .from('whatsapp_contacts')
@@ -891,5 +1017,7 @@ export async function POST(req: NextRequest) {
     id: inserted.id,
     scheduled_at: inserted.scheduled_at,
     status: 'pending',
+    recipient_kind: isGroup ? 'group' : 'person',
+    recipient_name: cleanName,
   });
 }

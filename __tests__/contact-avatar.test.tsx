@@ -49,4 +49,19 @@ describe('ContactAvatar', () => {
     render(<ContactAvatar name="mario rossi" number="393331234567" />);
     expect(screen.getByText('MR')).toBeInTheDocument();
   });
+  test('variant="group" senza nome → icona Users, fondo di gruppo, nessuna cifra del JID', () => {
+    const { container } = render(<ContactAvatar number="120363000000000001@g.us" variant="group" />);
+    const root = container.firstChild as HTMLElement;
+    expect(root.className).toContain('bg-[#1F5A45]');
+    expect(root.className).toContain('text-[#BFF0D5]');
+    expect(container.querySelector('svg.lucide-users')).toBeInTheDocument();
+    expect(container.querySelector('svg.lucide-user')).not.toBeInTheDocument();
+    expect(container.textContent || '').not.toMatch(/\d/);
+  });
+
+  test('variant="group" con nome → iniziali del gruppo e mai la foto', () => {
+    const { container } = render(<ContactAvatar name="🏀 Under 12" number="120363000000000001@g.us" variant="group" photoSrc="https://example.test/p.jpg" />);
+    expect(screen.getByText('U1')).toBeInTheDocument();
+    expect(container.querySelector('img')).toBeNull();
+  });
 });

@@ -4,7 +4,7 @@
  * (server, edge, client) — failures here would leak PII to Sentry, so we
  * cover the canonical WhatsLater shapes: WhatsApp JIDs, E.164 phone, email.
  */
-import { scrubString, scrubObject, sentryBeforeSend } from '../app/lib/sentry-pii';
+import { scrubString, scrubObject, sentryBeforeSend, scrubBreadcrumbData, sentryBeforeBreadcrumb } from '../app/lib/sentry-pii';
 
 describe('scrubString', () => {
   test('redacts WhatsApp JIDs (s.whatsapp.net, g.us, newsletter)', () => {
@@ -78,5 +78,50 @@ describe('sentryBeforeSend', () => {
     const out = sentryBeforeSend(ev);
     expect(out).toBeDefined();
     expect(out.message).toBe('leak [REDACTED_JID]');
+  });
+});
+
+describe('gruppi WhatsApp (JID lunghi, formato vecchio, URL-encoded)', () => {
+  test('18 cifre + @g.us → [REDACTED_JID]', () => {
+    expect(scrubString('send to 120363012345678901@g.us failed')).toBe('send to [REDACTED_JID] failed');
+  });
+
+  test('formato con trattino → un solo [REDACTED_JID]', () => {
+    const out = scrubString('group 393331234567-1600000000@g.us');
+    expect(out).toBe('group [REDACTED_JID]');
+    expect(out).not.toMatch(/\d{6}/);
+  });
+
+  test('?groupJid=…%40g.us → censurato', () => {
+    const out = scrubString('/group/findGroupInfos/inst?groupJid=120363012345678901%40g.us');
+    expect(out).toBe('/group/findGroupInfos/inst?groupJid=[REDACTED_JID]');
+  });
+
+  test('il caso da 9 cifre resta', () => {
+    expect(scrubString('group=123456789@g.us')).toBe('group=[REDACTED_JID]');
+  });
+});
+
+describe('breadcrumb delle fetch', () => {
+  test("data['http.query'] con groupJid= → campo tolto", () => {
+    const out = scrubBreadcrumbData({ url: 'http://evo.test/group/findGroupInfos/inst', method: 'GET', status_code: 200, 'http.query': 'groupJid=120363012345678901%40g.us' });
+    expect(out).not.toHaveProperty('http.query');
+    expect(out).toMatchObject({ method: 'GET', status_code: 200 });
+  });
+
+  test('le stringhe si ripuliscono dopo la decodifica', () => {
+    const out = scrubBreadcrumbData({ url: 'http://evo.test/x?to=393331234567%40s.whatsapp.net', other: '%E0%A4%A' });
+    expect(out.url).toBe('http://evo.test/x?to=[REDACTED_JID]');
+    expect(out.other).toBe('%E0%A4%A'); // non decodificabile: resta com'è
+    expect(JSON.stringify(out)).not.toMatch(/393331234567/);
+  });
+
+  test('sentryBeforeBreadcrumb ripulisce messaggio e data e non lancia mai', () => {
+    const b = sentryBeforeBreadcrumb({ message: 'GET ?groupJid=120363012345678901%40g.us', data: { 'http.query': 'groupJid%3D120363012345678901%2540g.us', nested: { n: '393331234567' } } });
+    expect(b.message).toBe('GET ?groupJid=[REDACTED_JID]');
+    expect(b.data).not.toHaveProperty('http.query');
+    expect(b.data!.nested).toEqual({ n: '[REDACTED_PHONE]' });
+    const weird: any = { get data() { throw new Error('x'); } };
+    expect(() => sentryBeforeBreadcrumb(weird)).not.toThrow();
   });
 });

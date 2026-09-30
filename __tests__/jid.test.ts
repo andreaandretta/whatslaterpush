@@ -8,7 +8,7 @@
  * `@s.whatsapp.net` / `@c.us` forms address a person by phone number; every
  * other suffix must yield null, never a "phone number".
  */
-import { phoneDigitsFromJid, phoneJidFromContact, isLegacyLidRow, LID_INGEST_FIX_AT } from '../app/lib/jid';
+import { phoneDigitsFromJid, phoneJidFromContact, isLegacyLidRow, LID_INGEST_FIX_AT, normalizeGroupJid, isGroupJid, recipientDisplayName } from '../app/lib/jid';
 
 describe('phoneDigitsFromJid', () => {
   test('returns the digits of a 12-digit @s.whatsapp.net JID', () => {
@@ -117,5 +117,61 @@ describe('isLegacyLidRow', () => {
     expect(isLegacyLidRow({ contact_number: '144392555855948', added_manually: true, created_at: '2026-01-01T00:00:00Z' })).toBe(false);
     expect(isLegacyLidRow({ contact_number: '393401234567', added_manually: false, created_at: '2026-01-01T00:00:00Z' })).toBe(false);
     expect(isLegacyLidRow(null)).toBe(false);
+  });
+});
+
+describe('isGroupJid / normalizeGroupJid', () => {
+  test('current group format (15-22 digits) → group', () => {
+    expect(isGroupJid('120363012345678901@g.us')).toBe(true);
+    expect(normalizeGroupJid('120363012345678901@g.us')).toBe('120363012345678901@g.us');
+  });
+
+  test('legacy <digits>-<timestamp> format → group', () => {
+    expect(isGroupJid('393331234567-1600000000@g.us')).toBe(true);
+  });
+
+  test('spaces around and upper case are normalised', () => {
+    expect(normalizeGroupJid('  120363012345678901@G.US ')).toBe('120363012345678901@g.us');
+    expect(isGroupJid(' 120363012345678901@g.us\n')).toBe(true);
+  });
+
+  test.each([
+    ['12345@g.us'],
+    ['status@broadcast'],
+    ['120363012345678901@newsletter'],
+    ['12345678901234@lid'],
+    ['393331234567@s.whatsapp.net'],
+    ['393331234567'],
+    ['120363012345678901@g.us.evil'],
+    [''],
+  ])('%s → not a group', (raw) => {
+    expect(isGroupJid(raw)).toBe(false);
+    expect(normalizeGroupJid(raw)).toBeNull();
+  });
+
+  test('non-strings → not a group', () => {
+    expect(isGroupJid(null)).toBe(false);
+    expect(isGroupJid(undefined)).toBe(false);
+    expect(isGroupJid(120363012345678901)).toBe(false);
+  });
+});
+
+describe('recipientDisplayName', () => {
+  test('group with a name → the name', () => {
+    expect(recipientDisplayName({ recipient_name: 'Under 12 – Genitori', recipient_number: '120363012345678901@g.us' })).toBe('Under 12 – Genitori');
+  });
+
+  test('group without a name → "Gruppo senza nome", never the digits', () => {
+    for (const recipient_name of [null, undefined, '', '   ']) {
+      const out = recipientDisplayName({ recipient_name, recipient_number: '393331234567-1600000000@g.us' });
+      expect(out).toBe('Gruppo senza nome');
+      expect(out).not.toMatch(/\d/);
+    }
+  });
+
+  test('people unchanged: name, else +number, else +?', () => {
+    expect(recipientDisplayName({ recipient_name: 'Mario', recipient_number: '393331234567' })).toBe('Mario');
+    expect(recipientDisplayName({ recipient_name: null, recipient_number: '393331234567' })).toBe('+393331234567');
+    expect(recipientDisplayName({ recipient_name: null, recipient_number: null })).toBe('+?');
   });
 });

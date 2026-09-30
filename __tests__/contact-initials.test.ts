@@ -36,4 +36,24 @@ describe('computeInitials', () => {
     expect(computeInitials(undefined)).not.toMatch(/\d/);
     expect(computeInitials('')).not.toMatch(/\d/);
   });
+
+  // Nomi di gruppo: emoji e trattini non sono parole.
+  test("'🏀 Under 12' → 'U1'", () => {
+    expect(computeInitials('🏀 Under 12')).toBe('U1');
+  });
+
+  test("'Under 12 – Genitori' → 'U1'", () => {
+    expect(computeInitials('Under 12 – Genitori')).toBe('U1');
+  });
+
+  test('leading punctuation is skipped, never half an emoji', () => {
+    expect(computeInitials('(Mario) Rossi')).toBe('MR');
+    expect(computeInitials('«Genitori»')).toBe('G');
+    expect(computeInitials('⚽️⚽️')).toBe('');
+    expect(computeInitials('- –')).toBe('');
+  });
+
+  test('accented letters stay whole', () => {
+    expect(computeInitials('èlite Ómnibus')).toBe('ÈÓ');
+  });
 });

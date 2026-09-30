@@ -5,7 +5,7 @@
 // we can turn that into user-facing copy is here, client-side. We NEVER surface
 // the raw string/code: anything unmatched falls through to a generic message.
 
-export type MessageErrorKind = 'disconnected' | 'invalid_number' | 'media_rejected' | 'rate_limited' | 'generic';
+export type MessageErrorKind = 'disconnected' | 'invalid_number' | 'media_rejected' | 'rate_limited' | 'group_unreachable' | 'generic';
 
 export interface MappedError {
   kind: MessageErrorKind;
@@ -18,6 +18,7 @@ const REASONS: Record<MessageErrorKind, string> = {
   invalid_number: 'Numero non su WhatsApp',
   media_rejected: 'Allegato non accettato da WhatsApp — cambia file',
   rate_limited: 'Troppi invii — riprova più tardi',
+  group_unreachable: 'Gruppo non raggiungibile — controlla di farne ancora parte',
   generic: 'Invio non riuscito — riprova',
 };
 
@@ -35,19 +36,33 @@ const DISCONNECTED = /disconness|logged out|logout|loggedout|connection (closed|
 // allegato rifiutato diventava "Numero non su WhatsApp" su un contatto buono.
 const INVALID_NUMBER = /not on whatsapp|not .*registered|does(n'?t| not) exist|"?exists"?\s*[:=]\s*false|invalid[^.]*(number|recipient|jid)|number[^.]*not[^.]*valid/;
 const BAD_REQUEST = /bad request|\b400\b/;
-const RATE_LIMITED = /\b429\b|rate[\s_-]?limit|too many/;
+const RATE_LIMITED = /\b429\b|rate[\s_-]?limit|overlimit|too many/;
+// Solo per le righe di gruppo. Evolution 2.3.7 serializza il suo
+// NotFoundException('Group not found') dentro un 400 come "[object Object]".
+// Niente `forbidden`: un 403 è la guardia di Evolution, non il gruppo.
+const GROUP_UNREACHABLE = /group not found|item-not-found|not-authorized/;
+
+/** La sessione WhatsApp sembra caduta (stesso criterio di mapErrorReason). */
+export function looksDisconnected(raw?: string | null): boolean {
+  return DISCONNECTED.test((raw || '').toLowerCase());
+}
 
 /**
  * `opts.hasMedia`: la riga aveva un allegato. Un 400 che NON parla del numero
  * su un messaggio con allegato è quasi sempre il file (formato non accettato,
  * file già tolto dalla pulizia dei 30 giorni): va detto, non spacciato per
  * numero sbagliato. Senza allegato un 400 generico resta "generic" (Riprova).
+ * `opts.isGroup`: la riga è un gruppo; un gruppo sparito o lasciato va detto
+ * prima di "Ricollega". Senza `isGroup` nulla cambia.
  */
-export function mapErrorReason(raw?: string | null, opts: { hasMedia?: boolean } = {}): MappedError {
+export function mapErrorReason(raw?: string | null, opts: { hasMedia?: boolean; isGroup?: boolean } = {}): MappedError {
   const s = (raw || '').toLowerCase();
   // Allegato tolto dalla pulizia dei 30 giorni (MEDIA_EXPIRED_ERROR del cron):
   // Riprova non serve, "Cambia allegato" (Duplica) sì.
   if (s.startsWith('allegato non più disponibile')) return { kind: 'media_rejected', label: 'Allegato non più disponibile — ricaricalo con "Duplica"' };
+  if (opts.isGroup && ((/^http 400\b/.test(s) && s.includes('[object object]')) || GROUP_UNREACHABLE.test(s))) {
+    return { kind: 'group_unreachable', label: REASONS.group_unreachable };
+  }
   if (DISCONNECTED.test(s)) return { kind: 'disconnected', label: REASONS.disconnected };
   if (INVALID_NUMBER.test(s)) return { kind: 'invalid_number', label: REASONS.invalid_number };
   if (opts.hasMedia && BAD_REQUEST.test(s)) return { kind: 'media_rejected', label: REASONS.media_rejected };
@@ -113,8 +128,10 @@ export function mapPendingReason(raw?: string | null): string | null {
       : 'Spostato a domattina: raggiunto il limite di messaggi del giorno';
   }
   if (s.startsWith('numeri nuovi')) return 'Spostato a domattina: pochi numeri nuovi al giorno, per proteggere il tuo WhatsApp';
+  if (s.startsWith('gruppo con più di')) return 'Spostato a domattina: nei primi giorni dal collegamento i gruppi grandi aspettano, per proteggere il tuo WhatsApp';
   // Il cron scrive già il motivo per l'utente, con l'orario vero di partenza.
   if (s.startsWith('massimo 3 messaggi')) return text;
+  if (s.startsWith('controllo del gruppo')) return text;
   if (s.startsWith('whatsapp ricollegato')) return text;
   if (s.startsWith('cool-down')) return 'Spostato: già 3 messaggi a questo contatto nelle ultime 24 ore';
   if (s.startsWith('invii sospesi')) return 'Spostato a domattina: troppi invii non riusciti nelle ultime 24 ore';

@@ -43,6 +43,21 @@ export async function runWebhookLogsCleanup(): Promise<WebhookLogsCleanupResult>
     console.error('CRON: processed_webhook_events prune failed:', e?.message || e);
   }
 
+  // Gettoni e segnale "lento" dei gruppi (grp:list|check|slow:<ref>): finestre di
+  // al massimo 6 h, dopo 24 h senza aggiornamenti la riga non serve più. Best-effort.
+  try {
+    const grpCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { count: grpRemoved, error: grpError } = await (supabase
+      .from('rate_limit_state')
+      .delete({ count: 'exact' }) as any)
+      .like('key', 'grp:%')
+      .lt('updated_at', grpCutoff);
+    if (grpError) console.error('CRON: rate_limit_state grp:* prune failed:', grpError.message);
+    else if (grpRemoved) console.log('CRON: Pruned ' + grpRemoved + ' rate_limit_state grp:* keys older than 24 hours');
+  } catch (e: any) {
+    console.error('CRON: rate_limit_state grp:* prune failed:', e?.message || e);
+  }
+
   if (removed === 0) {
     return { status: 'noop', removed_count: 0 };
   }

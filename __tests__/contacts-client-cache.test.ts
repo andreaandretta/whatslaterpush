@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-import { prefetchContacts, getContactsSnapshot, setContactsSnapshot, clearContactsSnapshots, setContactsCacheOwner } from '../app/lib/contacts-client-cache';
+import { prefetchContacts, getContactsSnapshot, setContactsSnapshot, clearContactsSnapshots, setContactsCacheOwner, getGroupsSnapshot, setGroupsSnapshot } from '../app/lib/contacts-client-cache';
 
 function okResponse(body: any, headers: Record<string, string> = { 'x-contacts-source': 'cache-only' }) {
   return { ok: true, status: 200, json: () => Promise.resolve(body), headers: new Headers(headers) };
@@ -63,5 +63,48 @@ describe('contacts-client-cache', () => {
     setContactsCacheOwner('393330000002');
     expect(getContactsSnapshot(null)).toBeNull();
     setContactsCacheOwner(null);
+  });
+
+  describe('snapshot dei gruppi', () => {
+    const GROUPS = [{ jid: '120363000000000001@g.us', name: 'Genitori', size: 19, can_send: true }];
+
+    test('set/get in memoria, con fetchedAt', () => {
+      expect(getGroupsSnapshot()).toBeNull();
+      const before = Date.now();
+      setGroupsSnapshot(GROUPS);
+      const snap = getGroupsSnapshot()!;
+      expect(snap.groups).toEqual(GROUPS);
+      expect(snap.fetchedAt).toBeGreaterThanOrEqual(before);
+    });
+
+    test('clearContactsSnapshots lo svuota', () => {
+      setGroupsSnapshot(GROUPS);
+      clearContactsSnapshots();
+      expect(getGroupsSnapshot()).toBeNull();
+    });
+
+    test('cambio di numero lo svuota, lo stesso numero no', () => {
+      setContactsCacheOwner('393330000001');
+      setGroupsSnapshot(GROUPS);
+      setContactsCacheOwner('393330000001');
+      expect(getGroupsSnapshot()).not.toBeNull();
+      setContactsCacheOwner('altro');
+      expect(getGroupsSnapshot()).toBeNull();
+      setContactsCacheOwner(null);
+    });
+
+    test('pageshow dal bfcache (persisted) lo svuota', () => {
+      setGroupsSnapshot(GROUPS);
+      window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: false }));
+      expect(getGroupsSnapshot()).not.toBeNull();
+      window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+      expect(getGroupsSnapshot()).toBeNull();
+    });
+
+    test('mai su localStorage', () => {
+      const spy = jest.spyOn(Storage.prototype, 'setItem');
+      setGroupsSnapshot(GROUPS);
+      expect(spy).not.toHaveBeenCalled();
+    });
   });
 });

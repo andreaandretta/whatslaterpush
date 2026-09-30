@@ -72,10 +72,13 @@ async function callGet(opts: { authed?: boolean; label?: string; prefetch?: bool
 
 // Con i fake timer: callGet() fa lavoro async VERO (import dinamico, firma del cookie)
 // prima che la route armi i suoi setTimeout, quindi si avanza a passi finché non chiude.
+// Limite in tempo reale (performance non è finto), non in giri: con la suite intera
+// la firma del cookie (crypto.subtle) poteva superare i 50 giri e il test restava appeso.
 async function settleWithFakeTimers<T>(p: Promise<T>): Promise<T> {
   let done = false;
   const wrapped = p.finally(() => { done = true; });
-  for (let i = 0; i < 50 && !done; i++) {
+  const deadline = performance.now() + 4000;
+  while (!done && performance.now() < deadline) {
     await new Promise((r) => setImmediate(r));
     await jest.advanceTimersByTimeAsync(1000);
   }
@@ -875,5 +878,191 @@ describe('GET /api/contacts', () => {
     const body = await (await callGet()).json();
     expect(body.contacts.map((c: any) => c.number).sort()).toEqual(['393331112233', '393335554444']);
     expect(body.contacts.some((c: any) => c.number.startsWith('1'))).toBe(false);
+  });
+});
+
+// Gruppi WhatsApp come destinatario (D18). Accesi: la lista passa dal gettone
+// grp:list condiviso con /api/groups (fetch diretto a Evolution, mock globale).
+// Spenti: tutto come prima, evolutionClient.fetchAllGroups senza gettone.
+describe('gruppi (D18)', () => {
+  const realFetch = global.fetch;
+  const G1 = '120363000000000001@g.us';
+  const MEMBER = '393335554444';
+  const RAW_GROUPS = [
+    { id: G1, subject: 'Under 12 – Genitori', size: 2, participants: [{ id: USER_PHONE + '@s.whatsapp.net', admin: null }, { id: MEMBER + '@s.whatsapp.net', admin: 'admin' }] },
+  ];
+  let minuteCount: number;
+  let evoFetch: jest.Mock;
+
+  function jsonRes(body: any, status = 200) {
+    return { ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) };
+  }
+  const groupFetches = () => evoFetch.mock.calls.filter((c) => String(c[0]).includes('/group/fetchAllGroups/'));
+  const tokenCalls = () => mockSupa.calls.filter((c) => c.table === '__rpc__' && c.operation === 'rate_limit_record');
+
+  beforeEach(() => {
+    process.env.GROUPS_ENABLED = 'true';
+    process.env.EVOLUTION_API_URL = 'http://evo.test';
+    process.env.EVOLUTION_API_KEY = 'test-evo-key';
+    minuteCount = 1;
+    mockSupa.setRpcHandler('rate_limit_record', () => ({ data: { minute_count: minuteCount }, error: null }));
+    mockSupa.setResponse('rate_limit_state:select', null);
+    mockSupa.setResponse('user_instances:select', {
+      id: 'user-uuid-1', instance_name: INSTANCE, phone_number: USER_PHONE, connection_status: 'open',
+    });
+    mockSupa.setResponse('whatsapp_contacts:select', []);
+    mockSupa.setResponse('scheduled_messages:select', []);
+    findChatsMock.mockResolvedValue([{ remoteJid: '393331112233@s.whatsapp.net', pushName: 'Marco' }]);
+    whatsappNumbersMock.mockResolvedValue([{ exists: true, jid: MEMBER + '@s.whatsapp.net', number: MEMBER, name: 'Giulia' }]);
+    evoFetch = jest.fn().mockResolvedValue(jsonRes(RAW_GROUPS));
+    global.fetch = evoFetch as any;
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    global.fetch = realFetch;
+    mockSupa.setRpcHandler('rate_limit_record', () => ({ data: null, error: null }));
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
+  test('la query dei Recenti esclude i gruppi', async () => {
+    await callGet();
+    const recent = mockSupa.calls.find((c) => c.table === 'scheduled_messages' && c.operation === 'select' && c.args[0] === 'recipient_number, recipient_name');
+    expect(recent!.chain).toContainEqual({ method: 'not', args: ['recipient_number', 'like', '%@g.us'] });
+  });
+
+  test('percorso live con gettone: groups + groups_status live, partecipanti come contatti', async () => {
+    const res = await callGet();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.groups).toEqual([{ jid: G1, name: 'Under 12 – Genitori', size: 2, can_send: true }]);
+    expect(body.groups_status).toBe('live');
+    expect(body.groups_fetched_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(groupFetches()).toHaveLength(1);
+    expect(fetchAllGroupsMock).not.toHaveBeenCalled();
+    // Gettone, poi "in corso" (tolto quando la lista arriva: la lambda può congelarsi dopo la risposta).
+    expect(tokenCalls().map((c) => c.args[0].p_key)).toEqual([
+      expect.stringMatching(/^grp:list:[0-9a-f]{16}$/),
+      expect.stringMatching(/^grp:busy:[0-9a-f]{16}$/),
+    ]);
+    const cleared = mockSupa.calls.find((c) => c.table === 'rate_limit_state' && c.operation === 'delete');
+    expect(cleared!.chain).toContainEqual({ method: 'eq', args: ['key', expect.stringMatching(/^grp:busy:[0-9a-f]{16}$/)] });
+    // Il partecipante resta proposto come contatto, col nome da whatsappNumbers.
+    expect(body.contacts.map((c: any) => c.number).sort()).toEqual(['393331112233', MEMBER]);
+    expect(JSON.stringify(body.groups)).not.toContain(MEMBER);
+  });
+
+  test('gettone negato: nessuna fetchAllGroups, groups_status skipped, contatti senza i partecipanti', async () => {
+    minuteCount = 2;
+    const body = await (await callGet()).json();
+    expect(groupFetches()).toHaveLength(0);
+    expect(fetchAllGroupsMock).not.toHaveBeenCalled();
+    expect(body.groups).toBeUndefined();
+    expect(body.groups_status).toBe('skipped');
+    expect(body.contacts.map((c: any) => c.number)).toEqual(['393331112233']);
+    expect(whatsappNumbersMock).not.toHaveBeenCalled();
+  });
+
+  test('"lento" attivo: nessuna fetch né gettone, groups_status skipped', async () => {
+    mockSupa.setResponse('rate_limit_state:select', { minute_reset: Date.now() + 3_600_000 });
+    const body = await (await callGet()).json();
+    expect(groupFetches()).toHaveLength(0);
+    expect(tokenCalls()).toHaveLength(0);
+    expect(body.groups_status).toBe('skipped');
+  });
+
+  test('lista oltre 5 s: groups_status timeout, contatti serviti lo stesso', async () => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'performance'] });
+    evoFetch.mockImplementation((url: string) => (String(url).includes('/group/fetchAllGroups/') ? new Promise(() => {}) : Promise.resolve(jsonRes({}))));
+    const res = await settleWithFakeTimers(callGet());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.groups_status).toBe('timeout');
+    expect(body.groups).toBeUndefined();
+    expect(body.contacts.map((c: any) => c.number)).toEqual(['393331112233']);
+    // Per la sola attesa di 5 s il contacts non segna "lento"; resta "in corso".
+    expect(tokenCalls().some((c) => String(c.args[0].p_key).startsWith('grp:slow:'))).toBe(false);
+    expect(tokenCalls().some((c) => String(c.args[0].p_key).startsWith('grp:busy:'))).toBe(true);
+  });
+
+  test.each(['close', null])('WhatsApp scollegato (%s): nessuna lettura né gettone, groups_status skipped', async (status) => {
+    mockSupa.setResponse('user_instances:select', {
+      id: 'user-uuid-1', instance_name: INSTANCE, phone_number: USER_PHONE, connection_status: status,
+    });
+    const res = await callGet();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(groupFetches()).toHaveLength(0);
+    expect(fetchAllGroupsMock).not.toHaveBeenCalled();
+    expect(tokenCalls()).toHaveLength(0);
+    expect(body.groups).toBeUndefined();
+    expect(body.groups_status).toBe('skipped');
+    expect(body.contacts.map((c: any) => c.number)).toEqual(['393331112233']);
+  });
+
+  test('connection_status "connecting": la lettura parte', async () => {
+    mockSupa.setResponse('user_instances:select', {
+      id: 'user-uuid-1', instance_name: INSTANCE, phone_number: USER_PHONE, connection_status: 'connecting',
+    });
+    const body = await (await callGet()).json();
+    expect(groupFetches()).toHaveLength(1);
+    expect(body.groups_status).toBe('live');
+  });
+
+  test.each([
+    ['GROUPS_ENABLED assente', () => { delete process.env.GROUPS_ENABLED; }],
+    ['GROUPS_ONLY_FOR con un altro numero', () => { process.env.GROUPS_ONLY_FOR = '393339876543'; }],
+  ])('gruppi spenti (%s): come oggi, fetchAllGroups con partecipanti e nessun gettone né campo groups', async (_label, setup) => {
+    setup();
+    fetchAllGroupsMock.mockResolvedValue(RAW_GROUPS);
+    const body = await (await callGet()).json();
+    expect(fetchAllGroupsMock).toHaveBeenCalledWith(INSTANCE, true);
+    expect(groupFetches()).toHaveLength(0);
+    expect(tokenCalls()).toHaveLength(0);
+    expect(body).not.toHaveProperty('groups');
+    expect(body).not.toHaveProperty('groups_status');
+    expect(body).not.toHaveProperty('groups_fetched_at');
+    expect(body.contacts.map((c: any) => c.number).sort()).toEqual(['393331112233', MEMBER]);
+    // Stessa lettura di user_instances di prima.
+    const ui = mockSupa.calls.find((c) => c.table === 'user_instances' && c.operation === 'select')!;
+    expect(ui.args[0]).toBe('instance_name');
+  });
+
+  test('gruppi spenti e WhatsApp scollegato: fetchAllGroups come prima', async () => {
+    delete process.env.GROUPS_ENABLED;
+    mockSupa.setResponse('user_instances:select', {
+      id: 'user-uuid-1', instance_name: INSTANCE, phone_number: USER_PHONE, connection_status: 'close',
+    });
+    fetchAllGroupsMock.mockResolvedValue(RAW_GROUPS);
+    const body = await (await callGet()).json();
+    expect(fetchAllGroupsMock).toHaveBeenCalledWith(INSTANCE, true);
+    expect(body).not.toHaveProperty('groups_status');
+    expect(body.contacts.map((c: any) => c.number).sort()).toEqual(['393331112233', MEMBER]);
+  });
+
+  test('percorso cache-only (>= 25): nessuna lettura dei gruppi, groups_status skipped (il picker mostra "Carico i gruppi…")', async () => {
+    const rows = Array.from({ length: 25 }, (_, i) => ({
+      contact_number: '39340000' + String(1000 + i), name: 'Contact ' + i, push_name: null, profile_pic_url: null, added_manually: false,
+    }));
+    mockSupa.setResponse('whatsapp_contacts:select', rows);
+    const body = await (await callGet()).json();
+    expect(groupFetches()).toHaveLength(0);
+    expect(tokenCalls()).toHaveLength(0);
+    expect(fetchAllGroupsMock).not.toHaveBeenCalled();
+    expect(body.groups_status).toBe('skipped');
+    expect(body).not.toHaveProperty('groups');
+  });
+
+  test('percorso cache-only con i gruppi spenti: nessun campo groups*', async () => {
+    delete process.env.GROUPS_ENABLED;
+    const rows = Array.from({ length: 25 }, (_, i) => ({
+      contact_number: '39340000' + String(1000 + i), name: 'Contact ' + i, push_name: null, profile_pic_url: null, added_manually: false,
+    }));
+    mockSupa.setResponse('whatsapp_contacts:select', rows);
+    const body = await (await callGet()).json();
+    expect(groupFetches()).toHaveLength(0);
+    expect(body).not.toHaveProperty('groups_status');
+    expect(body).not.toHaveProperty('groups');
+    expect(body.contacts).toHaveLength(25);
   });
 });

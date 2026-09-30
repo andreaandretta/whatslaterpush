@@ -18,6 +18,9 @@ import { romeWallClock, instantFromRomeWallClock, browserIsOutsideRome } from '.
 import { unfilledPlaceholders } from '../app/lib/placeholders';
 import { useModalHistory } from '../app/lib/use-modal-history';
 import { useScheduleDraft, ScheduleDraftBanner } from './schedule/ScheduleDraftBanner';
+import { isGroupJid } from '../app/lib/jid';
+import { getGroupsSnapshot } from '../app/lib/contacts-client-cache';
+import type { PickedContact } from './ContactPickerModal';
 
 // Feature flag: "Richiedi approvazione" e "Promemoria" sono raccolti dalla UI
 // ma NON ancora consegnati end-to-end (handleSubmit non li invia, non c'è cron
@@ -30,7 +33,7 @@ interface ScheduleModalProps {
   open: boolean;
   onClose: () => void;
   onBack: () => void;
-  contact: { number: string; name?: string; manualEntry?: boolean } | null;
+  contact: PickedContact | null;
   onScheduled: () => void;
   /** Pre-fill the message body — used by Duplica/Modifica from the dashboard. */
   initialMessage?: string;
@@ -58,6 +61,15 @@ const REMINDER_LABELS: Record<ReminderValue, string> = {
   '1day': '1 giorno prima',
   'never': 'Mai',
 };
+
+// "Gruppo · 19 persone", "Gruppo · 1 persona", "Gruppo" (numero sconosciuto), più l'eventuale
+// distintivo degli omonimi. Mai le cifre del JID.
+function groupSubtitle(size: number | null, hint: string | null): string {
+  const parts = ['Gruppo'];
+  if (typeof size === 'number' && size > 0) parts.push(size === 1 ? '1 persona' : `${size} persone`);
+  if (hint) parts.push(hint);
+  return parts.join(' · ');
+}
 
 function mediaChanged(a: MediaAttachment | null, b: MediaAttachment | null): boolean {
   if (!a && !b) return false;
@@ -212,9 +224,19 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   // compila (all'invio si risolve solo {nome}): finché restano, niente invio.
   // Il server rifiuta lo stesso testo (unfilled_placeholder).
   const unfilled = unfilledPlaceholders(message);
-  const canSubmit = isValidDate && isValidMessage && unfilled.length === 0 && !submitting;
+  // Gruppo: dal picker (kind) o da Modifica/Duplica (solo il JID). Numero di
+  // persone e distintivo degli omonimi arrivano dal picker o dallo snapshot.
+  const isGroup = contact.kind === 'group' || isGroupJid(contact.number);
+  const snapGroup = isGroup && (contact.size === undefined || contact.hint === undefined)
+    ? getGroupsSnapshot()?.groups.find((g) => g.jid === contact.number)
+    : undefined;
+  const groupSize = contact.size ?? snapGroup?.size ?? null;
+  const groupHint = contact.hint ?? snapGroup?.hint ?? null;
+  // {nome} in un gruppo partirebbe uguale per tutti ("Ciao Under"): il server lo rifiuta.
+  const groupNome = isGroup && hasTemplateVariables(message);
+  const canSubmit = isValidDate && isValidMessage && unfilled.length === 0 && !groupNome && !submitting;
 
-  const contactLabel = contact.name || `+${contact.number}`;
+  const contactLabel = isGroup ? (contact.name || 'Gruppo senza nome') : (contact.name || `+${contact.number}`);
   const defaultTemplateTitle = contact.name ? `Per ${contact.name}` : 'Mio template';
   const dateLabel = format(wallDate, 'EEE d MMM', { locale: it });
 
@@ -318,8 +340,8 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
             recipient_number: contact.number,
             recipient_name: contact.name || undefined,
             // Solo un numero scritto a mano in "Nuovo contatto" diventa un
-            // contatto manuale: una scelta dalla rubrica o dai recenti no.
-            ...(contact.manualEntry === true ? { manual_entry: true } : {}),
+            // contatto manuale: una scelta dalla rubrica o dai recenti no. Un gruppo mai.
+            ...(contact.manualEntry === true && !isGroup ? { manual_entry: true } : {}),
             message: message.trim(),
             scheduled_at: scheduledDate.toISOString(),
             recurrence_rule: buildRRule(recurrence, wallDate),
@@ -383,8 +405,15 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
         {/* pb-6: il CTA non è più un FAB sovrapposto ma una barra in-flow */}
         <div className="flex-1 overflow-y-auto pb-6">
           <div className="flex items-start justify-between px-4 pt-5 pb-3">
-            <div className="text-white font-bold text-xl">
-              Messaggio per {contactLabel}
+            <div className="min-w-0">
+              <div className="text-white font-bold text-xl">
+                Messaggio per {contactLabel}
+              </div>
+              {isGroup && (
+                <div className="text-sm text-gray-400 mt-0.5" data-testid="group-subtitle">
+                  {groupSubtitle(groupSize, groupHint)}
+                </div>
+              )}
             </div>
             <button
               onClick={onClose}
@@ -394,6 +423,12 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
               <X className="w-5 h-5" />
             </button>
           </div>
+
+          {isGroup && groupHint && (
+            <div className="mx-4 mb-3 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-xs" role="status" data-testid="group-homonym-warning">
+              Hai più gruppi con questo nome: controlla che sia quello giusto.
+            </div>
+          )}
 
           <div className="border-t border-[#2A3942] mx-4" />
 
@@ -585,17 +620,24 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
               />
             </div>
             <div className="flex items-center justify-between mt-1">
-              <button
-                type="button"
-                onClick={() => setMessage((m) => (m.includes('{nome}') ? m : m + (m && !m.endsWith(' ') ? ' ' : '') + '{nome}'))}
-                className="text-xs px-2 py-1 rounded-full bg-[#1F2C33] text-gray-400 hover:text-primary"
-                title="Inserisci il nome del contatto"
-              >
-                {'{nome}'} · nome contatto
-              </button>
+              {isGroup ? <span /> : (
+                <button
+                  type="button"
+                  onClick={() => setMessage((m) => (m.includes('{nome}') ? m : m + (m && !m.endsWith(' ') ? ' ' : '') + '{nome}'))}
+                  className="text-xs px-2 py-1 rounded-full bg-[#1F2C33] text-gray-400 hover:text-primary"
+                  title="Inserisci il nome del contatto"
+                >
+                  {'{nome}'} · nome contatto
+                </button>
+              )}
               <div className="text-xs text-gray-500 text-right">{message.length}/3500</div>
             </div>
-            {hasTemplateVariables(message) && (
+            {groupNome && (
+              <div className="mt-2 text-xs text-amber-200 bg-amber-900/30 rounded-lg px-3 py-2" role="status" data-testid="group-nome-warning">
+                {'{nome}'} non si usa nei gruppi: il messaggio arriva uguale a tutti. Toglilo o scrivi «Ciao a tutti».
+              </div>
+            )}
+            {!isGroup && hasTemplateVariables(message) && (
               <div className="mt-2 text-xs text-gray-400 bg-[#1F2C33]/60 rounded-lg px-3 py-2">
                 {firstNameOf(contact.name) ? (
                   <>Anteprima per {firstNameOf(contact.name)}: <span className="text-gray-300">{applyTemplateVariables(message, contact.name)}</span></>
@@ -669,11 +711,23 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           </div>
         )}
 
+        {isGroup && (
+          <div className="px-5 pt-2 text-[11px] text-gray-400 text-center" data-testid="group-hint">
+            Parte un solo messaggio nel gruppo, dal tuo numero.
+          </div>
+        )}
         {/* Microcopy onesta sui casi limite (pattern beta nativa): dichiara il
             comportamento a istanza disconnessa invece di lasciare il dubbio.
             Se è GIÀ scollegato lo si dice chiaro: il messaggio resta in coda
-            finché l'utente non ricollega, non parte da solo. */}
-        {connected ? (
+            finché l'utente non ricollega, non parte da solo. Per un gruppo il
+            server controlla il gruppo dal vivo e rifiuta (409): il pulsante
+            resta attivo, decide lui (accetta anche "connecting"). */}
+        {isGroup && !connected ? (
+          <div className="mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-xs text-center" role="status" data-testid="group-disconnected-warning">
+            Per programmare in un gruppo WhatsApp deve essere collegato: ricollegalo e riprova.{' '}
+            <a href="/connect" className="underline font-semibold">Ricollega</a>
+          </div>
+        ) : connected ? (
           <div className="px-5 pt-2 text-[11px] text-gray-500 text-center">
             Se WhatsApp è disconnesso all&apos;orario previsto, il messaggio parte appena si riconnette.
           </div>

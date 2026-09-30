@@ -16,6 +16,8 @@ export type AuditEventType =
   | 'recipient_suppressed' // anti-ban 7 set 2026: opt-out o rifiuti ripetuti di WhatsApp
   | 'auth_logout'
   | 'payment_event'
+  | 'fake_door_answer' // porta finta: risposta alla domanda in dashboard (insert diretto in /api/feedback)
+  | 'dashboard_seen'   // dashboard aperta, al massimo una volta per giorno di Roma
   | (string & {});
 
 interface AuditEventParams {

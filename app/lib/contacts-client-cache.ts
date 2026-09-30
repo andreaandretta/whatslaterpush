@@ -13,6 +13,18 @@ export interface PickerContact {
   photoUrl?: string;
 }
 
+// Gruppo WhatsApp come lo vede il picker. UNICA definizione del tipo: la
+// riesporta app/lib/groups.ts (lato server). Mai partecipanti né JID grezzi
+// oltre a `jid`, che la UI non mostra.
+export interface PickerGroup {
+  jid: string;
+  name: string;
+  size: number | null;
+  can_send: boolean;
+  locked_reason?: 'solo_admin';
+  hint?: string | null;
+}
+
 export interface ContactsSnapshot {
   contacts: PickerContact[];
   recents: PickerContact[];
@@ -21,6 +33,8 @@ export interface ContactsSnapshot {
 
 const ALL_KEY = '__all__';
 const snapshots = new Map<string, ContactsSnapshot>();
+// Un solo snapshot dei gruppi, solo in memoria come la rubrica.
+let groupsSnapshot: { groups: PickerGroup[]; fetchedAt: number } | null = null;
 
 // La cache appartiene a UN numero. Logout e re-pair ricaricano la pagina, ma due
 // casi tengono vivo l'heap JS dopo un cambio di sessione: un'altra scheda che
@@ -32,11 +46,15 @@ export function setContactsCacheOwner(phone: string | null): void {
   if (owner === phone) return;
   owner = phone;
   snapshots.clear();
+  groupsSnapshot = null;
 }
 
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
   window.addEventListener('pageshow', (e) => {
-    if ((e as PageTransitionEvent).persisted) snapshots.clear();
+    if ((e as PageTransitionEvent).persisted) {
+      snapshots.clear();
+      groupsSnapshot = null;
+    }
   });
 }
 
@@ -62,6 +80,15 @@ export function setContactsSnapshot(
 // (afterEach), per non far trapelare lo stato da un test all'altro.
 export function clearContactsSnapshots(): void {
   snapshots.clear();
+  groupsSnapshot = null;
+}
+
+export function getGroupsSnapshot(): { groups: PickerGroup[]; fetchedAt: number } | null {
+  return groupsSnapshot;
+}
+
+export function setGroupsSnapshot(groups: PickerGroup[]): void {
+  groupsSnapshot = { groups, fetchedAt: Date.now() };
 }
 
 // Riscaldamento: il dashboard lo chiama a pagina ferma, così alla PRIMA apertura del

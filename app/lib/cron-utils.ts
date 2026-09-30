@@ -2,8 +2,9 @@
  * Pure utility functions extracted from cron/send-messages for testability.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { isNotOnWhatsAppError as notOnWhatsApp } from './message-error';
+import { isNotOnWhatsAppError as notOnWhatsApp, looksDisconnected } from './message-error';
 import { SPREAD_STEP_MS } from './anti-ban';
+import { isGroupJid } from './jid';
 
 export interface UserInstance {
   id: string;
@@ -219,6 +220,9 @@ export async function claimSendAttempt(supabase: SupabaseClient, msgId: string):
 /** Soglia del circuit breaker per utente (destinatari distinti falliti in 24h). */
 export const BREAKER_THRESHOLD = 5;
 
+// Motivi di gruppo che non pesano sul breaker (vedi countBreakerFailures).
+const GROUP_NOT_BREAKER = /\[object object\]|not-acceptable|no sessions/i;
+
 /**
  * Quanti guasti "veri" pesano sul circuit breaker dell'utente.
  *
@@ -236,6 +240,10 @@ export function countBreakerFailures(rows: Array<{ recipient_number?: string | n
     // Allegato già tolto dalla pulizia dei 30 giorni: è un problema della
     // RIGA (il file non c'è più), non del numero che invia.
     if (typeof r?.error_message === 'string' && r.error_message.startsWith(MEDIA_EXPIRED_ERROR)) continue;
+    // Gruppo sparito/lasciato o non consegnabile (#2521): dice qualcosa sul
+    // GRUPPO, non sul numero che invia. Cintura: con classifyGroupSendFailure
+    // queste righe vanno in pausa e non dovrebbero mai arrivare a 'failed'.
+    if (isGroupJid(r?.recipient_number) && GROUP_NOT_BREAKER.test(String(r?.error_message || ''))) continue;
     recipients.add(String(r?.recipient_number || ''));
   }
   return recipients.size;
@@ -251,6 +259,7 @@ export const MEDIA_EXPIRED_ERROR = 'Allegato non più disponibile (rimosso dopo 
 
 export const TEXT_SEND_TIMEOUT_MS = 8000;
 export const MEDIA_SEND_TIMEOUT_CAP_MS = 40_000;
+export const GROUP_TEXT_SEND_TIMEOUT_MS = 25_000;
 const MEDIA_MS_PER_MB = 2000;
 
 /**
@@ -260,11 +269,61 @@ const MEDIA_MS_PER_MB = 2000;
  * abort e la riga finiva 'sent' senza prova. 8 s + 2 s per MB, tetto 40 s
  * (la route esporta maxDuration=60). Dimensione ignota → il tetto.
  */
-export function sendTimeoutMs(kind: 'text' | 'media', sizeBytes?: number | null): number {
+export function sendTimeoutMs(kind: 'text' | 'media', sizeBytes?: number | null, opts: { group?: boolean } = {}): number {
+  if (opts.group) {
+    // Il primo invio in un gruppo apre una sessione per ogni dispositivo dei
+    // membri: 8 s non bastano, e un abort qui è un "incerto" che nessuno
+    // può verificare. Allegati: la formula, tra 25 e 40 s.
+    if (kind === 'text') return GROUP_TEXT_SEND_TIMEOUT_MS;
+    return Math.min(MEDIA_SEND_TIMEOUT_CAP_MS, Math.max(GROUP_TEXT_SEND_TIMEOUT_MS, sendTimeoutMs('media', sizeBytes)));
+  }
   if (kind === 'text') return TEXT_SEND_TIMEOUT_MS;
   if (typeof sizeBytes !== 'number' || !Number.isFinite(sizeBytes) || sizeBytes <= 0) return MEDIA_SEND_TIMEOUT_CAP_MS;
   const mb = Math.ceil(sizeBytes / (1024 * 1024));
   return Math.min(MEDIA_SEND_TIMEOUT_CAP_MS, TEXT_SEND_TIMEOUT_MS + mb * MEDIA_MS_PER_MB);
+}
+
+export type GroupSendOutcome = 'unreachable' | 'undeliverable' | 'retry' | 'indeterminate';
+
+// Errori di fetch per cui la richiesta non è mai partita (nessun socket aperto).
+const NOT_SENT_CAUSES = ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT', 'EHOSTUNREACH', 'ENETUNREACH'];
+
+/**
+ * Esito di un invio FALLITO in un gruppo (D10). Un doppione in un gruppo lo
+ * vedono tutti: si ritenta solo ciò che è di sicuro prima dell'inoltro.
+ * In Evolution 2.3.7 qualsiasi errore dentro sendMessageWithTyping, prima o
+ * dopo l'inoltro, esce come 400; i 500 nascono prima (whatsappNumber fuori dal
+ * try, prepareMediaMessage). 502/503/504 li produce qualcosa davanti.
+ *  - unreachable: 400 con "[object Object]" (NotFoundException('Group not found') serializzato)
+ *  - undeliverable: 400 not-acceptable / No sessions (Baileys #2521)
+ *  - retry: la richiesta non è partita, o è stata respinta prima dell'inoltro
+ *  - indeterminate: può essere partita → 'sent' col marcatore, niente retry
+ * Solo per le righe di gruppo: per le persone il cron non cambia.
+ */
+export function classifyGroupSendFailure(err: unknown): GroupSendOutcome {
+  const e = err as any;
+  // Il chiamante gestisce già il timeout; difesa: un abort può essere dopo l'inoltro.
+  if (e?.name === 'AbortError' || e?.name === 'TimeoutError') return 'indeterminate';
+  if (e?.name === 'TypeError') {
+    const cause = e?.cause;
+    if (NOT_SENT_CAUSES.indexOf(String(cause?.code || '')) !== -1 || cause?.name === 'ConnectTimeoutError') return 'retry';
+    return 'indeterminate';
+  }
+  const msg = typeof e?.message === 'string' ? e.message : '';
+  const m = /^HTTP (\d{3}):\s?([\s\S]*)$/.exec(msg);
+  // Errori nostri prima della fetch (es. "Failed to sign media URL").
+  if (!m) return 'retry';
+  const status = Number(m[1]);
+  const body = m[2].toLowerCase();
+  if (status === 400) {
+    if (body.includes('[object object]')) return 'unreachable';
+    if (/not-acceptable|no sessions/.test(body)) return 'undeliverable';
+    if (looksDisconnected(body) || /overlimit|timed out|text is required|requires property|is not one of|does not match/.test(body)) return 'retry';
+    return 'indeterminate';
+  }
+  if (status === 500) return 'retry';
+  if (status > 500) return 'indeterminate';
+  return 'retry';
 }
 
 export const COOLDOWN_MAX_PER_RECIPIENT = 3;

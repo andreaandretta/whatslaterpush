@@ -1,12 +1,13 @@
 'use client';
 import React, { useMemo, useState, useEffect } from 'react';
-import { Search, X, MoreVertical, Calendar, Inbox, Clock, AlertCircle, RotateCcw, Plug, Loader2, Paperclip, UserRound } from 'lucide-react';
+import { Search, X, MoreVertical, Calendar, Inbox, Clock, AlertCircle, RotateCcw, Plug, Loader2, Paperclip, UserRound, Users } from 'lucide-react';
 import { ContactAvatar } from '../../components/ContactAvatar';
 import { StatusBadge, formatCountdown, formatRelativePast } from './StatusBadge';
 import { MessageActionsSheet } from './MessageActionsSheet';
 import { DeliveryStatusIcon } from './DeliveryStatusIcon';
+import FakeDoorCard from './FakeDoorCard';
 import { mapErrorReason, isNotOnWhatsAppError, isIndeterminateSend, mapPendingReason } from '../lib/message-error';
-import { looksLikeLidDigits } from '../lib/jid';
+import { looksLikeLidDigits, isGroupJid, recipientDisplayName } from '../lib/jid';
 import { recurrenceTagLabel } from '../lib/schedule-quick';
 import { romeWallClock } from '../lib/rome-time';
 
@@ -53,6 +54,19 @@ export function AttachmentChip({ msg }: { msg: Pick<ScheduledMessage, 'media_typ
   );
 }
 
+// Chip "Gruppo": la riga va in un gruppo WhatsApp, non a una persona.
+export function GroupTag() {
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[11px] font-medium rounded-full px-2 py-0.5 text-[#BFF0D5] bg-[#1F5A45]/60"
+      data-testid="group-tag"
+    >
+      <Users className="w-3 h-3 shrink-0" aria-hidden="true" />
+      Gruppo
+    </span>
+  );
+}
+
 // "↻ ogni martedì": prima nella lista niente diceva che una riga era una serie,
 // e "Elimina" sul singolo martedì fermava tutta la serie senza avvisare.
 export function RecurrenceTag({ rule }: { rule?: string | null }) {
@@ -88,6 +102,9 @@ interface Props {
   // Live Evolution link state — drives the "Ricollega WhatsApp" CTA on a
   // failed card even when the stored error string is ambiguous.
   connected: boolean;
+  // Porta finta "foto del calendario" (GET /api/feedback dalla dashboard).
+  fakeDoor?: { active: boolean; answered: boolean };
+  onFakeDoorAnswered?: () => void;
 }
 
 type Tab = 'upcoming' | 'sent';
@@ -142,6 +159,7 @@ const SENT_STATUSES = new Set(['sent', 'cancelled']);
 
 export default function MessagesSection({
   messages, onDelete, onDuplicate, onEdit, onPauseToggle, onRetry, onSnooze, onShowToast, onChooseOtherContact, connected,
+  fakeDoor, onFakeDoorAnswered,
 }: Props) {
   const [tab, setTab] = useState<Tab>('upcoming');
   const [query, setQuery] = useState('');
@@ -182,7 +200,8 @@ export default function MessagesSection({
   const filter = (arr: ScheduledMessage[]) =>
     !q ? arr : arr.filter((m) => {
       const name = (m.recipient_name || '').toLowerCase();
-      const num = (m.recipient_number || '').toLowerCase();
+      // Le cifre di un JID di gruppo non si cercano (e non si mostrano): "gruppo" sì.
+      const num = isGroupJid(m.recipient_number) ? 'gruppo' : (m.recipient_number || '').toLowerCase();
       const text = (m.parsed_message || m.caption || '').toLowerCase();
       return name.includes(q) || num.includes(q) || text.includes(q);
     });
@@ -358,11 +377,17 @@ export default function MessagesSection({
         </div>
       )}
 
+      {tab === 'upcoming' && !q && fakeDoor?.active && !fakeDoor.answered && (
+        <FakeDoorCard onAnswered={onFakeDoorAnswered ?? (() => {})} />
+      )}
+
       {/* Actions bottom-sheet */}
       <MessageActionsSheet
         open={!!actionMsg}
         onClose={() => setActionMsg(null)}
-        title={actionMsg?.recipient_name || actionMsg?.recipient_number || ''}
+        title={actionMsg && isGroupJid(actionMsg.recipient_number)
+          ? recipientDisplayName(actionMsg)
+          : actionMsg?.recipient_name || actionMsg?.recipient_number || ''}
         onDuplicate={() => actionMsg && onDuplicate(actionMsg)}
         onEdit={() => actionMsg && onEdit(actionMsg)}
         onPauseToggle={() => actionMsg && onPauseToggle(actionMsg)}
@@ -459,8 +484,9 @@ function TabButton({ active, onClick, count, children }: {
 // Il menu ⋮ deve dire la stessa cosa della card rossa.
 function isRetryable(msg: ScheduledMessage): boolean {
   if (msg.status !== 'failed') return false;
-  if (isNotOnWhatsAppError(msg.error_message)) return false;
-  return mapErrorReason(msg.error_message, { hasMedia: !!msg.media_type }).kind !== 'media_rejected';
+  const isGroup = isGroupJid(msg.recipient_number);
+  if (!isGroup && isNotOnWhatsAppError(msg.error_message)) return false;
+  return mapErrorReason(msg.error_message, { hasMedia: !!msg.media_type, isGroup }).kind !== 'media_rejected';
 }
 
 // Righe in coda che il sistema ha spostato o messo in pausa: il motivo è in
@@ -481,7 +507,8 @@ function MessageRow({ msg, tab, onOpenActions }: {
   msg: ScheduledMessage; tab: Tab; onOpenActions: () => void;
 }) {
   const text = msg.parsed_message || msg.caption || '';
-  const displayName = msg.recipient_name || `+${msg.recipient_number || '?'}`;
+  const isGroup = isGroupJid(msg.recipient_number);
+  const displayName = recipientDisplayName(msg);
 
   // Long-press to open actions on mobile
   const pressTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -520,6 +547,7 @@ function MessageRow({ msg, tab, onOpenActions }: {
         number={msg.recipient_number || ''}
         size="md"
         photoSrc={msg.photo_url || undefined}
+        variant={isGroup ? 'group' : undefined}
       />
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline justify-between gap-2 mb-0.5">
@@ -541,7 +569,9 @@ function MessageRow({ msg, tab, onOpenActions }: {
           {unverified ? (
             <span
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ring-1 bg-amber-500/12 text-amber-400 ring-amber-500/30"
-              title="WhatsApp non ha confermato l'invio: controlla nella chat se è arrivato prima di rimandarlo."
+              title={isGroup
+                ? "WhatsApp non ci ha confermato l'invio: guarda nel gruppo se è arrivato prima di rimandarlo."
+                : "WhatsApp non ha confermato l'invio: controlla nella chat se è arrivato prima di rimandarlo."}
               data-testid="status-unverified"
             >
               <AlertCircle className="w-3 h-3" aria-hidden="true" />
@@ -550,9 +580,10 @@ function MessageRow({ msg, tab, onOpenActions }: {
           ) : (
             <>
               <StatusBadge status={msg.status} countdown={countdown} />
-              <DeliveryStatusIcon msg={msg} />
+              <DeliveryStatusIcon msg={msg} isGroup={isGroup} />
             </>
           )}
+          {isGroup && <GroupTag />}
           <AttachmentChip msg={msg} />
           <RecurrenceTag rule={msg.recurrence_rule} />
         </div>
@@ -589,10 +620,12 @@ function FailedMessageCard({ msg, connected, onRetry, onDuplicate, onChooseOther
 }) {
   const [retrying, setRetrying] = useState(false);
   const text = msg.parsed_message || msg.caption || '';
-  const displayName = msg.recipient_name || `+${msg.recipient_number || '?'}`;
-  const reason = mapErrorReason(msg.error_message, { hasMedia: !!msg.media_type });
+  const isGroup = isGroupJid(msg.recipient_number);
+  const displayName = recipientDisplayName(msg);
+  const reason = mapErrorReason(msg.error_message, { hasMedia: !!msg.media_type, isGroup });
   // Only WhatsApp's own "exists": false is permanent; any other 400 keeps Riprova.
-  const notOnWhatsApp = isNotOnWhatsAppError(msg.error_message);
+  // Per i gruppi niente "numero non su WhatsApp" né suggerimento LID.
+  const notOnWhatsApp = !isGroup && isNotOnWhatsAppError(msg.error_message);
   // Allegato rifiutato: rimandare lo stesso file dà lo stesso 400. Si riapre il
   // messaggio (Duplica porta con sé testo e allegato) per cambiare il file.
   const mediaRejected = reason.kind === 'media_rejected';
@@ -618,6 +651,7 @@ function FailedMessageCard({ msg, connected, onRetry, onDuplicate, onChooseOther
         number={msg.recipient_number || ''}
         size="md"
         photoSrc={msg.photo_url || undefined}
+        variant={isGroup ? 'group' : undefined}
       />
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline justify-between gap-2 mb-0.5">
@@ -630,6 +664,9 @@ function FailedMessageCard({ msg, connected, onRetry, onDuplicate, onChooseOther
 
         {text && (
           <p className="text-sm text-gray-400 mt-0.5 mb-1.5 line-clamp-2 leading-snug">{text}</p>
+        )}
+        {isGroup && (
+          <div className="mb-1.5"><GroupTag /></div>
         )}
         {msg.media_type && (
           <div className="mb-1.5"><AttachmentChip msg={msg} /></div>

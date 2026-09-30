@@ -1,4 +1,4 @@
-import { mapErrorReason, mapPendingReason, isIndeterminateSend, isNotOnWhatsAppError } from '../app/lib/message-error';
+import { mapErrorReason, mapPendingReason, isIndeterminateSend, isNotOnWhatsAppError, looksDisconnected } from '../app/lib/message-error';
 
 describe('mapErrorReason', () => {
   describe('disconnected (→ "Ricollega")', () => {
@@ -154,5 +154,66 @@ describe('allegato scaduto (cleanup dei 30 giorni)', () => {
     const r = mapErrorReason(MEDIA_EXPIRED_ERROR, { hasMedia: true });
     expect(r.kind).toBe('media_rejected');
     expect(r.label).toMatch(/Duplica/);
+  });
+});
+
+describe('gruppi (isGroup)', () => {
+  // Evolution 2.3.7: NotFoundException('Group not found') lanciato nel try e
+  // serializzato dentro un BadRequestException → "[object Object]".
+  const GROUP_GONE = 'HTTP 400: {"status":400,"error":"Bad Request","response":{"message":["[object Object]"]}}';
+
+  test('400 con [object Object] → group_unreachable, anche con allegato', () => {
+    const r = mapErrorReason(GROUP_GONE, { isGroup: true });
+    expect(r.kind).toBe('group_unreachable');
+    expect(r.label).toBe('Gruppo non raggiungibile — controlla di farne ancora parte');
+    expect(mapErrorReason(GROUP_GONE, { isGroup: true, hasMedia: true }).kind).toBe('group_unreachable');
+  });
+
+  test.each(['group not found', 'HTTP 404: item-not-found', 'not-authorized'])('%s con isGroup → group_unreachable', (raw) => {
+    expect(mapErrorReason(raw, { isGroup: true }).kind).toBe('group_unreachable');
+  });
+
+  test('[object Object] senza il prefisso 400 → come oggi', () => {
+    expect(mapErrorReason('[object Object]', { isGroup: true }).kind).toBe(mapErrorReason('[object Object]').kind);
+    expect(mapErrorReason('HTTP 500: [object Object]', { isGroup: true }).kind).toBe('generic');
+  });
+
+  test('senza isGroup → come oggi', () => {
+    expect(mapErrorReason(GROUP_GONE).kind).toBe('generic');
+    expect(mapErrorReason(GROUP_GONE, { hasMedia: true }).kind).toBe('media_rejected');
+  });
+
+  test('HTTP 403 forbidden con isGroup → disconnected (guardia di Evolution, non il gruppo)', () => {
+    expect(mapErrorReason('HTTP 403: forbidden', { isGroup: true }).kind).toBe('disconnected');
+  });
+
+  test('allegato scaduto vince anche per i gruppi', () => {
+    expect(mapErrorReason('Allegato non più disponibile (pulizia 30 giorni)', { isGroup: true }).kind).toBe('media_rejected');
+  });
+
+  test('rate-overlimit → rate_limited', () => {
+    expect(mapErrorReason('HTTP 400: {"response":{"message":["rate-overlimit"]}}').kind).toBe('rate_limited');
+    expect(mapErrorReason('rate-overlimit', { isGroup: true }).kind).toBe('rate_limited');
+  });
+
+  test('looksDisconnected usa lo stesso criterio', () => {
+    expect(looksDisconnected('Connection Closed')).toBe(true);
+    expect(looksDisconnected('HTTP 400: Not Connected')).toBe(true);
+    expect(looksDisconnected('HTTP 400: rate-overlimit')).toBe(false);
+    expect(looksDisconnected(null)).toBe(false);
+  });
+
+  test('mapPendingReason: gruppo grande in warm-up', () => {
+    expect(mapPendingReason('Gruppo con più di 50 persone: nei primi giorni dal collegamento si aspetta — riprogrammato a domattina'))
+      .toBe('Spostato a domattina: nei primi giorni dal collegamento i gruppi grandi aspettano, per proteggere il tuo WhatsApp');
+  });
+
+  test('mapPendingReason: i motivi di gruppo scritti dal cron passano così come sono', () => {
+    const t = 'In pausa: non risulti più nel gruppo «Genitori» (o il gruppo non esiste più). Se ci rientri, tocca Riprendi.';
+    expect(mapPendingReason(t)).toBe(t);
+    const c = 'Massimo 3 messaggi in 24 ore nello stesso gruppo: parte domani 09:12';
+    expect(mapPendingReason(c)).toBe(c);
+    const r = 'Controllo del gruppo non riuscito (WhatsApp non ha risposto): si riprova più tardi, per proteggere il tuo WhatsApp';
+    expect(mapPendingReason(r)).toBe(r);
   });
 });
