@@ -155,8 +155,9 @@ export function MessageActionsSheet({
           )}
         </div>
 
-        <div className="px-5 pb-5 pt-2 text-[11px] text-gray-500">
-          Tap lungo su un messaggio per riaprire questo menu.
+        {/* 12px #8696A0 su #1F2C33: 4,7:1 (prima 11px gray-500, 2,96:1). */}
+        <div className="px-5 pb-5 pt-2 text-xs text-[#8696A0]">
+          Tieni premuto un messaggio per riaprire questo menu.
         </div>
       </div>
 

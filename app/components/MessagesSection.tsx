@@ -262,7 +262,7 @@ export default function MessagesSection({
           <h2 className="text-xl font-bold tracking-tight text-white">I tuoi messaggi</h2>
           <p className="text-xs text-gray-400 mt-0.5 truncate">
             {nextCountdown ? (
-              <>Prossimo invio <span className="text-primary font-medium">{nextCountdown.replace('Parte tra ', 'tra ')}</span></>
+              <>Prossimo invio <span className="text-primary font-medium">{nextCountdown.replace(/^Parte /, '')}</span></>
             ) : upcoming.length === 0 && sent.length > 0 ? (
               <>Nessun invio in coda · {sentThisMonth} inviati questo mese</>
             ) : (
@@ -284,13 +284,18 @@ export default function MessagesSection({
         <div className="mb-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+            {/* 16px: sotto, Safari su iPhone ingrandisce la pagina e la lascia così. */}
             <input
               type="text"
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Cerca per nome, numero o testo…"
-              className="w-full bg-[#202C33] border border-[#2A3942] focus:border-primary rounded-full pl-10 pr-4 py-2.5 text-sm text-white placeholder-gray-500 outline-none transition-colors"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="search"
+              className="w-full bg-[#202C33] border border-[#2A3942] focus:border-primary rounded-full pl-10 pr-4 py-2.5 text-base text-white placeholder-gray-500 outline-none transition-colors"
             />
           </div>
         </div>
@@ -535,8 +540,11 @@ function MessageRow({ msg, tab, onOpenActions }: {
   const dateStr = `${target.getDate()} ${months[target.getMonth()]}`;
 
   return (
+    // select-none + niente menu di iOS: la pressione lunga apre il foglio, non
+    // seleziona il testo né colora la pagina di blu.
     <div
-      className="flex items-start gap-3 p-4 hover:bg-[#2A3942]/50 transition-colors"
+      className="flex items-start gap-3 p-4 hover:bg-[#2A3942]/50 transition-colors select-none [-webkit-touch-callout:none]"
+      data-testid="message-row"
       onTouchStart={startPress}
       onTouchEnd={cancelPress}
       onTouchMove={() => { moved.current = true; cancelPress(); }}

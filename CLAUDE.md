@@ -5,19 +5,33 @@
 > `docs/storia/` e va letta solo quando serve — vedi l'indice in fondo. Nulla è stato
 > cancellato: solo spostato.
 
-## Stato attuale — 26 agosto 2026
+## Stato attuale — 2 ottobre 2026
 
-**Beta gratuita attiva** (`BILLING_ENABLED=false`), 4 utenti reali + 2 numeri di test
-ricollegati il 23 ago (incluso il primo numero FISSO del prodotto, 081…5377).
-`main` @ `968c5f8`. Suite: ~1.100 test verdi, 14 rossi pre-esistenti e noti
-(3 suite integration flaky — vedi `plan.md` backlog #1).
+> Stato di prodotto e priorità (per analisi di post e idee): vault
+> `Projects/WhatsLater/STATO-ATTUALE.md`. Qui sotto lo stato tecnico.
 
-**Ultime feature in produzione**: variabili `{nome}` risolte all'invio · redesign
-modale con chip data rapide e CTA che ripete l'orario in parole · snooze one-tap
-(+1h / stasera / domani) · **Google Calendar sync ATTIVO** (evento con numero di
-telefono → promemoria WhatsApp automatico; smoke test superato con conferma umana
-il 24 ago) · pairing riparato (il codice a schermo si aggiorna da solo quando
-Evolution lo rigenera, banner di stato, freno anti doppio-tap).
+**Beta gratuita attiva** (`BILLING_ENABLED=false`), ~4 utenti reali + numeri di prova.
+`main` @ `29e1145`. Suite: ~2.180 test, 14-17 rossi pre-esistenti e noti
+(webhook.integration, cron.integration, webhook-quick-capture; auth-flow e admin-auth flaky).
+`npx tsc --noEmit` ha 18 errori pre-esistenti noti.
+
+**Ultime feature in produzione**:
+- **Gruppi WhatsApp come destinatario** (30 set, `29e1145`), **spenti di default**:
+  `GROUPS_ENABLED=true` li accende, `GROUPS_ONLY_FOR` (cifre E.164, virgole) li limita.
+  Oggi accesi solo per i numeri di prova. Logica in `app/lib/groups.ts`, `/api/groups`,
+  controllo di appartenenza al POST e prima dell'invio. Ogni cambio di env = nuovo deploy.
+- **Porta finta "foto del calendario"** + `dashboard_seen` in `audit_events` (spenta finché
+  `FAKE_DOOR_CALENDAR_UNTIL` non è impostata). Query di misura a 45 giorni nella specifica
+  dei gruppi (vault).
+- `{nome}` all'invio · modale con chip data rapide e CTA in parole · snooze one-tap ·
+  allegati grandi via URL firmata · spunte di consegna funzionanti (22 set).
+- **Google Calendar sync RITIRATO** (21-23 set, decisione di Andrea): env tolta, cron
+  pg_cron fermato, codice dietro `CALENDAR_SYNC_ENABLED` (kept for rollback).
+
+**In corso**: pacchetto 1 di correzioni dalla prova su iPhone (branch `feat/pacchetto-1`).
+**Dominio** `whatslater.it` comprato il 1 ott, aggiunto al progetto Vercel; mancano i record DNS.
+**Simulatore iPhone** (Xcode 27, iPhone 17): va avviato con la sandbox disattivata, altrimenti
+Safari non carica le pagine.
 
 ## Vincoli attivi (decisioni prese, NON riaprire senza motivo)
 
@@ -57,8 +71,12 @@ SEO va seminata prima.
 4. **3 `.slice()` UTF-16 nudi** in `messages/route.ts` → `truncateAtGrapheme`.
 5. **4xx permanenti** bruciano 3 retry → fail-fast + notifica immediata.
 
-**Roadmap prodotto** (in ordine): ricorrenza annuale (compleanni) → note per contatto →
-statistiche per l'utente → broadcast multi-destinatario → badge coda nel ContactPicker.
+**Roadmap prodotto** (aggiornata 2 ott): pacchetti di correzioni dalla prova su iPhone →
+apertura dei gruppi a tutti + verifica a 45 giorni → **liste salvate** (un messaggio a
+ciascuno col suo nome, distanziati, solo persone già sentite; le liste broadcast del telefono
+NON sono usabili da dispositivo collegato) → foto del calendario della stagione (solo se la
+verifica dei gruppi è positiva). Idee più vecchie (ricorrenza annuale, note per contatto,
+statistiche) restano in coda.
 
 **Task aperti**: vedi `plan.md` (Task 61-64: attivazione residua, landing con pattern
 WA Reminders, guida SEO Calendly, anti-scollegamento/OTP self-service).

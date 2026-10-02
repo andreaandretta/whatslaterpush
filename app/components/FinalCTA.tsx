@@ -18,7 +18,7 @@ export default function FinalCTA({ billingEnabled = true }: { billingEnabled?: b
         <div className="mt-8">
           <Link
             href="/connect"
-            className="inline-flex items-center justify-center gap-2 bg-primary text-white px-8 h-14 rounded-full text-base font-bold shadow-2xl shadow-primary/40 hover:bg-primary-hover transition-colors"
+            className="inline-flex items-center justify-center gap-2 bg-primary text-[#0B141A] px-8 h-14 rounded-full text-base font-bold shadow-2xl shadow-primary/40 hover:bg-primary-hover transition-colors"
           >
             Programma il primo messaggio
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">

@@ -364,7 +364,7 @@ export function DocumentScanner({ initialPhoto, onCancel, onDone }: Props) {
 
       {phase === 'failed' && (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6">
-          <button type="button" onClick={openCamera} className="flex items-center gap-2 rounded-full bg-primary px-5 py-3 font-semibold text-white">
+          <button type="button" onClick={openCamera} className="flex items-center gap-2 rounded-full bg-primary px-5 py-3 font-semibold text-[#0B141A]">
             <Camera className="w-5 h-5" /> Scatta di nuovo
           </button>
         </div>
@@ -449,7 +449,7 @@ export function DocumentScanner({ initialPhoto, onCancel, onDone }: Props) {
                     role="radio"
                     aria-checked={mode === m}
                     onClick={() => setMode(m)}
-                    className={`px-3 py-2 rounded-full ${mode === m ? 'bg-primary text-white font-semibold' : 'text-gray-300'}`}
+                    className={`px-3 py-2 rounded-full ${mode === m ? 'bg-primary text-[#0B141A] font-semibold' : 'text-gray-300'}`}
                   >
                     {m === 'document' ? 'Documento' : 'Originale'}
                   </button>
@@ -459,7 +459,7 @@ export function DocumentScanner({ initialPhoto, onCancel, onDone }: Props) {
             <button
               type="button"
               onClick={confirmPage}
-              className="w-full flex items-center justify-center gap-2 rounded-full bg-primary py-3 font-semibold text-white focus:outline-none focus:ring-2 focus:ring-white/40"
+              className="w-full flex items-center justify-center gap-2 rounded-full bg-primary py-3 font-semibold text-[#0B141A] focus:outline-none focus:ring-2 focus:ring-white/40"
             >
               <Check className="w-5 h-5" /> Conferma ritaglio
             </button>
@@ -501,7 +501,7 @@ export function DocumentScanner({ initialPhoto, onCancel, onDone }: Props) {
             <button type="button" onClick={openCamera} className="flex-1 flex items-center justify-center gap-2 rounded-full bg-[#2A3942] py-3 font-semibold text-white">
               <Plus className="w-5 h-5" /> Aggiungi pagina
             </button>
-            <button type="button" onClick={finish} disabled={pages.length === 0} className="flex-1 flex items-center justify-center gap-2 rounded-full bg-primary py-3 font-semibold text-white disabled:opacity-40">
+            <button type="button" onClick={finish} disabled={pages.length === 0} className="flex-1 flex items-center justify-center gap-2 rounded-full bg-primary py-3 font-semibold text-[#0B141A] disabled:opacity-40">
               <Check className="w-5 h-5" /> Fatto
             </button>
           </div>

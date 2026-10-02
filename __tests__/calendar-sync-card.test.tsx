@@ -68,7 +68,8 @@ describe('CalendarSyncCard — disconnected', () => {
     mockGet(DISCONNECTED_PAYLOAD);
     render(<CalendarSyncCard />);
     expect(await screen.findByText(/Promemoria da Google Calendar/i)).toBeInTheDocument();
-    expect(screen.getByText(/numero del cliente nel titolo dell'evento/i)).toBeInTheDocument();
+    expect(screen.getByText(/numero della persona da avvisare nel titolo dell'evento/i)).toBeInTheDocument();
+    expect(screen.queryByText(/cliente/i)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Collega Google Calendar/i })).toBeInTheDocument();
     // No settings while disconnected
     expect(screen.queryByLabelText(/Quando inviare il promemoria/i)).not.toBeInTheDocument();

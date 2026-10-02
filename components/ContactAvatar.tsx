@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, Users } from 'lucide-react';
 import { computeInitials } from '../app/lib/contact-initials';
+import { realPersonName } from '../app/lib/jid';
 
 interface ContactAvatarProps {
   name?: string;
@@ -37,7 +38,9 @@ function hashNumber(number: string): number {
 
 export function ContactAvatar({ name, number, size = 'md', className = '', photoSrc, variant = 'person' }: ContactAvatarProps) {
   const isGroup = variant === 'group';
-  const initials = computeInitials(name);
+  // Persona col suo numero come "nome": niente "3" nel cerchio, l'omino. Un
+  // nome scelto ("118") e un gruppo "2012" (l'annata) tengono le iniziali.
+  const initials = computeInitials(isGroup ? name : realPersonName(name, number));
   const sizeClass = SIZES[size];
 
   const [loaded, setLoaded] = useState(false);

@@ -74,7 +74,11 @@ export async function GET(req: NextRequest) {
     fetched_at: r.fetchedAt,
     source: r.source,
   };
-  if (r.throttled) body.throttled = true;
+  if (r.throttled) {
+    body.throttled = true;
+    // Tra quanti secondi si può rileggere: il picker lo dice in minuti.
+    if (r.retryAt) body.retry_in_s = Math.max(1, Math.ceil((r.retryAt - Date.now()) / 1000));
+  }
   if (r.slow) body.slow = true;
   return respond(body, 200, t0, headers, timing);
 }

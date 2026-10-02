@@ -237,6 +237,33 @@ describe('GET /api/groups', () => {
     expect(f).not.toHaveBeenCalled();
   });
 
+  // Rapporto 360, T31: il picker dice tra quanto riprovare. Il dato viene dalla
+  // riga che la RPC del gettone già restituisce (minute_reset): nessuna query in più.
+  test('gettone negato → retry_in_s dai minuti che mancano alla fine della finestra', async () => {
+    const resetAt = Date.now() + 12 * 60_000;
+    mockSupa.setRpcHandler('rate_limit_record', () => ({ data: { minute_count: 2, minute_reset: resetAt }, error: null }));
+    const f = jest.fn();
+    global.fetch = f as any;
+    const { GET } = await loadRoute();
+    const body = await (await GET(await makeReq())).json();
+    expect(body.throttled).toBe(true);
+    expect(body.retry_in_s).toBeGreaterThan(11 * 60);
+    expect(body.retry_in_s).toBeLessThanOrEqual(12 * 60);
+    expect(f).not.toHaveBeenCalled();
+    // Una sola RPC del gettone, nessuna lettura in più di rate_limit_state oltre al controllo "lento".
+    expect(rpcKeys().filter((k) => k.startsWith('grp:list:'))).toHaveLength(1);
+  });
+
+  test('gettone concesso → nessun retry_in_s', async () => {
+    mockSupa.setRpcHandler('rate_limit_record', () => ({ data: { minute_count: 1, minute_reset: Date.now() + 30 * 60_000 }, error: null }));
+    global.fetch = jest.fn().mockResolvedValue(jsonRes(RAW)) as any;
+    const { GET } = await loadRoute();
+    const body = await (await GET(await makeReq())).json();
+    expect(body.source).toBe('live');
+    expect(body.retry_in_s).toBeUndefined();
+    expect(body.throttled).toBeUndefined();
+  });
+
   test('due GET concorrenti → una sola fetch e un solo gettone', async () => {
     let release: (v: any) => void = () => {};
     const f = jest.fn(() => new Promise((res) => { release = res; }));

@@ -45,7 +45,7 @@ describe('ScheduleModal — gruppo', () => {
 
   test('niente chip {nome}; scrivendo {nome} compare l\'avviso e il pulsante si spegne', () => {
     render(<ScheduleModal {...base} contact={group} />);
-    expect(screen.queryByText(/nome contatto/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Inserisci il nome' })).not.toBeInTheDocument();
     fireEvent.change(textarea(), { target: { value: 'Ciao a tutti' } });
     expect(sendButton()).not.toBeDisabled();
     fireEvent.change(textarea(), { target: { value: 'Ciao {nome}, domani allenamento' } });
@@ -56,7 +56,7 @@ describe('ScheduleModal — gruppo', () => {
 
   test('una persona tiene il chip {nome} e l\'anteprima (regressione)', () => {
     render(<ScheduleModal {...base} contact={{ number: '393331234567', name: 'Mario Rossi' }} />);
-    expect(screen.getByText(/nome contatto/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Inserisci il nome' })).toBeInTheDocument();
     fireEvent.change(textarea(), { target: { value: 'Ciao {nome}' } });
     expect(screen.getByText(/Anteprima per Mario/)).toBeInTheDocument();
     expect(screen.queryByTestId('group-nome-warning')).not.toBeInTheDocument();

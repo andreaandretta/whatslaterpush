@@ -41,7 +41,7 @@ export default function OfflinePage() {
 
         <Link
           href="/dashboard"
-          className="inline-block bg-[#25D366] text-white font-semibold rounded-full px-6 py-3 hover:bg-[#1ebe5b] transition-colors"
+          className="inline-block bg-[#25D366] text-[#0B141A] font-semibold rounded-full px-6 py-3 hover:bg-[#1ebe5b] transition-colors"
         >
           Riprova
         </Link>

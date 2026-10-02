@@ -56,6 +56,8 @@ describe('InstallPrompt — visibility gating', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText(/Aggiungi alla schermata Home/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Aggiungi/i })).toBeInTheDocument();
+    // Parole semplici: "con un tocco", non "con un tap".
+    expect(screen.getByText('Apri WhatsLater con un tocco.')).toBeInTheDocument();
   });
 
   test('reagisce all\'evento wl-first-msg-done quando il flag arriva post-mount', () => {

@@ -25,7 +25,7 @@ export default function HeroSection() {
           </h1>
 
           <p className="mt-3 text-[15px] sm:text-base lg:text-lg text-[#5A6573] leading-relaxed">
-            Partono <strong className="text-[#1A1F2C]">dal numero che i tuoi clienti conoscono già</strong>, all&apos;ora che scegli tu.
+            Partono <strong className="text-[#1A1F2C]">dal numero che le famiglie conoscono già</strong>, all&apos;ora che scegli tu.
           </p>
 
           <ul className="mt-4 space-y-2 text-sm sm:text-base font-medium">
@@ -46,7 +46,7 @@ export default function HeroSection() {
           <div className="mt-7">
             <Link
               href="/connect"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-primary text-white px-7 h-12 rounded-full text-base font-bold shadow-lg shadow-primary/30 hover:bg-primary-hover transition-colors"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-primary text-[#0B141A] px-7 h-12 rounded-full text-base font-bold shadow-lg shadow-primary/30 hover:bg-primary-hover transition-colors"
             >
               Inizia gratis
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">

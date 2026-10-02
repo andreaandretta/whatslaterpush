@@ -17,6 +17,7 @@ import { DeliveryStatusIcon } from '../components/DeliveryStatusIcon';
 import { MessagesEmptyState } from '../components/MessagesEmptyState';
 import { shouldShowOnboardingHints, markOnboardingDone } from '../../components/onboarding/OnboardingTour';
 import { getPlanLimits, getPlanName } from '../lib/plans';
+import { WARMUP_RAMP } from '../lib/anti-ban';
 import { apiErrorText } from '../lib/api-error-text';
 import { formatShortWhen } from '../lib/schedule-quick';
 import { isGroupJid, recipientDisplayName } from '../lib/jid';
@@ -601,7 +602,7 @@ export default function DashboardPage() {
                 <p className="font-semibold text-red-400">Trial Scaduto</p>
                 <p className="text-sm text-gray-400">Abbonati per continuare.</p>
               </div>
-              <a href="#prezzi" className="px-4 py-2 bg-primary text-white rounded-xl font-medium text-sm">Abbonati</a>
+              <a href="#prezzi" className="px-4 py-2 bg-primary text-[#0B141A] rounded-xl font-medium text-sm">Abbonati</a>
             </div>
           ) : messagesLoading ? (
             <div className="bg-[#202C33] rounded-2xl border border-[#2A3942] p-12 text-center">
@@ -704,7 +705,7 @@ export default function DashboardPage() {
         )}
         <button
           onClick={() => setContactPickerOpen(true)}
-          className="relative w-14 h-14 bg-primary text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
+          className="relative w-14 h-14 bg-primary text-[#0B141A] rounded-full shadow-2xl flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
           aria-label="Manda messaggio"
         >
           <Send className="w-6 h-6 -ml-0.5" fill="currentColor" />
@@ -720,7 +721,7 @@ export default function DashboardPage() {
         )}
         <button
           onClick={() => setContactPickerOpen(true)}
-          className="relative bg-primary text-white rounded-full shadow-2xl px-6 py-4 flex items-center gap-2 font-semibold hover:scale-105 active:scale-95 transition-transform"
+          className="relative bg-primary text-[#0B141A] rounded-full shadow-2xl px-6 py-4 flex items-center gap-2 font-semibold hover:scale-105 active:scale-95 transition-transform"
         >
           <Send className="w-5 h-5 -ml-0.5" fill="currentColor" />
           Manda messaggio
@@ -924,9 +925,11 @@ function StatusStrip({ userPhone, subscription, messages, connected }: {
         {(showCounter || upgradeCopy || showTrialBanner || betaEndLabel) && (
           <div className="flex items-center justify-between gap-2 flex-wrap sm:justify-end sm:gap-3">
             {showCounter && (
-              <span className="text-white font-medium">
-                Hai schedulato {countToday} messagg{countToday === 1 ? 'io' : 'i'} oggi ✓
-                <span className="text-gray-500 text-xs ml-1">(limite {limits.dailyLimit})</span>
+              // "meno nei primi giorni" solo se la rampa (da 5) scende sotto il piano:
+              // col Free (3 al giorno) non è vero. Grigio chiaro a 13px: 8,8:1 sul fondo.
+              <span className="text-white font-medium" data-testid="daily-counter">
+                Oggi {countToday === 1 ? 'parte' : 'partono'} {countToday} messagg{countToday === 1 ? 'io' : 'i'}
+                <span className="text-[#AEBAC1] text-[13px] ml-1">(fino a {limits.dailyLimit} al giorno{limits.dailyLimit > WARMUP_RAMP[0] ? ', meno nei primi giorni' : ''})</span>
               </span>
             )}
             {betaEndLabel && (
@@ -1053,7 +1056,7 @@ function EmptyState() {
         Nessun messaggio programmato
       </h2>
       <p className="text-gray-400 max-w-md mx-auto">
-        Programma il prossimo messaggio per la tua squadra o i tuoi clienti. Tocca il bottone in basso a destra per iniziare.
+        Programma il prossimo messaggio per la squadra o per le famiglie. Tocca il bottone in basso a destra per iniziare.
       </p>
     </div>
   );
@@ -1213,7 +1216,7 @@ function ShareToast({ onClose }: { onClose: () => void }) {
         href={shareUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center gap-2 bg-[#25D366] text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-[#1ebe5b] transition-colors"
+        className="inline-flex items-center gap-2 bg-[#25D366] text-[#0B141A] px-4 py-2 rounded-xl text-sm font-semibold hover:bg-[#1ebe5b] transition-colors"
       >
         Condividi su WhatsApp
       </a>
@@ -1311,7 +1314,7 @@ function DailyCapBadge({ plan, messages }: { plan: string; messages: ScheduledMe
   return (
     <div className="flex items-center justify-between rounded-xl px-4 py-3 border border-gray-200 bg-white">
       <p className="text-sm text-text-primary">
-        Hai schedulato <strong>{countToday}</strong> messagg{countToday === 1 ? 'io' : 'i'} oggi ✓
+        Oggi {countToday === 1 ? 'parte' : 'partono'} <strong>{countToday}</strong> messagg{countToday === 1 ? 'io' : 'i'}
         <span className="text-text-secondary"> — Limite {planLabel}: {limits.dailyLimit}/giorno</span>
       </p>
       <a href="#prezzi" className="text-xs font-semibold text-primary hover:underline shrink-0 ml-3">
@@ -1338,7 +1341,7 @@ function WelcomeCard({ segment }: { segment: Segment }) {
     <div className="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
       <div className="flex items-start gap-3">
         <div className="w-9 h-9 rounded-full bg-[#25D366] flex items-center justify-center shrink-0">
-          <CheckCircle2 className="w-5 h-5 text-white" />
+          <CheckCircle2 className="w-5 h-5 text-[#0B141A]" />
         </div>
         <p className="text-sm text-[#075E54] font-medium leading-snug">
           {getWelcomeCopy(segment)}

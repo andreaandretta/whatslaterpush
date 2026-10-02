@@ -12,13 +12,13 @@ import { TemplateBottomSheet, TemplatePick } from './schedule/TemplateBottomShee
 import { MediaPicker, MediaAttachmentChip, MediaAttachment } from './schedule/MediaPicker';
 import { SendFab } from './schedule/SendFab';
 import { applyTemplateVariables, hasTemplateVariables, firstNameOf } from '../app/lib/template-variables';
-import { formatSendCta, quickDateChips, isSameDay, courtesyHint } from '../app/lib/schedule-quick';
+import { formatSendCta, quickDateChips, isSameDay, courtesyHint, proposedSendTime, sendBlockReason, recurrenceTagLabel } from '../app/lib/schedule-quick';
 import { apiErrorText } from '../app/lib/api-error-text';
 import { romeWallClock, instantFromRomeWallClock, browserIsOutsideRome } from '../app/lib/rome-time';
 import { unfilledPlaceholders } from '../app/lib/placeholders';
 import { useModalHistory } from '../app/lib/use-modal-history';
 import { useScheduleDraft, ScheduleDraftBanner } from './schedule/ScheduleDraftBanner';
-import { isGroupJid } from '../app/lib/jid';
+import { isGroupJid, realPersonName, formatPhoneForDisplay } from '../app/lib/jid';
 import { getGroupsSnapshot } from '../app/lib/contacts-client-cache';
 import type { PickedContact } from './ContactPickerModal';
 
@@ -81,12 +81,12 @@ function mediaChanged(a: MediaAttachment | null, b: MediaAttachment | null): boo
 // app/lib/rome-time.ts): il server calcola ricorrenze e fascia 08-21 su Roma.
 // Con il telefono in ora italiana non cambia nulla; da Lisbona prima un "ogni
 // lunedì 23:30" diventava lunedì 00:30 a Roma dalla seconda volta in poi.
+// Proposta: almeno 30 minuti di margine, e mai di sera tardi (proposedSendTime).
 function defaultDateTime(): { date: Date; time: string } {
-  const d = romeWallClock(new Date());
-  d.setHours(d.getHours() + 1, 0, 0, 0);
+  const d = proposedSendTime(romeWallClock(new Date()));
   return {
     date: d,
-    time: `${String(d.getHours()).padStart(2, '0')}:00`,
+    time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
   };
 }
 
@@ -235,10 +235,26 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   // {nome} in un gruppo partirebbe uguale per tutti ("Ciao Under"): il server lo rifiuta.
   const groupNome = isGroup && hasTemplateVariables(message);
   const canSubmit = isValidDate && isValidMessage && unfilled.length === 0 && !groupNome && !submitting;
+  // Pulsante spento: si dice perché, un motivo per volta (riga sopra il pulsante).
+  // Giorno scelto prima di oggi (ora di Roma): la riga dice di cambiare il giorno.
+  const pastDay = wallDate.getTime() < new Date(romeNow.getFullYear(), romeNow.getMonth(), romeNow.getDate()).getTime();
+  const blockReason = submitting ? null : sendBlockReason({ validDate: isValidDate, pastDay, validMessage: isValidMessage, groupNome, unfilled });
 
-  const contactLabel = isGroup ? (contact.name || 'Gruppo senza nome') : (contact.name || `+${contact.number}`);
-  const defaultTemplateTitle = contact.name ? `Per ${contact.name}` : 'Mio template';
+  // Il numero stesso come "nome" vale come nessun nome: si mostra il numero leggibile.
+  const personName = isGroup ? undefined : realPersonName(contact.name, contact.number);
+  const contactLabel = isGroup ? (contact.name || 'Gruppo senza nome') : (personName || formatPhoneForDisplay(contact.number));
+  const titleName = isGroup ? contact.name : personName;
+  const defaultTemplateTitle = titleName ? `Per ${titleName}` : 'Mio modello';
   const dateLabel = format(wallDate, 'EEE d MMM', { locale: it });
+
+  // Modifica di una riga di una serie: testo e allegato valgono anche per tutte
+  // le volte dopo (il cron copia la riga appena inviata). Lo si dice prima di salvare.
+  const seriesContinues = !!editMsgId && !!initialRecurrenceRule
+    && (recurrence !== 'none' || (initialRecurrence === 'unknown' && !recurrenceTouched));
+  const seriesLabel = recurrence !== 'none'
+    ? recurrenceLabel(recurrence, wallDate).toLowerCase()
+    : recurrenceTagLabel(initialRecurrenceRule);
+  const seriesMediaChanged = seriesContinues && !!media && mediaChanged(initialMedia, media);
 
   const hasReminder = reminder !== 'never';
   const hasRecurrence = recurrence !== 'none';
@@ -338,7 +354,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             recipient_number: contact.number,
-            recipient_name: contact.name || undefined,
+            recipient_name: (isGroup ? contact.name : personName) || undefined,
             // Solo un numero scritto a mano in "Nuovo contatto" diventa un
             // contatto manuale: una scelta dalla rubrica o dai recenti no. Un gruppo mai.
             ...(contact.manualEntry === true && !isGroup ? { manual_entry: true } : {}),
@@ -442,7 +458,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                   key={chip.label}
                   type="button"
                   onClick={() => setSelectedDate(chip.date)}
-                  className={`text-xs px-3 py-1.5 rounded-full capitalize transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 ${
+                  className={`text-xs px-3 py-1.5 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 ${
                     active
                       ? 'bg-primary/15 text-primary border border-primary'
                       : 'bg-[#1F2C33] text-gray-400 border border-transparent hover:text-gray-200'
@@ -468,7 +484,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                 type="button"
                 onClick={() => setCalendarOpen(true)}
                 aria-label="Modifica data"
-                className="capitalize hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 rounded p-2 min-w-[44px] min-h-[44px] inline-flex items-center justify-center"
+                className="hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 rounded p-2 min-w-[44px] min-h-[44px] inline-flex items-center justify-center"
               >
                 {dateLabel}
               </button>
@@ -568,7 +584,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                 className="w-full flex items-center gap-4 py-3 hover:bg-white/5 text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
               >
                 <FileText className="w-5 h-5 text-gray-400 shrink-0" />
-                <div className="flex-1 text-white text-base">Template</div>
+                <div className="flex-1 text-white text-base">Modello</div>
                 <div className="text-primary text-base">{selectedSeedId ? 'Modificato' : 'Scegli…'}</div>
                 <ChevronRight className="w-5 h-5 text-gray-500" />
               </button>
@@ -621,13 +637,14 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
             </div>
             <div className="flex items-center justify-between mt-1">
               {isGroup ? <span /> : (
+                // Area di tocco alta 44px, il chip a vista resta piccolo.
                 <button
                   type="button"
                   onClick={() => setMessage((m) => (m.includes('{nome}') ? m : m + (m && !m.endsWith(' ') ? ' ' : '') + '{nome}'))}
-                  className="text-xs px-2 py-1 rounded-full bg-[#1F2C33] text-gray-400 hover:text-primary"
+                  className="min-h-[44px] min-w-[44px] -ml-1 px-1 flex items-center text-gray-400 hover:text-primary"
                   title="Inserisci il nome del contatto"
                 >
-                  {'{nome}'} · nome contatto
+                  <span className="text-[13px] px-3 py-1.5 rounded-full bg-[#1F2C33]">Inserisci il nome</span>
                 </button>
               )}
               <div className="text-xs text-gray-500 text-right">{message.length}/3500</div>
@@ -641,6 +658,8 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
               <div className="mt-2 text-xs text-gray-400 bg-[#1F2C33]/60 rounded-lg px-3 py-2">
                 {firstNameOf(contact.name) ? (
                   <>Anteprima per {firstNameOf(contact.name)}: <span className="text-gray-300">{applyTemplateVariables(message, contact.name)}</span></>
+                ) : personName ? (
+                  <>Il nome di questo contatto è fatto di cifre: {'{nome}'} verrà rimosso dal messaggio.</>
                 ) : (
                   <>Questo contatto non ha un nome salvato: {'{nome}'} verrà rimosso dal messaggio.</>
                 )}
@@ -674,8 +693,8 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                     className="w-5 h-5 shrink-0 accent-primary"
                   />
                   <span className={`text-sm ${message.trim().length === 0 ? 'text-gray-500' : 'text-gray-300'}`}>
-                    Salva come mio template
-                    {message.trim().length === 0 && <span className="block text-xs text-gray-500">Scrivi un testo per salvarlo come template</span>}
+                    Salva come mio modello
+                    {message.trim().length === 0 && <span className="block text-xs text-gray-500">Scrivi un testo per salvarlo come modello</span>}
                   </span>
                 </label>
                 {saveTemplateChecked && message.trim().length > 0 && (
@@ -684,7 +703,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                     value={templateTitle}
                     onChange={(e) => setTemplateTitle(e.target.value)}
                     maxLength={200}
-                    aria-label="Titolo template"
+                    aria-label="Titolo del modello"
                     placeholder={defaultTemplateTitle}
                     className="w-full bg-[#1F2C33] text-white placeholder-gray-500 rounded-xl px-3 py-2 text-base outline-none focus:ring-2 focus:ring-primary/30"
                   />
@@ -704,6 +723,13 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
             </div>
           )}
         </div>
+
+        {seriesContinues && (
+          <div className="mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-xs text-center" role="status" data-testid="series-edit-note">
+            Le modifiche valgono anche per tutte le prossime volte{seriesLabel ? ` (${seriesLabel})` : ''}.
+            {seriesMediaChanged && ' Anche il nuovo allegato partirà ogni volta.'}
+          </div>
+        )}
 
         {courtesyHint(wallDate) && (
           <div className="mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-xs text-center" role="status">
@@ -743,6 +769,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           loading={submitting}
           onClick={handleSubmit}
           label={formatSendCta(wallDate, romeNow)}
+          hint={canSubmit ? null : blockReason}
         />
 
         <DarkCalendarDialog

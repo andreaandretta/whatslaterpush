@@ -108,7 +108,7 @@ export default function LabelCreateModal({ open, onClose, onCreated }: Props) {
           onChange={(e) => setName(e.target.value.slice(0, 60))}
           placeholder="Es. U12 Squadra"
           autoFocus
-          className="w-full bg-[#0B141A] text-white rounded-xl px-3 py-2.5 border border-[#2A3942] focus:border-primary focus:outline-none text-sm"
+          className="w-full bg-[#0B141A] text-white rounded-xl px-3 py-2.5 border border-[#2A3942] focus:border-primary focus:outline-none text-base"
         />
         <div className="text-[10px] text-gray-500 mt-1 text-right tabular-nums">
           {trimmed.length}/60
@@ -153,7 +153,7 @@ export default function LabelCreateModal({ open, onClose, onCreated }: Props) {
           type="button"
           onClick={handleSubmit}
           disabled={!canSubmit}
-          className="mt-5 w-full bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
+          className="mt-5 w-full bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed text-[#0B141A] font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
         >
           {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
           Crea etichetta

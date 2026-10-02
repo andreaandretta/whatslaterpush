@@ -102,7 +102,7 @@ export function TemplateBottomSheet({ open, onClose, onSelect }: Props) {
       className="fixed inset-0 z-sheet flex items-end justify-center"
       role="dialog"
       aria-modal="true"
-      aria-label="Scegli template"
+      aria-label="Scegli un modello"
     >
       <button
         type="button"
@@ -116,17 +116,18 @@ export function TemplateBottomSheet({ open, onClose, onSelect }: Props) {
         <div aria-hidden="true" className="w-12 h-1 bg-gray-600 rounded-full mx-auto mb-3 shrink-0" />
 
         <div className="px-3 shrink-0">
-          <div role="tablist" aria-label="Tipo template" className="flex gap-2 bg-[#0B141A] rounded-xl p-1">
+          <div role="tablist" aria-label="Tipo di modello" className="flex gap-2 bg-[#0B141A] rounded-xl p-1">
             <button
               type="button"
               role="tab"
               aria-selected={tab === 'mine'}
               onClick={() => setTab('mine')}
               className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-                tab === 'mine' ? 'bg-primary text-white' : 'text-gray-300 hover:bg-white/5'
+                tab === 'mine' ? 'bg-primary text-[#0B141A]' : 'text-gray-300 hover:bg-white/5'
               }`}
             >
-              ⭐ I miei {mine.length > 0 && <span className="text-gray-500">({mine.length})</span>}
+              {/* Il conteggio si legge su entrambi i fondi: scuro sul verde (6,4:1), grigio chiaro sul nero (7,3:1). */}
+              ⭐ I miei {mine.length > 0 && <span className={tab === 'mine' ? 'text-[#0B141A]/80' : 'text-gray-400'}>({mine.length})</span>}
             </button>
             <button
               type="button"
@@ -134,7 +135,7 @@ export function TemplateBottomSheet({ open, onClose, onSelect }: Props) {
               aria-selected={tab === 'suggested'}
               onClick={() => setTab('suggested')}
               className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-                tab === 'suggested' ? 'bg-primary text-white' : 'text-gray-300 hover:bg-white/5'
+                tab === 'suggested' ? 'bg-primary text-[#0B141A]' : 'text-gray-300 hover:bg-white/5'
               }`}
             >
               ✨ Pronti per te
@@ -166,9 +167,9 @@ function MineTab({ mine, onPick }: { mine: UserTemplate[]; onPick: (t: UserTempl
     return (
       <div className="text-center py-10 px-4">
         <Star className="w-10 h-10 text-gray-600 mx-auto mb-2" />
-        <div className="text-gray-300 text-base mb-1">Nessun template personale</div>
+        <div className="text-gray-300 text-base mb-1">Nessun modello tuo</div>
         <div className="text-gray-500 text-sm">
-          Spunta «Salva come mio template» prima di inviare: lo ritrovi qui.
+          Spunta «Salva come mio modello» prima di inviare: lo ritrovi qui.
         </div>
       </div>
     );
@@ -219,7 +220,7 @@ function SuggestedTab({
           onClick={() => onCategoryChange(null)}
           className={`shrink-0 px-3 py-1 rounded-full text-sm border ${
             categoryFilter === null
-              ? 'bg-primary border-primary text-white'
+              ? 'bg-primary border-primary text-[#0B141A]'
               : 'border-gray-600 text-gray-300 hover:bg-white/5'
           }`}
         >
@@ -232,7 +233,7 @@ function SuggestedTab({
             onClick={() => onCategoryChange(c)}
             className={`shrink-0 px-3 py-1 rounded-full text-sm border ${
               categoryFilter === c
-                ? 'bg-primary border-primary text-white'
+                ? 'bg-primary border-primary text-[#0B141A]'
                 : 'border-gray-600 text-gray-300 hover:bg-white/5'
             }`}
           >
@@ -242,7 +243,7 @@ function SuggestedTab({
       </div>
 
       {seeds.length === 0 ? (
-        <div className="text-gray-400 text-sm text-center py-8">Nessun template in questa categoria.</div>
+        <div className="text-gray-400 text-sm text-center py-8">Nessun modello in questa categoria.</div>
       ) : (
         <div className="space-y-1">
           {seeds.map((s) => (
@@ -288,7 +289,7 @@ export function SaveTemplateDialog({ open, defaultTitle, defaultEmoji, onCancel,
       className="fixed inset-0 z-dialog flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
-      aria-label="Salva template"
+      aria-label="Salva modello"
     >
       <button
         type="button"
@@ -298,14 +299,14 @@ export function SaveTemplateDialog({ open, defaultTitle, defaultEmoji, onCancel,
         onClick={onCancel}
       />
       <div className="relative bg-[#1F2C33] rounded-2xl w-full max-w-sm p-5">
-        <div className="text-white text-lg font-semibold mb-1">Vuoi salvare questo come tuo template?</div>
+        <div className="text-white text-lg font-semibold mb-1">Vuoi salvarlo come tuo modello?</div>
         <div className="text-gray-400 text-sm mb-4">Riutilizzerai questo testo con 1 tap.</div>
         <input
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           maxLength={200}
-          aria-label="Titolo template"
+          aria-label="Titolo del modello"
           className="w-full bg-[#0B141A] text-white placeholder-gray-500 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-primary/30"
         />
         <div className="flex gap-2 mt-4">
@@ -320,7 +321,7 @@ export function SaveTemplateDialog({ open, defaultTitle, defaultEmoji, onCancel,
             type="button"
             onClick={() => onSave(title.trim() || defaultTitle)}
             disabled={title.trim().length === 0}
-            className="flex-1 py-2 rounded-xl bg-primary text-white font-medium disabled:opacity-50 hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/30 flex items-center justify-center gap-1"
+            className="flex-1 py-2 rounded-xl bg-primary text-[#0B141A] font-medium disabled:opacity-50 hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/30 flex items-center justify-center gap-1"
           >
             <Star className="w-4 h-4" />
             Salva

@@ -95,6 +95,55 @@ export function courtesyHint(scheduled: Date): string | null {
   return `Alle ${format(scheduled, 'H:mm')} chi riceve potrebbe dormire: i promemoria di solito si mandano tra le 8 e le 21.`;
 }
 
+/**
+ * Orario proposto all'apertura della modale (orologio di Roma). Almeno 30
+ * minuti da adesso, sulla mezz'ora: prima era "la prossima ora tonda" e alle
+ * 10:59 proponeva le 11:00, che passavano mentre si scriveva. Se cade dalle 21
+ * in poi o prima delle 8, si propongono le 9 del mattino (dopo le 21 = domani).
+ */
+export function proposedSendTime(now: Date): Date {
+  const d = new Date(now);
+  // Minuto intero per eccesso, poi +30 e su alla prossima mezz'ora.
+  const partial = d.getSeconds() > 0 || d.getMilliseconds() > 0;
+  d.setSeconds(0, 0);
+  d.setMinutes(d.getMinutes() + 30 + (partial ? 1 : 0));
+  const m = d.getMinutes() % 30;
+  if (m) d.setMinutes(d.getMinutes() + 30 - m);
+  const h = d.getHours();
+  if (h >= 21) {
+    const next = addDays(d, 1);
+    next.setHours(9, 0, 0, 0);
+    return next;
+  }
+  if (h < 8) d.setHours(9, 0, 0, 0);
+  return d;
+}
+
+/**
+ * Perché il pulsante Invia è spento, un motivo per volta (in ordine: orario,
+ * testo, {nome} nel gruppo, campi del modello). null = si può inviare.
+ * pastDay: è passato il GIORNO (Modifica di un messaggio in pausa o rimasto
+ * indietro): cambiare solo l'ora non basta.
+ */
+export function sendBlockReason(s: {
+  validDate: boolean;
+  pastDay?: boolean;
+  validMessage: boolean;
+  groupNome: boolean;
+  unfilled: string[];
+}): string | null {
+  if (!s.validDate) return s.pastDay ? 'Il giorno è già passato: tocca Oggi o Domani.' : "L'orario è già passato: tocca l'ora per cambiarla.";
+  if (!s.validMessage) return 'Scrivi il messaggio o allega un file.';
+  if (s.groupNome) return '{nome} non si usa nei gruppi: toglilo dal messaggio.';
+  if (s.unfilled.length > 0) return `Completa: ${s.unfilled.join(', ')}`;
+  return null;
+}
+
+/** "l'1", "l'8", "l'11", altrimenti "il 15": il giorno del mese in una frase. */
+export function dayOfMonthPhrase(day: number): string {
+  return day === 1 || day === 8 || day === 11 ? `l'${day}` : `il ${day}`;
+}
+
 export interface QuickDateChip {
   label: string;
   date: Date;
@@ -129,7 +178,7 @@ export function recurrenceTagLabel(rule: string | null | undefined): string | nu
     if (days.length === 0) return null;
     return days.length === 1 ? `ogni ${days[0]}` : `ogni ${days.join(', ')}`;
   }
-  if (p.freq === 'MONTHLY') return `il ${p.byMonthDay} di ogni mese`;
+  if (p.freq === 'MONTHLY') return `${dayOfMonthPhrase(p.byMonthDay!)} di ogni mese`;
   return null;
 }
 

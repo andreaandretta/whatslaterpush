@@ -7,7 +7,10 @@ export interface AuthCookiePayload {
   exp: number;
 }
 
-const COOKIE_TTL_SECONDS = 90 * 24 * 60 * 60;
+// 180 giorni (scelta di Andrea, 2 ott): chi non apre l'app da giugno a settembre
+// resta dentro, e su un computer condiviso la sessione dura la metà dei 395
+// possibili. Il rinnovo a ogni visita dopo 7 giorni resta com'era.
+const COOKIE_TTL_SECONDS = 180 * 24 * 60 * 60;
 const REFRESH_THRESHOLD_SECONDS = 7 * 24 * 60 * 60;
 
 function getSecret(): string {

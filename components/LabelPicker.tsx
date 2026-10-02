@@ -53,7 +53,7 @@ export function LabelPicker({ selectedId, onChange, refreshKey = 0 }: Props) {
         onClick={() => onChange(null)}
         className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium border ${
           selectedId === null
-            ? 'bg-primary border-primary text-white'
+            ? 'bg-primary border-primary text-[#0B141A]'
             : 'border-gray-600 text-gray-300 hover:bg-white/5'
         }`}
       >

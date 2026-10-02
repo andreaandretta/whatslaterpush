@@ -6,8 +6,8 @@ import { X, Search, UserPlus, ChevronDown, ChevronUp, AlertCircle, Loader2, Uplo
 // quando serve: all'apertura di "Nuovo contatto", non con la dashboard.
 import type { PhoneInputResult } from '../app/lib/phone';
 import { pickerStateForResponseStatus } from '../app/lib/contacts-picker-state';
-import { getContactsSnapshot, setContactsSnapshot, clearContactsSnapshots, getGroupsSnapshot, setGroupsSnapshot, type PickerGroup } from '../app/lib/contacts-client-cache';
-import { isGroupJid } from '../app/lib/jid';
+import { getContactsSnapshot, setContactsSnapshot, clearContactsSnapshots, getGroupsSnapshot, setGroupsSnapshot, fetchGroupsShared, validGroups, type PickerGroup } from '../app/lib/contacts-client-cache';
+import { realPersonName, formatPhoneForDisplay } from '../app/lib/jid';
 import { Button } from './Button';
 import { ContactAvatar } from './ContactAvatar';
 import { LabelPicker } from './LabelPicker';
@@ -20,15 +20,6 @@ interface Contact {
   name: string;
   pushName?: string;
   photoUrl?: string;
-}
-
-function formatPhone(digits: string): string {
-  if (digits.startsWith('39') && digits.length >= 11 && digits.length <= 12) {
-    const local = digits.slice(2);
-    if (local.length === 10) return `${local.slice(0, 3)} ${local.slice(3, 6)} ${local.slice(6)}`;
-    if (local.length === 9) return `${local.slice(0, 2)} ${local.slice(2, 5)} ${local.slice(5)}`;
-  }
-  return `+${digits}`;
 }
 
 const loadPhone = () => import('../app/lib/phone');
@@ -52,7 +43,9 @@ const PAGE_SIZE = 60;
 // finestra riaprire il picker non rilegge i gruppi. Ogni lettura costa a
 // WhatsApp 1+2N richieste, e il server ne concede una ogni 30 minuti.
 const GROUPS_FRESH_MS = 10 * 60_000;
-const GROUPS_TIMEOUT_MS = 30_000;
+// "throttled" senza lista all'apertura: un solo nuovo tentativo dopo qualche
+// secondo (costa solo il controllo del gettone, nessuna chiamata a WhatsApp).
+const GROUPS_AUTO_RETRY_MS = 4_000;
 
 // Misure a richiesta: in console `localStorage.setItem('wl_perf','1')`, poi riapri la rubrica.
 function perfEnabled(): boolean {
@@ -67,12 +60,16 @@ const ContactRow = React.memo(function ContactRow({
   contact: Contact;
   onPick: (contact: PickedContact) => void;
 }) {
-  const formattedPhone = formatPhone(c.number);
-  const hasRealName = !!c.name && c.name.trim() !== '' && c.name !== `+${c.number}`;
+  // Stesso formato della finestra e della lista: "+39 333 123 4567".
+  const formattedPhone = formatPhoneForDisplay(c.number);
+  // Il numero stesso come "nome" ("393331234567") vale come nessun nome; un
+  // nome di cifre scelto apposta ("118") resta, come decide il server.
+  const personName = realPersonName(c.name, c.number);
+  const hasRealName = !!personName;
   // When there's no real name, send name=undefined so downstream
   // (ScheduleModal, avatar) shows the formatted phone instead of
   // a confusing "+digits" string.
-  const onSelectName = hasRealName ? c.name : undefined;
+  const onSelectName = personName;
   return (
     <button
       type="button"
@@ -80,13 +77,13 @@ const ContactRow = React.memo(function ContactRow({
       className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-[#1F2C34]"
     >
       <ContactAvatar
-        name={hasRealName ? c.name : undefined}
+        name={personName}
         number={c.number}
         photoSrc={c.photoUrl}
       />
       <div className="flex-1 min-w-0">
         <div className="font-semibold text-white truncate">
-          {hasRealName ? c.name : formattedPhone}
+          {personName || formattedPhone}
         </div>
         {hasRealName && (
           <div className="text-xs truncate" style={{ color: '#AEBAC1' }}>
@@ -97,6 +94,13 @@ const ContactRow = React.memo(function ContactRow({
     </button>
   );
 });
+
+// Lettura dei gruppi frenata (una ogni 30 minuti): si dice tra quanto riprovare.
+export function throttledText(retryInS: number | null | undefined): string {
+  if (typeof retryInS !== 'number' || !(retryInS > 0)) return 'Gruppi: riprova tra qualche minuto.';
+  const min = Math.ceil(retryInS / 60);
+  return min === 1 ? 'Gruppi: riprova tra 1 minuto.' : `Gruppi: riprova tra ${min} minuti.`;
+}
 
 // Sottotitolo di un gruppo: "Gruppo · 19 persone", "Gruppo · 1 persona", "Gruppo".
 function groupSubtitle(g: PickerGroup): string {
@@ -172,14 +176,10 @@ type GroupsState =
   | { kind: 'waiting'; visible: boolean }   // aspetta la risposta di /api/contacts
   | { kind: 'loading'; visible: boolean; groups: PickerGroup[] }
   | { kind: 'list'; groups: PickerGroup[] }
-  | { kind: 'throttled'; groups: PickerGroup[]; refreshed: boolean }
+  | { kind: 'throttled'; groups: PickerGroup[]; refreshed: boolean; retryInS: number | null }
   | { kind: 'slow'; groups: PickerGroup[]; refreshed: boolean }
   | { kind: 'error'; visible: boolean; groups: PickerGroup[] }
   | { kind: 'disconnected' };
-
-function validGroups(raw: unknown): PickerGroup[] {
-  return Array.isArray(raw) ? raw.filter((g) => g && isGroupJid(g.jid) && typeof g.name === 'string') : [];
-}
 
 export default function ContactPickerModal({ open, onClose, onSelect }: ContactPickerModalProps) {
   const [state, setState] = useState<PickerState>({ kind: 'loading' });
@@ -211,6 +211,8 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   const [groupsState, setGroupsState] = useState<GroupsState>({ kind: 'off' });
   const [groupsRefreshKey, setGroupsRefreshKey] = useState(0);
   const groupsRefreshRef = useRef(false);
+  // Il nuovo tentativo automatico dopo "throttled" si fa una volta per apertura.
+  const groupsAutoRetriedRef = useRef(false);
   // Render incrementale: quante righe della lista filtrata sono montate.
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -238,6 +240,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     setManualError(null);
     setManualConfirm(null);
     setLabelFilterId(null);
+    groupsAutoRetriedRef.current = false;
   }, [open]);
 
   // Il parser si scarica mentre l'utente scrive, così "Continua" risponde subito.
@@ -378,43 +381,44 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
 
     groupsRefreshRef.current = false;
     let cancelled = false;
-    const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), GROUPS_TIMEOUT_MS);
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const kept = refresh ? (snap?.groups ?? []) : [];
     setGroupsState({ kind: 'loading', visible: likelyOn, groups: kept });
-    fetch('/api/groups' + (refresh ? '?refresh=1' : ''), { signal: abort.signal })
-      .then(async (res) => {
-        clearTimeout(timer);
-        if (cancelled) return;
-        if (res.status === 401) { setGroupsState({ kind: 'off' }); return; }
-        const body = await res.json().catch(() => null);
-        if (cancelled) return;
-        if (!res.ok) {
-          // groups_timeout / groups_unavailable arrivano solo con i gruppi accesi.
-          const known = typeof body?.error === 'string' && body.error.startsWith('groups_');
-          setGroupsState({ kind: 'error', visible: known || likelyOn, groups: kept });
+    // Lettura condivisa: chiudere il selettore non la interrompe e il risultato
+    // va comunque nello snapshot (lo scrive fetchGroupsShared).
+    fetchGroupsShared(refresh).then((reply) => {
+      if (cancelled) return;
+      if (!reply) { setGroupsState({ kind: 'error', visible: likelyOn, groups: kept }); return; }
+      const { status, body } = reply;
+      if (status === 401) { setGroupsState({ kind: 'off' }); return; }
+      if (status < 200 || status >= 300) {
+        // groups_timeout / groups_unavailable arrivano solo con i gruppi accesi.
+        const known = typeof body?.error === 'string' && body.error.startsWith('groups_');
+        setGroupsState({ kind: 'error', visible: known || likelyOn, groups: kept });
+        return;
+      }
+      if (body?.enabled === false) { setGroupsState({ kind: 'off' }); return; }
+      if (body?.connected === false) { setGroupsState({ kind: 'disconnected' }); return; }
+      const groups = validGroups(body?.groups);
+      if (body?.slow || body?.throttled) {
+        // Il server non ha letto: si mostra quello che c'è, anche uno snapshot vecchio.
+        const shown = groups.length > 0 ? groups : (getGroupsSnapshot()?.groups ?? []);
+        // All'apertura, niente da mostrare: la lista può essere nella memoria di un
+        // altro server. Si riprova una volta da soli prima di dire "riprova".
+        if (body.throttled && shown.length === 0 && !refresh && !groupsAutoRetriedRef.current) {
+          groupsAutoRetriedRef.current = true;
+          setGroupsState({ kind: 'loading', visible: true, groups: [] });
+          retryTimer = setTimeout(() => setGroupsRefreshKey((k) => k + 1), GROUPS_AUTO_RETRY_MS);
           return;
         }
-        if (body?.enabled === false) { setGroupsState({ kind: 'off' }); return; }
-        if (body?.connected === false) { setGroupsState({ kind: 'disconnected' }); return; }
-        const groups = validGroups(body?.groups);
-        if (body?.slow || body?.throttled) {
-          // Il server non ha letto: si mostra quello che c'è, anche uno snapshot vecchio.
-          if (groups.length > 0) setGroupsSnapshot(groups);
-          const shown = groups.length > 0 ? groups : (getGroupsSnapshot()?.groups ?? []);
-          setGroupsState({ kind: body.slow ? 'slow' : 'throttled', groups: shown, refreshed: refresh });
-          return;
-        }
-        setGroupsSnapshot(groups);
-        setGroupsState({ kind: 'list', groups });
-      })
-      .catch(() => {
-        clearTimeout(timer);
-        if (cancelled) return;
-        setGroupsState({ kind: 'error', visible: likelyOn, groups: kept });
-      });
+        if (body.slow) setGroupsState({ kind: 'slow', groups: shown, refreshed: refresh });
+        else setGroupsState({ kind: 'throttled', groups: shown, refreshed: refresh, retryInS: typeof body.retry_in_s === 'number' ? body.retry_in_s : null });
+        return;
+      }
+      setGroupsState({ kind: 'list', groups });
+    });
 
-    return () => { cancelled = true; clearTimeout(timer); abort.abort(); };
+    return () => { cancelled = true; if (retryTimer) clearTimeout(retryTimer); };
   }, [open, labelFilterId, contactsSettled, groupsRefreshKey]);
 
   const refreshGroups = useCallback(() => {
@@ -552,7 +556,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
   if (!searching) {
     if ((groupsState.kind === 'waiting' || groupsState.kind === 'loading') && groupsState.visible) groupsStatus = 'Carico i gruppi…';
     else if (groupsState.kind === 'error' && groupsState.visible) groupsStatus = 'Non riesco a leggere i gruppi. Tocca Aggiorna per riprovare.';
-    else if (groupsState.kind === 'throttled' && (allGroups.length === 0 || groupsState.refreshed)) groupsStatus = 'Gruppi: riprova tra qualche minuto.';
+    else if (groupsState.kind === 'throttled' && (allGroups.length === 0 || groupsState.refreshed)) groupsStatus = throttledText(groupsState.retryInS);
     else if (groupsState.kind === 'slow' && (allGroups.length === 0 || groupsState.refreshed)) groupsStatus = 'Hai tanti gruppi: la lista non è ancora pronta. Riprova più tardi.';
     else if (groupsState.kind === 'disconnected') groupsStatus = 'Ricollega WhatsApp per vedere i tuoi gruppi.';
   }
@@ -585,8 +589,8 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
           <div className="flex items-center gap-1">
             <button
               onClick={() => setCsvOpen(true)}
-              aria-label="Importa da CSV"
-              title="Importa da CSV"
+              aria-label="Importa un elenco di contatti"
+              title="Importa un elenco di contatti (file CSV)"
               className="p-1.5 rounded-full hover:bg-white/10"
             >
               <Upload className="w-4 h-4" />
@@ -634,12 +638,17 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
               className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4"
               style={{ color: '#AEBAC1' }}
             />
+            {/* Campi a 16px: sotto, Safari su iPhone ingrandisce la pagina e la lascia così. */}
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={groupsOn ? 'Cerca contatto o gruppo…' : 'Cerca contatto…'}
-              className="w-full pl-9 pr-3 py-2 rounded-full text-sm text-white placeholder:text-[#8696A0] focus:outline-none focus:ring-2"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="search"
+              className="w-full pl-9 pr-3 py-2 rounded-full text-base text-white placeholder:text-[#8696A0] focus:outline-none focus:ring-2"
               style={{ backgroundColor: '#2A3942', boxShadow: 'none' }}
             />
           </div>
@@ -676,7 +685,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
                 value={manualName}
                 onChange={(e) => setManualName(e.target.value)}
                 placeholder="Nome (opzionale)"
-                className="w-full px-3 py-2 rounded-xl text-sm text-white placeholder:text-[#8696A0] focus:outline-none focus:ring-2 focus:ring-[#25D366]"
+                className="w-full px-3 py-2 rounded-xl text-base text-white placeholder:text-[#8696A0] focus:outline-none focus:ring-2 focus:ring-[#25D366]"
                 style={{ backgroundColor: '#2A3942' }}
               />
               <input
@@ -684,11 +693,11 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
                 type="tel"
                 inputMode="tel"
                 value={manualNumber}
-                onChange={(e) => { setManualNumber(e.target.value); setManualConfirm(null); }}
+                onChange={(e) => { setManualNumber(e.target.value); setManualConfirm(null); setManualError(null); }}
                 placeholder="Numero (es. 333 123 4567, estero con +)"
                 aria-label="Numero"
                 aria-invalid={manualError ? true : undefined}
-                className="w-full px-3 py-2 rounded-xl text-sm text-white placeholder:text-[#8696A0] focus:outline-none focus:ring-2 focus:ring-[#25D366]"
+                className="w-full px-3 py-2 rounded-xl text-base text-white placeholder:text-[#8696A0] focus:outline-none focus:ring-2 focus:ring-[#25D366]"
                 style={{ backgroundColor: '#2A3942' }}
               />
               {manualError && <div role="alert" className="text-xs text-red-400">{manualError}</div>}
@@ -699,7 +708,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
                     <Button
                       type="button"
                       onClick={confirmForeignNumber}
-                      className="flex-1 !bg-[#25D366] hover:!bg-[#1DA851] !text-white !border-transparent"
+                      className="flex-1 !bg-[#25D366] hover:!bg-[#1DA851] !text-[#0B141A] !border-transparent"
                       size="sm"
                     >
                       Sì, è giusto
@@ -718,7 +727,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
                 <Button
                   type="button"
                   onClick={() => { void handleManualSubmit(); }}
-                  className="w-full !bg-[#25D366] hover:!bg-[#1DA851] !text-white !border-transparent"
+                  className="w-full !bg-[#25D366] hover:!bg-[#1DA851] !text-[#0B141A] !border-transparent"
                   size="sm"
                 >
                   Continua
@@ -774,12 +783,13 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             </>
           )}
 
-          {view.kind === 'list' && view.contacts.length > 0 && (
+          {/* Conta quello che c'è sotto (anche durante la ricerca); 0 → niente titolo. */}
+          {view.kind === 'list' && filtered.length > 0 && (
             <div
               className="px-4 pt-3 pb-1 text-xs font-semibold uppercase"
               style={{ color: '#25D366' }}
             >
-              Contatti su WhatsApp ({view.contacts.length})
+              Contatti su WhatsApp ({filtered.length})
             </div>
           )}
 
@@ -820,7 +830,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
               <Button
                 type="button"
                 onClick={() => { setState({ kind: 'loading' }); setRefetchKey((k) => k + 1); }}
-                className="!bg-[#25D366] hover:!bg-[#1DA851] !text-white !border-transparent"
+                className="!bg-[#25D366] hover:!bg-[#1DA851] !text-[#0B141A] !border-transparent"
                 size="sm"
               >
                 Riprova
@@ -839,7 +849,7 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
               <Button
                 type="button"
                 onClick={openManualFromSearch}
-                className="!bg-[#25D366] hover:!bg-[#1DA851] !text-white !border-transparent"
+                className="!bg-[#25D366] hover:!bg-[#1DA851] !text-[#0B141A] !border-transparent"
                 size="sm"
               >
                 Scrivi il numero

@@ -7,6 +7,7 @@
  * now — [Nome] is the self-chat command syntax and must NOT be treated as a
  * variable.
  */
+import { isPhoneLikeName } from './jid';
 
 const TOKEN = /\{\s*nome\s*\}/gi;
 const TOKEN_SINGLE = /\{\s*nome\s*\}/i;
@@ -16,7 +17,9 @@ export function hasTemplateVariables(text: string | null | undefined): boolean {
   return TOKEN_SINGLE.test(text);
 }
 
+// Un "nome" fatto solo di cifre è un numero: {nome} non deve diventare "Ciao 393…".
 export function firstNameOf(recipientName: string | null | undefined): string {
+  if (isPhoneLikeName((recipientName || '').trim())) return '';
   return (recipientName || '').trim().split(/\s+/)[0] || '';
 }
 

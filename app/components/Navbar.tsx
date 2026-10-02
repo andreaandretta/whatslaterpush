@@ -29,7 +29,7 @@ export default function Navbar() {
 
         <Link
           href="/connect"
-          className="bg-primary text-white px-5 h-12 flex items-center rounded-full text-sm font-semibold border border-white/20 hover:bg-primary-hover transition-colors"
+          className="bg-primary text-[#0B141A] px-5 h-12 flex items-center rounded-full text-sm font-semibold border border-white/20 hover:bg-primary-hover transition-colors"
         >
           <span className="hidden sm:inline">Inizia gratis</span>
           <span className="sm:hidden">Inizia gratis</span>

@@ -134,7 +134,7 @@ export default function PricingSection({ theme = 'light', currentPlan, userPhone
                     isCurrent
                       ? 'bg-gray-100 text-gray-500 cursor-default'
                       : isFeatured
-                      ? 'bg-primary text-white hover:bg-primary-hover shadow-lg shadow-primary/30'
+                      ? 'bg-primary text-[#0B141A] hover:bg-primary-hover shadow-lg shadow-primary/30'
                       : 'border-2 border-[#1A1F2C] text-[#1A1F2C] hover:bg-[#1A1F2C] hover:text-white'
                   }`}
                   disabled={isCurrent}

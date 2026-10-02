@@ -79,7 +79,7 @@ export function GuideCta({ label = 'Inizia gratis', note }: { label?: string; no
     <div className="mt-6 rounded-3xl bg-[#ECE5DD] wa-pattern p-6 sm:p-8 text-center">
       <Link
         href="/connect"
-        className="inline-flex items-center justify-center bg-primary text-white px-8 h-12 rounded-full text-base font-bold shadow-lg shadow-primary/30 hover:bg-primary-hover transition-colors"
+        className="inline-flex items-center justify-center bg-primary text-[#0B141A] px-8 h-12 rounded-full text-base font-bold shadow-lg shadow-primary/30 hover:bg-primary-hover transition-colors"
       >
         {label}
       </Link>

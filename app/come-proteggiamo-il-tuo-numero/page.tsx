@@ -35,7 +35,7 @@ const faqs: FaqItem[] = [
   },
   {
     q: 'Posso usare un numero diverso da quello personale?',
-    a: 'Sì. Puoi collegare il tuo WhatsApp Business, una seconda SIM o un numero fisso. Il consiglio è collegare il numero che i tuoi clienti conoscono già, perché è quello a cui rispondono.',
+    a: 'Sì. Puoi collegare il tuo WhatsApp Business, una seconda SIM o un numero fisso. Il consiglio è collegare il numero che le famiglie conoscono già, perché è quello a cui rispondono.',
   },
 ];
 
@@ -43,7 +43,7 @@ export default function Page() {
   return (
     <GuideLayout
       title={page.title}
-      lead="WhatsLater manda i promemoria dal tuo numero. È il motivo per cui i clienti rispondono, ed è anche il motivo per cui prendiamo sul serio il modo in cui li mandiamo. Qui c'è scritto tutto: le regole, i limiti, e cosa può andare storto."
+      lead="WhatsLater manda i promemoria dal tuo numero. È il motivo per cui le persone rispondono, ed è anche il motivo per cui prendiamo sul serio il modo in cui li mandiamo. Qui c'è scritto tutto: le regole, i limiti, e cosa può andare storto."
       updated={page.updated}
       faqs={faqs}
     >
@@ -63,7 +63,7 @@ export default function Page() {
             <strong>Niente firma pubblicitaria.</strong> Nei messaggi che partono dal tuo numero non c&apos;è mai &ldquo;inviato con WhatsLater&rdquo; né altro. Sono i tuoi messaggi.
           </li>
           <li className="bg-white rounded-2xl border border-[#E9EDEF] p-5">
-            <strong>Nessuna notifica inutile a te.</strong> Il prodotto avvisa i tuoi clienti, non te. Ti scriviamo solo se qualcosa si rompe o se sta per scadere qualcosa.
+            <strong>Nessuna notifica inutile a te.</strong> Il prodotto avvisa le persone a cui scrivi, non te. Ti scriviamo solo se qualcosa si rompe o se sta per scadere qualcosa.
           </li>
         </ul>
       </section>

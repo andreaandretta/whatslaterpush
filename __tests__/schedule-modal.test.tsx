@@ -121,7 +121,37 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
         onScheduled={() => {}}
       />
     );
-    expect(screen.getByText(/Messaggio per \+393331234567/i)).toBeInTheDocument();
+    expect(screen.getByText('Messaggio per +39 333 123 4567')).toBeInTheDocument();
+  });
+
+  // Rapporto 360, T11: il numero stesso come "nome" vale come nessun nome.
+  test('the number itself as name shows the readable number and is not sent as name', async () => {
+    (global as any).fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    render(
+      <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={{ number: '393331234567', name: '393331234567' }} onScheduled={() => {}} />
+    );
+    expect(screen.getByText('Messaggio per +39 333 123 4567')).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText(/Scrivi il messaggio/i), { target: { value: 'Ciao {nome}' } });
+    expect(screen.getByText(/Questo contatto non ha un nome salvato/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
+    await waitFor(() => expect((global as any).fetch).toHaveBeenCalled());
+    const body = JSON.parse((global as any).fetch.mock.calls[0][1].body);
+    expect(body.recipient_name).toBeUndefined();
+  });
+
+  // Revisione: un nome di cifre scelto apposta ("118") resta, come sul server.
+  test('a digits-only name chosen on purpose ("118") stays in the title and is sent', async () => {
+    (global as any).fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    render(
+      <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={{ number: '393401111111', name: '118' }} onScheduled={() => {}} />
+    );
+    expect(screen.getByText('Messaggio per 118')).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText(/Scrivi il messaggio/i), { target: { value: 'Ciao {nome}' } });
+    expect(screen.getByText(/Il nome di questo contatto è fatto di cifre: \{nome\} verrà rimosso/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
+    await waitFor(() => expect((global as any).fetch).toHaveBeenCalled());
+    const body = JSON.parse((global as any).fetch.mock.calls[0][1].body);
+    expect(body.recipient_name).toBe('118');
   });
 
   // ── Salva come mio template: opt-in PRIMA dell'invio, niente popup dopo ──
@@ -130,7 +160,7 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
     const LONG = "Ciao, ti ricordo l'allenamento di domani alle 18 al campo.";
     const okFetch = () =>
       jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
-    const box = () => screen.getByRole('checkbox', { name: /Salva come mio template/i });
+    const box = () => screen.getByRole('checkbox', { name: /Salva come mio modello/i });
 
     // Revisione 21 set: la modale non aspetta più il salvataggio del template.
     test('casella accesa + POST template che non risponde mai: la modale chiude lo stesso, subito', async () => {
@@ -158,7 +188,7 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
         <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} />
       );
       expect(box()).toBeDisabled();
-      expect(screen.getByText(/Scrivi un testo per salvarlo come template/i)).toBeInTheDocument();
+      expect(screen.getByText(/Scrivi un testo per salvarlo come modello/i)).toBeInTheDocument();
       fireEvent.change(screen.getByPlaceholderText(/Scrivi il messaggio/i), { target: { value: 'Ciao' } });
       expect(box()).not.toBeDisabled();
     });
@@ -168,7 +198,7 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
         <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} />
       );
       expect(box()).not.toBeChecked();
-      expect(screen.queryByLabelText(/Titolo template/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/Titolo del modello/i)).not.toBeInTheDocument();
     });
 
     test('messaggio lungo + casella spenta: nessun popup, nessuna POST template, chiude subito', async () => {
@@ -185,7 +215,7 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
       expect(onScheduled).toHaveBeenCalledTimes(1);
       expect((global as any).fetch).toHaveBeenCalledTimes(1);
       expect((global as any).fetch.mock.calls[0][0]).toBe('/api/messages');
-      expect(screen.queryByText(/Vuoi salvare questo come tuo template/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Vuoi salvarlo come tuo modello/i)).not.toBeInTheDocument();
     });
 
     test('casella accesa: titolo precompilato "Per {nome}", POST /api/templates/personal dopo l\'invio, poi chiude', async () => {
@@ -197,7 +227,7 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
       );
       fireEvent.change(screen.getByPlaceholderText(/Scrivi il messaggio/i), { target: { value: LONG } });
       fireEvent.click(box());
-      expect((screen.getByLabelText(/Titolo template/i) as HTMLInputElement).value).toBe('Per Mario Rossi');
+      expect((screen.getByLabelText(/Titolo del modello/i) as HTMLInputElement).value).toBe('Per Mario Rossi');
       fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
 
       await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
@@ -214,7 +244,7 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
       expect(onScheduled).toHaveBeenCalledTimes(1);
     });
 
-    test('senza nome contatto il default è "Mio template"; il titolo modificato viene rispettato', async () => {
+    test('senza nome contatto il default è "Mio modello"; il titolo modificato viene rispettato', async () => {
       const onClose = jest.fn();
       (global as any).fetch = okFetch();
       render(
@@ -222,8 +252,8 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
       );
       fireEvent.change(screen.getByPlaceholderText(/Scrivi il messaggio/i), { target: { value: LONG } });
       fireEvent.click(box());
-      const title = screen.getByLabelText(/Titolo template/i) as HTMLInputElement;
-      expect(title.value).toBe('Mio template');
+      const title = screen.getByLabelText(/Titolo del modello/i) as HTMLInputElement;
+      expect(title.value).toBe('Mio modello');
       fireEvent.change(title, { target: { value: 'Promemoria allenamento' } });
       fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
 
@@ -239,7 +269,7 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
       );
       fireEvent.change(screen.getByPlaceholderText(/Scrivi il messaggio/i), { target: { value: LONG } });
       fireEvent.click(box());
-      fireEvent.change(screen.getByLabelText(/Titolo template/i), { target: { value: '   ' } });
+      fireEvent.change(screen.getByLabelText(/Titolo del modello/i), { target: { value: '   ' } });
       fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
 
       await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -289,7 +319,7 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
       render(
         <ScheduleModal open={true} onClose={onClose} onBack={() => {}} contact={contact} onScheduled={() => {}} initialMessage={LONG} editMsgId="msg-1" />
       );
-      expect(screen.queryByRole('checkbox', { name: /Salva come mio template/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('checkbox', { name: /Salva come mio modello/i })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
       await waitFor(() => expect(onClose).toHaveBeenCalled());
       expect((global as any).fetch).toHaveBeenCalledTimes(1);
@@ -306,7 +336,7 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
       rerender(<ScheduleModal open={false} {...props} />);
       rerender(<ScheduleModal open={true} {...props} />);
       expect(box()).not.toBeChecked();
-      expect(screen.queryByLabelText(/Titolo template/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/Titolo del modello/i)).not.toBeInTheDocument();
     });
   });
 
@@ -318,19 +348,23 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
       );
       const clip = screen.getByRole('button', { name: 'Allega' });
       expect(clip).toBeInTheDocument();
-      expect(screen.queryByRole('dialog', { name: /Allega media/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog', { name: 'Allega' })).not.toBeInTheDocument();
       fireEvent.click(clip);
-      expect(screen.getByRole('dialog', { name: /Allega media/i })).toBeInTheDocument();
+      const sheet = screen.getByRole('dialog', { name: 'Allega' });
+      // Le scelte sono solo parole: niente emoji doppie accanto alle icone.
+      expect(sheet).toHaveTextContent('Foto');
+      expect(sheet).toHaveTextContent('Documento');
+      expect(sheet.textContent).not.toMatch(/📷|🎥|📄|🎤|media/);
     });
 
-    test('la riga "Allega media" non sta più dentro Opzioni avanzate', () => {
+    test('la riga "Allega" non sta più dentro Opzioni avanzate', () => {
       render(
         <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} />
       );
       fireEvent.click(screen.getByRole('button', { name: /Opzioni avanzate/i }));
       expect(screen.getByText(/^Ripeti$/)).toBeInTheDocument();
-      expect(screen.getByText(/^Template$/)).toBeInTheDocument();
-      expect(screen.queryByText(/Allega media/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/^Modello$/)).toBeInTheDocument();
+      expect(document.getElementById('advanced-options')!.textContent).not.toMatch(/Allega/i);
     });
 
     // 22 set 2026: in modifica l'allegato si vede, si toglie e si sostituisce.
@@ -355,13 +389,13 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
       expect(body).not.toHaveProperty('media');
     });
 
-    test('in modifica "Rimuovi media" toglie il chip e il PATCH manda media: null', async () => {
+    test('in modifica "Rimuovi allegato" toglie il chip e il PATCH manda media: null', async () => {
       (global as any).fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
       const initialMedia = { media_type: 'document' as const, media_url: '39333/uuid-orari.pdf', media_filename: 'orari.pdf', bytes: 0 };
       render(
         <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} initialMessage="Ciao" editMsgId="msg-1" initialMedia={initialMedia} />
       );
-      fireEvent.click(screen.getByRole('button', { name: /Rimuovi media/i }));
+      fireEvent.click(screen.getByRole('button', { name: /Rimuovi allegato/i }));
       expect(screen.queryByText('orari.pdf')).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: /Invia/i }));
       await waitFor(() => expect((global as any).fetch).toHaveBeenCalledTimes(1));
@@ -402,7 +436,7 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
       fireEvent.change(input, { target: { files: [new File(['x'], 'f.pdf', { type: 'application/pdf' })] } });
 
       await waitFor(() => expect(screen.getByText('f.pdf')).toBeInTheDocument());
-      expect(screen.getByLabelText(/Rimuovi media/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Rimuovi allegato/i)).toBeInTheDocument();
       expect((global as any).fetch.mock.calls[0][0]).toBe('/api/messages/upload');
 
       fireEvent.click(screen.getByRole('button', { name: /Invia/i }));

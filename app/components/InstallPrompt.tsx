@@ -73,7 +73,7 @@ export default function InstallPrompt() {
           <p className="text-xs text-gray-400 mt-0.5">
             {ios
               ? 'Tocca Condividi e poi “Aggiungi a Home”.'
-              : 'Apri WhatsLater con un tap.'}
+              : 'Apri WhatsLater con un tocco.'}
           </p>
         </div>
         <button
@@ -98,7 +98,7 @@ export default function InstallPrompt() {
           <button
             type="button"
             onClick={handleInstall}
-            className="inline-flex items-center gap-1.5 text-sm font-semibold bg-[#25D366] hover:bg-[#1ebe5b] text-white rounded-full px-4 py-2 transition-colors"
+            className="inline-flex items-center gap-1.5 text-sm font-semibold bg-[#25D366] hover:bg-[#1ebe5b] text-[#0B141A] rounded-full px-4 py-2 transition-colors"
           >
             <svg
               width="16"

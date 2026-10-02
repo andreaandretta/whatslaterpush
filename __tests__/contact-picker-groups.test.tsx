@@ -8,7 +8,7 @@
 import React from 'react';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import ContactPickerModal from '../components/ContactPickerModal';
+import ContactPickerModal, { throttledText } from '../components/ContactPickerModal';
 import { clearContactsSnapshots, setGroupsSnapshot } from '../app/lib/contacts-client-cache';
 
 const G1 = { jid: '120363000000000001@g.us', name: 'Under 12 – Genitori', size: 19, can_send: true };
@@ -304,10 +304,71 @@ describe('stati della sezione Gruppi', () => {
     await waitFor(() => expect(screen.getByText('Ricollega WhatsApp per vedere i tuoi gruppi.')).toBeInTheDocument());
   });
 
-  test('throttled senza cache → "Gruppi: riprova tra qualche minuto."', async () => {
-    mockFetch({ groups: { body: { enabled: true, connected: true, groups: [], throttled: true } } });
-    render(<ContactPickerModal open onClose={() => {}} onSelect={() => {}} />);
-    await waitFor(() => expect(screen.getByText('Gruppi: riprova tra qualche minuto.')).toBeInTheDocument());
+  // Rapporto 360, T31: all'apertura "throttled" senza lista non è più subito un
+  // vicolo cieco. "Carico i gruppi…", un solo nuovo tentativo dopo 4 s, poi i minuti.
+  test('throttled senza cache all\'apertura → "Carico i gruppi…", un nuovo tentativo, poi "riprova tra 12 minuti"', async () => {
+    jest.useFakeTimers();
+    try {
+      const fn = mockFetch({ groups: { body: { enabled: true, connected: true, groups: [], throttled: true, retry_in_s: 690 } } });
+      render(<ContactPickerModal open onClose={() => {}} onSelect={() => {}} />);
+      await waitFor(() => expect(screen.getByText('Carico i gruppi…')).toBeInTheDocument());
+      expect(screen.queryByText(/Gruppi: riprova/)).not.toBeInTheDocument();
+      expect(groupCalls(fn)).toHaveLength(1);
+      await act(async () => { jest.advanceTimersByTime(4_000); });
+      await waitFor(() => expect(screen.getByText('Gruppi: riprova tra 12 minuti.')).toBeInTheDocument());
+      // Un solo tentativo automatico, mai con refresh (non spende il gettone).
+      expect(groupCalls(fn).map((c) => c[0])).toEqual(['/api/groups', '/api/groups']);
+      await act(async () => { jest.advanceTimersByTime(60_000); });
+      expect(groupCalls(fn)).toHaveLength(2);
+      expect(screen.getByRole('button', { name: 'Aggiorna' })).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('throttled all\'apertura, il nuovo tentativo trova la lista → si mostra, nessun messaggio', async () => {
+    jest.useFakeTimers();
+    try {
+      const fn = mockFetchGroupsQueue([
+        { body: { enabled: true, connected: true, groups: [], throttled: true, retry_in_s: 600 } },
+        { body: { enabled: true, connected: true, groups: [G1], source: 'cache' } },
+      ]);
+      render(<ContactPickerModal open onClose={() => {}} onSelect={() => {}} />);
+      await waitFor(() => expect(screen.getByText('Carico i gruppi…')).toBeInTheDocument());
+      await act(async () => { jest.advanceTimersByTime(4_000); });
+      await waitFor(() => expect(screen.getByText('Under 12 – Genitori')).toBeInTheDocument());
+      expect(screen.queryByText(/Gruppi: riprova/)).not.toBeInTheDocument();
+      expect(groupCalls(fn)).toHaveLength(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('throttled senza minuti dal server → "Gruppi: riprova tra qualche minuto." dopo il nuovo tentativo', async () => {
+    jest.useFakeTimers();
+    try {
+      mockFetch({ groups: { body: { enabled: true, connected: true, groups: [], throttled: true } } });
+      render(<ContactPickerModal open onClose={() => {}} onSelect={() => {}} />);
+      await waitFor(() => expect(screen.getByText('Carico i gruppi…')).toBeInTheDocument());
+      await act(async () => { jest.advanceTimersByTime(4_000); });
+      await waitFor(() => expect(screen.getByText('Gruppi: riprova tra qualche minuto.')).toBeInTheDocument());
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('chiuso durante il nuovo tentativo: nessuna chiamata in più', async () => {
+    jest.useFakeTimers();
+    try {
+      const fn = mockFetch({ groups: { body: { enabled: true, connected: true, groups: [], throttled: true, retry_in_s: 600 } } });
+      const { rerender } = render(<ContactPickerModal open onClose={() => {}} onSelect={() => {}} />);
+      await waitFor(() => expect(screen.getByText('Carico i gruppi…')).toBeInTheDocument());
+      rerender(<ContactPickerModal open={false} onClose={() => {}} onSelect={() => {}} />);
+      await act(async () => { jest.advanceTimersByTime(10_000); });
+      expect(groupCalls(fn)).toHaveLength(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('throttled con uno snapshot vecchio → si mostra lo snapshot', async () => {
@@ -394,6 +455,49 @@ describe('stati della sezione Gruppi', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Aggiorna' }));
     await waitFor(() => expect(groupCalls(fn)).toHaveLength(2));
     expect(groupCalls(fn)[1][0]).toBe('/api/groups?refresh=1');
+  });
+});
+
+// Rapporto 360, T31, causa: la lettura dei gruppi (fino a 25 s) veniva
+// interrotta quando il selettore si chiudeva. Il server spendeva il gettone e la
+// pagina perdeva la lista: alla riapertura "Gruppi: riprova tra qualche minuto.".
+describe('lettura dei gruppi non interrotta dalla chiusura', () => {
+  test('chiuso a metà lettura: la risposta finisce nello snapshot e la riapertura la mostra senza rileggere', async () => {
+    const groups = deferred();
+    const fn = mockFetch({ groups: groups.promise });
+    const { rerender } = render(<ContactPickerModal open onClose={() => {}} onSelect={() => {}} />);
+    await waitFor(() => expect(groupCalls(fn)).toHaveLength(1));
+    rerender(<ContactPickerModal open={false} onClose={() => {}} onSelect={() => {}} />);
+    await act(async () => { groups.resolve(resp({ enabled: true, connected: true, groups: [G1] })); });
+    await flush();
+    rerender(<ContactPickerModal open onClose={() => {}} onSelect={() => {}} />);
+    await waitFor(() => expect(screen.getByText('Under 12 – Genitori')).toBeInTheDocument());
+    expect(groupCalls(fn)).toHaveLength(1);
+  });
+
+  test('riaperto mentre la lettura è ancora in corso: si aggancia a quella, nessuna seconda chiamata', async () => {
+    const groups = deferred();
+    const fn = mockFetch({ groups: groups.promise });
+    const { rerender } = render(<ContactPickerModal open onClose={() => {}} onSelect={() => {}} />);
+    await waitFor(() => expect(groupCalls(fn)).toHaveLength(1));
+    rerender(<ContactPickerModal open={false} onClose={() => {}} onSelect={() => {}} />);
+    rerender(<ContactPickerModal open onClose={() => {}} onSelect={() => {}} />);
+    await flush();
+    await act(async () => { groups.resolve(resp({ enabled: true, connected: true, groups: [G1] })); });
+    await waitFor(() => expect(screen.getByText('Under 12 – Genitori')).toBeInTheDocument());
+    expect(groupCalls(fn)).toHaveLength(1);
+    // La fetch non riceve più il segnale di chi apre il selettore: nessun abort alla chiusura.
+    const signal = groupCalls(fn)[0][1]?.signal as AbortSignal | undefined;
+    expect(signal?.aborted).not.toBe(true);
+  });
+});
+
+describe('throttledText', () => {
+  test('minuti dal server, 1 minuto, nessun dato', () => {
+    expect(throttledText(690)).toBe('Gruppi: riprova tra 12 minuti.');
+    expect(throttledText(30)).toBe('Gruppi: riprova tra 1 minuto.');
+    expect(throttledText(null)).toBe('Gruppi: riprova tra qualche minuto.');
+    expect(throttledText(0)).toBe('Gruppi: riprova tra qualche minuto.');
   });
 });
 

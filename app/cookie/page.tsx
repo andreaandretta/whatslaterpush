@@ -45,8 +45,8 @@ export default function CookiePage() {
           <ul>
             <li>
               <strong>sw_session</strong> — cookie HTTP-only firmato (HMAC-SHA256) usato
-              per mantenere la sessione autenticata phone-first. Durata: 90 giorni
-              (sliding).
+              per mantenere la sessione autenticata phone-first. Durata: 180 giorni
+              (circa 6 mesi), rinnovata quando usi l&apos;app.
             </li>
           </ul>
 

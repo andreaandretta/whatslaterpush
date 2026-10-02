@@ -257,8 +257,14 @@ const BUSY_GRACE_MS = 30_000;
 
 /** Stesso schema di auth/init: RPC atomica, limite applicato sul conteggio. RPC in errore o segreto assente → si lascia passare. */
 export async function takeGroupsToken(supabase: SupabaseClient, kind: 'list' | 'check', phone: string): Promise<boolean> {
+  return (await takeToken(supabase, kind, phone)).ok;
+}
+
+// `resetAt`: quando si libera il gettone (minute_reset, già nella riga che la RPC
+// restituisce). Serve a dire "riprova tra N minuti" senza un'altra query.
+async function takeToken(supabase: SupabaseClient, kind: 'list' | 'check', phone: string): Promise<{ ok: boolean; resetAt: number | null }> {
   const ref = privateRef(phone);
-  if (!ref) return true;
+  if (!ref) return { ok: true, resetAt: null };
   const { windowMs, max } = TOKENS[kind];
   try {
     const now = Date.now();
@@ -267,12 +273,13 @@ export async function takeGroupsToken(supabase: SupabaseClient, kind: 'list' | '
     });
     if (!res || res.error) {
       console.warn('GROUPS: token RPC error (fail-open) kind=' + kind);
-      return true;
+      return { ok: true, resetAt: null };
     }
-    const count = (res.data as { minute_count?: number } | null)?.minute_count ?? 0;
-    return count <= max;
+    const row = res.data as { minute_count?: number; minute_reset?: unknown } | null;
+    const reset = Number(row?.minute_reset);
+    return { ok: (row?.minute_count ?? 0) <= max, resetAt: isFinite(reset) && reset > now ? reset : null };
   } catch {
-    return true;
+    return { ok: true, resetAt: null };
   }
 }
 
@@ -389,6 +396,8 @@ export type GroupsRead = {
   source: 'live' | 'cache' | 'stale' | 'none';
   fetchedAt: string | null;
   throttled?: boolean;
+  /** Con `throttled`: quando si potrà rileggere (ms epoch), se noto. */
+  retryAt?: number;
   slow?: boolean;
   error?: 'timeout' | 'unavailable';
 };
@@ -402,7 +411,7 @@ type CacheEntry = { groups: PickerGroup[]; participantJids: string[]; fetchedAt:
 type Attempt =
   | { kind: 'live'; entry: CacheEntry }
   | { kind: 'slow' }
-  | { kind: 'throttled' }
+  | { kind: 'throttled'; retryAt: number | null }
   | { kind: 'error'; error: 'timeout' | 'unavailable' };
 
 // Per lambda, chiave il telefono. La vera protezione è il gettone su DB.
@@ -459,7 +468,8 @@ function attemptLive(phone: string, instance: string, supabase: SupabaseClient, 
   const live = { slowMarked: false } as Live;
   live.attempt = (async (): Promise<Attempt> => {
     if (await isGroupsSlow(supabase, phone)) return { kind: 'slow' };
-    if (!(await takeGroupsToken(supabase, 'list', phone))) return { kind: 'throttled' };
+    const token = await takeToken(supabase, 'list', phone);
+    if (!token.ok) return { kind: 'throttled', retryAt: token.resetAt };
     if (guard) await markGroupsBusy(supabase, phone);
     const r = await fetchGroupsLive(phone, instance);
     // D6: è la fetch da 25 s a essere scaduta, chiunque l'abbia avviata. Anche
@@ -541,7 +551,7 @@ async function readGroupsInner(
       case 'slow':
         return fromCache(cached, { slow: true });
       case 'throttled':
-        return fromCache(cached, { throttled: true });
+        return fromCache(cached, res.retryAt ? { throttled: true, retryAt: res.retryAt } : { throttled: true });
       case 'error':
         error = res.error;
     }

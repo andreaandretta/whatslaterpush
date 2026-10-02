@@ -138,7 +138,7 @@ export function CsvImportDialog({ open, onClose, onImported }: Props) {
       <button type="button" aria-label="Chiudi" tabIndex={-1} className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div className="relative bg-[#1F2C33] rounded-2xl w-full max-w-md p-5 text-white">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">Importa contatti da CSV</h2>
+          <h2 className="text-lg font-semibold">Importa un elenco di contatti (file CSV)</h2>
           <button type="button" onClick={onClose} aria-label="Chiudi" className="p-1 rounded-full hover:bg-white/10">
             <X className="w-5 h-5" />
           </button>
@@ -146,7 +146,7 @@ export function CsvImportDialog({ open, onClose, onImported }: Props) {
 
         {phase === 'pick' && (
           <div className="text-center py-6">
-            <label className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl cursor-pointer hover:bg-primary/90">
+            <label className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-[#0B141A] rounded-xl cursor-pointer hover:bg-primary/90">
               <Upload className="w-4 h-4" />
               Scegli file CSV
               <input
@@ -159,7 +159,7 @@ export function CsvImportDialog({ open, onClose, onImported }: Props) {
                 }}
               />
             </label>
-            <p className="text-xs text-gray-400 mt-3">Max 1000 righe. Colonne: nome, telefono.</p>
+            <p className="text-xs text-gray-400 mt-3">Fino a 1000 righe. Nel file servono due colonne: nome e telefono.</p>
           </div>
         )}
 
@@ -207,7 +207,7 @@ export function CsvImportDialog({ open, onClose, onImported }: Props) {
               <button
                 type="button"
                 onClick={submit}
-                className="flex-1 py-2 rounded-xl bg-primary text-white font-medium hover:bg-primary/90"
+                className="flex-1 py-2 rounded-xl bg-primary text-[#0B141A] font-medium hover:bg-primary/90"
               >
                 Importa {summary.validCount}
               </button>
@@ -232,7 +232,7 @@ export function CsvImportDialog({ open, onClose, onImported }: Props) {
             <button
               type="button"
               onClick={onClose}
-              className="mt-4 px-4 py-2 rounded-xl bg-primary text-white font-medium hover:bg-primary/90"
+              className="mt-4 px-4 py-2 rounded-xl bg-primary text-[#0B141A] font-medium hover:bg-primary/90"
             >
               Chiudi
             </button>

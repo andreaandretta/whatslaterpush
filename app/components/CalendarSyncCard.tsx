@@ -119,7 +119,7 @@ export default function CalendarSyncCard({ onShowToast }: Props) {
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-white">Promemoria da Google Calendar</p>
           <p className="text-xs text-gray-400 mt-0.5 leading-snug">
-            Metti il numero del cliente nel titolo dell&apos;evento: il promemoria WhatsApp parte da solo.
+            Metti il numero della persona da avvisare nel titolo dell&apos;evento: il promemoria WhatsApp parte da solo.
           </p>
           <button
             onClick={goToAuth}
@@ -232,7 +232,7 @@ export default function CalendarSyncCard({ onShowToast }: Props) {
               id="calendar-offset"
               value={data.reminderOffset}
               onChange={(e) => handleOffsetChange(parseInt(e.target.value, 10))}
-              className="w-full bg-[#111B21] border border-[#2A3942] focus:border-primary rounded-xl px-3 py-2.5 text-sm text-white outline-none transition-colors"
+              className="w-full bg-[#111B21] border border-[#2A3942] focus:border-primary rounded-xl px-3 py-2.5 text-base text-white outline-none transition-colors"
             >
               {!offsetInList && (
                 <option value={data.reminderOffset}>{data.reminderOffset} minuti prima</option>
@@ -256,7 +256,7 @@ export default function CalendarSyncCard({ onShowToast }: Props) {
               onBlur={handleTemplateBlur}
               placeholder={DEFAULT_TEMPLATE_PLACEHOLDER}
               maxLength={3500}
-              className="w-full bg-[#111B21] border border-[#2A3942] focus:border-primary rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 outline-none transition-colors resize-none leading-snug"
+              className="w-full bg-[#111B21] border border-[#2A3942] focus:border-primary rounded-xl px-3 py-2.5 text-base text-white placeholder-gray-500 outline-none transition-colors resize-none leading-snug"
             />
             <p className="text-[11px] text-gray-500 mt-1 leading-snug">
               Variabili: <code className="text-gray-400">{'{nome}'}</code>{' '}

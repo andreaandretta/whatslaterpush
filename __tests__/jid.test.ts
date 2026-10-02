@@ -8,7 +8,7 @@
  * `@s.whatsapp.net` / `@c.us` forms address a person by phone number; every
  * other suffix must yield null, never a "phone number".
  */
-import { phoneDigitsFromJid, phoneJidFromContact, isLegacyLidRow, LID_INGEST_FIX_AT, normalizeGroupJid, isGroupJid, recipientDisplayName } from '../app/lib/jid';
+import { phoneDigitsFromJid, phoneJidFromContact, isLegacyLidRow, LID_INGEST_FIX_AT, normalizeGroupJid, isGroupJid, recipientDisplayName, isPhoneLikeName, isOwnNumberName, realPersonName, formatPhoneForDisplay } from '../app/lib/jid';
 
 describe('phoneDigitsFromJid', () => {
   test('returns the digits of a 12-digit @s.whatsapp.net JID', () => {
@@ -169,9 +169,67 @@ describe('recipientDisplayName', () => {
     }
   });
 
-  test('people unchanged: name, else +number, else +?', () => {
+  test('people: name, else readable number, else +?', () => {
     expect(recipientDisplayName({ recipient_name: 'Mario', recipient_number: '393331234567' })).toBe('Mario');
-    expect(recipientDisplayName({ recipient_name: null, recipient_number: '393331234567' })).toBe('+393331234567');
+    expect(recipientDisplayName({ recipient_name: null, recipient_number: '393331234567' })).toBe('+39 333 123 4567');
+    expect(recipientDisplayName({ recipient_name: null, recipient_number: '447700900123' })).toBe('+447700900123');
     expect(recipientDisplayName({ recipient_name: null, recipient_number: null })).toBe('+?');
+  });
+
+  // Rapporto 360, T11: righe già salvate col numero stesso come "nome".
+  test('the number itself as name counts as no name', () => {
+    expect(recipientDisplayName({ recipient_name: '393331234567', recipient_number: '393331234567' })).toBe('+39 333 123 4567');
+    expect(recipientDisplayName({ recipient_name: '+39 333 123-4567', recipient_number: '393331234567' })).toBe('+39 333 123 4567');
+    expect(recipientDisplayName({ recipient_name: 'Squadra 2012', recipient_number: '393331234567' })).toBe('Squadra 2012');
+  });
+
+  // Revisione: un nome di sole cifre scelto apposta resta (come il server).
+  test('a digits-only name that is NOT the number is kept', () => {
+    expect(recipientDisplayName({ recipient_name: '118', recipient_number: '393401111111' })).toBe('118');
+    expect(recipientDisplayName({ recipient_name: '10', recipient_number: '393401111111' })).toBe('10');
+  });
+});
+
+describe('isPhoneLikeName / realPersonName / formatPhoneForDisplay', () => {
+  test('only phone characters with at least one digit', () => {
+    expect(isPhoneLikeName('393331234567')).toBe(true);
+    expect(isPhoneLikeName('+39 (333) 123-45.67')).toBe(true);
+    expect(isPhoneLikeName('Mario')).toBe(false);
+    expect(isPhoneLikeName('Mario 2')).toBe(false);
+    expect(isPhoneLikeName('+ -')).toBe(false);
+    expect(isPhoneLikeName('')).toBe(false);
+    expect(isPhoneLikeName(null)).toBe(false);
+  });
+
+  // Stessa regola di isNoRealName (app/api/contacts/route.ts): almeno 6 cifre,
+  // confronto sulla coda del numero.
+  test('isOwnNumberName: only the contact\'s own number, written in any way', () => {
+    expect(isOwnNumberName('393331234567', '393331234567')).toBe(true);
+    expect(isOwnNumberName('+39 333 123 4567', '393331234567')).toBe(true);
+    expect(isOwnNumberName('333 1234567', '393331234567')).toBe(true);
+    expect(isOwnNumberName('0039 333 1234567', '393331234567')).toBe(true);
+    expect(isOwnNumberName('081 555 1234', '390815551234')).toBe(true);
+    expect(isOwnNumberName('118', '393401111111')).toBe(false);
+    expect(isOwnNumberName('1522', '393401111111')).toBe(false);
+    expect(isOwnNumberName('393339999999', '393331234567')).toBe(false);
+    expect(isOwnNumberName('Mario', '393331234567')).toBe(false);
+    expect(isOwnNumberName('393331234567', '')).toBe(false);
+  });
+
+  test('realPersonName trims and drops the number used as name', () => {
+    expect(realPersonName('  Anna  ', '393331234567')).toBe('Anna');
+    expect(realPersonName('393331234567', '393331234567')).toBeUndefined();
+    expect(realPersonName('118', '393401111111')).toBe('118');
+    expect(realPersonName('   ', '393331234567')).toBeUndefined();
+    expect(realPersonName(null, '393331234567')).toBeUndefined();
+  });
+
+  test('formatPhoneForDisplay: Italian mobiles and landlines grouped, the rest +digits', () => {
+    expect(formatPhoneForDisplay('393331234567')).toBe('+39 333 123 4567');
+    expect(formatPhoneForDisplay('390815551234')).toBe('+39 081 555 1234');
+    expect(formatPhoneForDisplay('39 02 1234567')).toBe('+39 02 123 4567');
+    expect(formatPhoneForDisplay('39333123456')).toBe('+39 333 123 456');
+    expect(formatPhoneForDisplay('447700900123')).toBe('+447700900123');
+    expect(formatPhoneForDisplay('')).toBe('+?');
   });
 });

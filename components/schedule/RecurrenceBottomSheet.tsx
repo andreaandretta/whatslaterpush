@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Clock } from 'lucide-react';
 import { nextOccurrences } from '../../app/lib/recurrence';
+import { dayOfMonthPhrase } from '../../app/lib/schedule-quick';
 
 export type RecurrenceValue = 'none' | 'daily' | 'weekly' | 'monthly';
 
@@ -37,11 +38,13 @@ export function RecurrenceBottomSheet({ open, onClose, value, onChange, referenc
     { value: 'none', label: 'Non ripetere' },
     { value: 'daily', label: 'Ogni giorno' },
     { value: 'weekly', label: `Ogni ${dow}` },
-    { value: 'monthly', label: `Il ${dom} di ogni mese${dom >= 29 ? ' (o l\'ultimo giorno)' : ''}` },
+    { value: 'monthly', label: monthlyLabel(dom) },
   ];
 
+  // Il primo invio è la data scelta: prima l'elenco partiva DOPO e sembrava
+  // che la prima volta venisse saltata ("gio 8" scelto, elenco 15-22-29).
   const previewRule = buildRRule(localValue, referenceDate);
-  const preview = previewRule ? nextOccurrences(previewRule, referenceDate, 3) : [];
+  const preview = previewRule ? [referenceDate, ...nextOccurrences(previewRule, referenceDate, 2)] : [];
 
   function confirm() {
     onChange(localValue);
@@ -50,7 +53,7 @@ export function RecurrenceBottomSheet({ open, onClose, value, onChange, referenc
 
   const ctaLabel =
     localValue === 'none'
-      ? 'Schedula una volta'
+      ? 'Solo una volta'
       : `Conferma ${recurrenceLabel(localValue, referenceDate).toLowerCase()}`;
 
   return (
@@ -100,7 +103,7 @@ export function RecurrenceBottomSheet({ open, onClose, value, onChange, referenc
             <div className="flex items-center gap-2 mb-2">
               <Clock className="w-3.5 h-3.5" style={{ color: '#8696A0' }} aria-hidden="true" />
               <span className="text-xs uppercase tracking-wide" style={{ color: '#8696A0' }}>
-                Prossimi invii
+                Quando parte
               </span>
             </div>
             <ul>
@@ -111,7 +114,9 @@ export function RecurrenceBottomSheet({ open, onClose, value, onChange, referenc
                     i < preview.length - 1 ? 'border-b border-[#2A3942]' : ''
                   }`}
                 >
-                  <span className="text-sm text-white">{DATE_FMT.format(d)}</span>
+                  <span className={`text-sm ${i === 0 ? 'text-white font-semibold' : 'text-white'}`}>
+                    {i === 0 ? 'Primo invio: ' : ''}{DATE_FMT.format(d)}
+                  </span>
                   <span className="text-sm tabular-nums" style={{ color: '#8696A0' }}>
                     {TIME_FMT.format(d)}
                   </span>
@@ -124,7 +129,7 @@ export function RecurrenceBottomSheet({ open, onClose, value, onChange, referenc
         <button
           type="button"
           onClick={confirm}
-          className="w-full mt-4 py-3 rounded-xl bg-primary text-white font-semibold hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-primary/30"
+          className="w-full mt-4 py-3 rounded-xl bg-primary text-[#0B141A] font-semibold hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-primary/30"
         >
           {ctaLabel}
         </button>
@@ -150,6 +155,12 @@ export function recurrenceLabel(recurrence: RecurrenceValue, date: Date): string
   if (recurrence === 'none') return 'Non ripetere';
   if (recurrence === 'daily') return 'Ogni giorno';
   if (recurrence === 'weekly') return `Ogni ${WEEKDAY_NAMES[date.getDay()]}`;
-  if (recurrence === 'monthly') return `Il ${date.getDate()} di ogni mese${date.getDate() >= 29 ? ' (o l\'ultimo giorno)' : ''}`;
+  if (recurrence === 'monthly') return monthlyLabel(date.getDate());
   return 'Non ripetere';
+}
+
+// "L'8 di ogni mese", "Il 15 di ogni mese", "Il 31 di ogni mese (o l'ultimo giorno)".
+function monthlyLabel(day: number): string {
+  const phrase = dayOfMonthPhrase(day);
+  return `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)} di ogni mese${day >= 29 ? ' (o l\'ultimo giorno)' : ''}`;
 }

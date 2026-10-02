@@ -85,13 +85,56 @@ export function isGroupJid(raw: unknown): boolean {
   return normalizeGroupJid(raw) !== null;
 }
 
+// ── Nomi delle persone ──
+// Un "nome" che è il numero stesso del contatto ("393331234567", "+39 333
+// 123 4567") vale come nessun nome. Un nome di sole cifre DIVERSO dal numero
+// ("118", "1522", la maglia "10") è stato scelto apposta e resta: stessa
+// regola del server (isNoRealName in app/api/contacts/route.ts).
+
+/** true se il nome contiene solo caratteri da numero di telefono (almeno una cifra). */
+export function isPhoneLikeName(name: unknown): boolean {
+  return typeof name === 'string' && /^[\s\d+().-]*\d[\s\d+().-]*$/.test(name);
+}
+
+/** true se il "nome" è il numero del contatto scritto per intero (almeno 6 cifre). */
+export function isOwnNumberName(name: unknown, number: unknown): boolean {
+  if (!isPhoneLikeName(name)) return false;
+  const d = (name as string).replace(/\D/g, '');
+  const num = String(number ?? '').replace(/\D/g, '');
+  if (d.length < 6 || !num) return false;
+  return num.endsWith(d) || d.endsWith(num.slice(-9));
+}
+
+/** Il nome vero di una persona, oppure undefined se manca o è il suo numero. */
+export function realPersonName(name: string | null | undefined, number: string | null | undefined): string | undefined {
+  const n = (name || '').trim();
+  return n && !isOwnNumberName(n, number) ? n : undefined;
+}
+
+/**
+ * Numero leggibile, uguale in selettore, finestra e lista: "+39 333 123 4567"
+ * per un cellulare italiano, "+39 081 555 1234" per un fisso, altrimenti "+cifre".
+ */
+export function formatPhoneForDisplay(digits: string | null | undefined): string {
+  const d = String(digits || '').replace(/\D/g, '');
+  if (!d) return '+?';
+  if (d.startsWith('39') && (d.length === 11 || d.length === 12)) {
+    const local = d.slice(2);
+    if (local.length === 10) return `+39 ${local.slice(0, 3)} ${local.slice(3, 6)} ${local.slice(6)}`;
+    if (local.startsWith('3')) return `+39 ${local.slice(0, 3)} ${local.slice(3, 6)} ${local.slice(6)}`;
+    return `+39 ${local.slice(0, 2)} ${local.slice(2, 5)} ${local.slice(5)}`;
+  }
+  return `+${d}`;
+}
+
 /**
  * Nome da mostrare per una riga di scheduled_messages. Un gruppo senza nome
  * non mostra mai le cifre del JID: nel formato vecchio sono il telefono di chi
- * ha creato il gruppo. Le persone restano come prima: nome o `+numero`.
+ * ha creato il gruppo. Una persona senza nome (o col suo numero come nome) si
+ * mostra col numero leggibile: "+39 333 123 4567".
  */
 export function recipientDisplayName(m: { recipient_name?: string | null; recipient_number?: string | null }): string {
   const name = m?.recipient_name;
   if (isGroupJid(m?.recipient_number)) return name && name.trim() ? name : 'Gruppo senza nome';
-  return name || `+${m?.recipient_number || '?'}`;
+  return realPersonName(name, m?.recipient_number) || formatPhoneForDisplay(m?.recipient_number);
 }

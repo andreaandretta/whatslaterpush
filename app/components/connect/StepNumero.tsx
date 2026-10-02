@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import Logo from '@/components/Logo';
 import HelpPopover from './HelpPopover';
@@ -79,12 +79,35 @@ export default function StepNumero({ onSubmit, error = null, cooldownUntil = nul
     : null;
   const submit = () => reading.ok && !cooldownActive && !submitting && onSubmit(reading.digits);
 
+  // Tastiera aperta (la parte visibile si accorcia): se "Continua" resta sotto,
+  // lo si porta in vista. Solo col campo numero attivo e senza zoom: anche lo
+  // zoom a due dita fa scattare 'resize', e la pagina saltava sul pulsante.
+  // Da riprovare su iPhone vero.
+  const ctaRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    if (!vv) return;
+    const keepVisible = () => {
+      if (document.activeElement !== inputRef.current) return;
+      if (typeof vv.scale === 'number' && Math.abs(vv.scale - 1) > 0.05) return;
+      const btn = ctaRef.current?.querySelector('button');
+      if (!btn || typeof btn.scrollIntoView !== 'function') return;
+      if (btn.getBoundingClientRect().bottom > vv.offsetTop + vv.height) btn.scrollIntoView({ block: 'nearest' });
+    };
+    vv.addEventListener('resize', keepVisible);
+    return () => vv.removeEventListener('resize', keepVisible);
+  }, []);
+
   return (
-    <div className="relative min-h-screen bg-white text-[#1A1F2C] overflow-hidden">
+    <div className="relative min-h-[100svh] bg-white text-[#1A1F2C] overflow-hidden">
       {/* soft mint blob top-right — single accent, not full pattern */}
       <div className="absolute -top-32 -right-28 w-96 h-96 rounded-full bg-[#E8F8F0] blur-3xl opacity-80 pointer-events-none" />
 
-      <div className="relative z-10 max-w-md mx-auto px-6 pt-6 pb-8 min-h-screen flex flex-col">
+      {/* Su iPhone la tastiera dei numeri non ha Invio: "Continua" sta subito
+          sotto il campo, così resta visibile con la tastiera aperta (prima era
+          spinto in fondo con mt-auto e finiva sotto la tastiera). */}
+      <div className="relative z-10 max-w-md mx-auto px-6 pt-[max(1.5rem,env(safe-area-inset-top))] pb-8 min-h-[100svh] flex flex-col">
         {/* Nav */}
         <div className="flex items-center justify-between mb-4">
           <Link href="/" className="flex items-center gap-1.5 text-sm font-semibold text-[#5A6573]">
@@ -115,7 +138,7 @@ export default function StepNumero({ onSubmit, error = null, cooldownUntil = nul
         </p>
 
         {/* Input */}
-        <div className="mt-8">
+        <div className="mt-6">
           <div className="text-[11px] font-bold uppercase tracking-widest text-[#5A6573] mb-3">
             Numero
           </div>
@@ -131,6 +154,7 @@ export default function StepNumero({ onSubmit, error = null, cooldownUntil = nul
               </div>
             )}
             <input
+              ref={inputRef}
               type="tel"
               inputMode="tel"
               autoComplete="tel-national"
@@ -162,19 +186,8 @@ export default function StepNumero({ onSubmit, error = null, cooldownUntil = nul
           )}
         </div>
 
-        {/* Trust */}
-        <div className="mt-5 flex items-center gap-2 text-[13px] text-[#5A6573] leading-snug">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4FBE7C" strokeWidth="2.2" className="shrink-0">
-            <rect x="3" y="11" width="18" height="11" rx="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-          <span>
-            Solo per generare il codice WhatsApp. <strong className="text-[#1A1F2C]">Niente SMS.</strong>
-          </span>
-        </div>
-
-        {/* Push CTA to bottom */}
-        <div className="mt-auto pt-10">
+        {/* CTA subito sotto il campo (niente mt-auto) */}
+        <div ref={ctaRef} className="mt-5" data-testid="numero-cta">
           {error && (
             <div className={`mb-4 rounded-2xl border px-4 py-3 ${ERROR_STYLES[error.kind] || ERROR_STYLES.generic}`}>
               <div className="font-bold text-sm">{ERROR_ICONS[error.kind] || 'ℹ️'} {error.title}</div>
@@ -190,7 +203,7 @@ export default function StepNumero({ onSubmit, error = null, cooldownUntil = nul
             disabled={!isValid || cooldownActive || submitting}
             className={`w-full inline-flex items-center justify-center gap-2 py-4 rounded-full text-base font-extrabold transition-all ${
               isValid && !cooldownActive && !submitting
-                ? 'bg-primary text-white shadow-xl shadow-primary/40'
+                ? 'bg-primary text-[#0B141A] shadow-xl shadow-primary/40'
                 : 'bg-gray-200 text-gray-400 cursor-not-allowed'
             }`}
           >
@@ -213,6 +226,17 @@ export default function StepNumero({ onSubmit, error = null, cooldownUntil = nul
             <Link href="/privacy" className="underline text-[#5A6573]">Privacy</Link>.
           </p>
         </div>
+        {/* Trust */}
+        <div className="mt-5 flex items-center gap-2 text-[13px] text-[#5A6573] leading-snug">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4FBE7C" strokeWidth="2.2" className="shrink-0">
+            <rect x="3" y="11" width="18" height="11" rx="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          <span>
+            Solo per generare il codice WhatsApp. <strong className="text-[#1A1F2C]">Niente SMS.</strong>
+          </span>
+        </div>
+
       </div>
     </div>
   );

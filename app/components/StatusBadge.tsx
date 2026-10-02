@@ -1,6 +1,7 @@
 'use client';
 import React from 'react';
 import { Check, Clock, AlertCircle, Loader2, Pause } from 'lucide-react';
+import { romeWallClock } from '../lib/rome-time';
 
 // Status → text label + accent color. Pending/awaiting share the orange
 // "in attesa" bucket; sending is its own animated spinner; sent green;
@@ -49,33 +50,50 @@ export function StatusBadge({ status, countdown }: { status: string; countdown?:
   );
 }
 
-// "Parte tra 2g 14h" / "Parte tra 3h 20m" / "Parte tra 5m"
-export function formatCountdown(scheduledAt: string): string | null {
-  const ms = new Date(scheduledAt).getTime() - Date.now();
-  if (isNaN(ms) || ms <= 0) return null;
-  const totalMin = Math.floor(ms / 60000);
-  if (totalMin < 60) return `Parte tra ${totalMin}m`;
-  const totalHours = Math.floor(totalMin / 60);
-  const mins = totalMin % 60;
-  if (totalHours < 24) return `Parte tra ${totalHours}h ${mins}m`;
-  const days = Math.floor(totalHours / 24);
-  const hrs = totalHours % 24;
-  return `Parte tra ${days}g ${hrs}h`;
+// Parole intere, non sigle: "23m fa" e "2mes fa" non si capivano (rapporto 360, T30).
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
 }
 
-// "3h fa" / "ieri" / "2g fa" — for sent items
-export function formatRelativePast(scheduledAt: string): string {
-  const ms = Date.now() - new Date(scheduledAt).getTime();
+// Giorni di calendario a Roma tra due istanti, come le date della lista. Con le
+// 24 ore, 47 ore diventavano "tra 1 giorno" e si leggeva "domani" (revisione).
+function romeDayDiff(from: Date, to: Date): number {
+  const a = romeWallClock(from);
+  const b = romeWallClock(to);
+  return Math.round((Date.UTC(b.getFullYear(), b.getMonth(), b.getDate()) - Date.UTC(a.getFullYear(), a.getMonth(), a.getDate())) / 86_400_000);
+}
+
+// "Parte tra 5 minuti" / "Parte tra 3 ore" (oggi) / "Parte domani" /
+// "Parte dopodomani" / "Parte tra 3 giorni"
+export function formatCountdown(scheduledAt: string, now: Date = new Date()): string | null {
+  const target = new Date(scheduledAt);
+  const ms = target.getTime() - now.getTime();
+  if (isNaN(ms) || ms <= 0) return null;
+  const totalMin = Math.floor(ms / 60000);
+  if (totalMin < 1) return 'Parte tra poco';
+  if (totalMin < 60) return `Parte tra ${plural(totalMin, 'minuto', 'minuti')}`;
+  const days = romeDayDiff(now, target);
+  if (days <= 0) return `Parte tra ${plural(Math.floor(totalMin / 60), 'ora', 'ore')}`;
+  if (days === 1) return 'Parte domani';
+  if (days === 2) return 'Parte dopodomani';
+  return `Parte tra ${days} giorni`;
+}
+
+// "3 ore fa" / "ieri" / "2 mesi fa" — for sent items. Da un giorno in su si
+// contano i giorni di calendario: 47 ore fa può essere l'altro ieri.
+export function formatRelativePast(scheduledAt: string, now: Date = new Date()): string {
+  const then = new Date(scheduledAt);
+  const ms = now.getTime() - then.getTime();
   if (isNaN(ms) || ms < 0) return '';
   const min = Math.floor(ms / 60000);
   if (min < 1) return 'adesso';
-  if (min < 60) return `${min}m fa`;
+  if (min < 60) return `${plural(min, 'minuto', 'minuti')} fa`;
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h fa`;
-  const d = Math.floor(hr / 24);
-  if (d === 1) return 'ieri';
-  if (d < 7) return `${d}g fa`;
-  if (d < 30) return `${Math.floor(d / 7)}sett fa`;
-  if (d < 365) return `${Math.floor(d / 30)}mes fa`;
-  return `${Math.floor(d / 365)}a fa`;
+  if (hr < 24) return `${plural(hr, 'ora', 'ore')} fa`;
+  const d = romeDayDiff(then, now);
+  if (d <= 1) return 'ieri';
+  if (d < 7) return `${d} giorni fa`;
+  if (d < 30) return `${plural(Math.floor(d / 7), 'settimana', 'settimane')} fa`;
+  if (d < 365) return `${plural(Math.floor(d / 30), 'mese', 'mesi')} fa`;
+  return `${plural(Math.floor(d / 365), 'anno', 'anni')} fa`;
 }

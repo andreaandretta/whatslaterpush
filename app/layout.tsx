@@ -3,6 +3,7 @@ import { Inter, Space_Grotesk } from 'next/font/google'
 import './globals.css'
 import ServiceWorkerRegistrar from './components/ServiceWorkerRegistrar'
 import { siteUrl } from './lib/site'
+import { isBillingEnabled } from './lib/billing'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -14,10 +15,16 @@ const spaceGrotesk = Space_Grotesk({
   variable: '--font-space-grotesk',
 })
 
+// Titolo e descrizione per Google e per l'anteprima di condivisione. Durante la
+// beta (BILLING_ENABLED=false) "3 al giorno, per sempre" non è vero: è tutto gratis.
+const TITLE = 'WhatsLater - Promemoria WhatsApp dal numero che le famiglie conoscono già';
+const DESCRIPTION = 'Promemoria WhatsApp automatici e ricorrenti, dal tuo numero (personale, WhatsApp Business o fisso). '
+  + (isBillingEnabled() ? 'Gratis: 3 al giorno, per sempre.' : 'Gratis durante la beta.');
+
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl()),
-  title: 'WhatsLater - Promemoria WhatsApp dal numero che i tuoi clienti conoscono già',
-  description: 'Promemoria WhatsApp automatici e ricorrenti, dal tuo numero (personale, WhatsApp Business o fisso). Gratis: 3 al giorno, per sempre.',
+  title: TITLE,
+  description: DESCRIPTION,
   keywords: ['promemoria WhatsApp', 'promemoria appuntamenti WhatsApp', 'programmare messaggi WhatsApp', 'messaggi ricorrenti WhatsApp', 'promemoria WhatsApp Business', 'promemoria clienti WhatsApp'],
   // './' = ogni pagina è canonical di sé stessa. Con '/' le pagine senza un proprio
   // alternates (/privacy, /terms, /cookie) dichiaravano come canonical la home.
@@ -33,8 +40,8 @@ export const metadata: Metadata = {
     apple: '/icons/icon-180.png',
   },
   openGraph: {
-    title: 'WhatsLater - Promemoria WhatsApp dal numero che i tuoi clienti conoscono già',
-    description: 'Promemoria WhatsApp automatici e ricorrenti, dal tuo numero (personale, WhatsApp Business o fisso). Gratis: 3 al giorno, per sempre.',
+    title: TITLE,
+    description: DESCRIPTION,
     locale: 'it_IT',
     type: 'website',
   },

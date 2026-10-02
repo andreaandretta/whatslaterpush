@@ -19,15 +19,15 @@ const faqs = [
   },
   {
     q: 'È contro i termini di WhatsApp? Rischio il ban?',
-    a: 'Nessuno può garantirti il contrario, e diffida di chi lo fa. WhatsApp blocca soprattutto chi scrive a persone che non lo conoscono o che lo segnalano come spam. WhatsLater è costruito per tenerti lontano da lì: è pensato per i contatti con cui hai già una chat (ai numeri nuovi scrive pochissimo al giorno), pochi promemoria mirati al giorno (20-30, non liste), con limiti automatici che ti fermano prima di esagerare. Il collegamento è lo stesso di WhatsApp Web (dispositivi collegati). Le regole che seguiamo sono scritte nei Termini, non nascoste.',
+    a: 'Nessuno può garantirti il contrario, e diffida di chi lo fa. WhatsApp blocca soprattutto chi scrive a persone che non lo conoscono o che lo segnalano come spam. WhatsLater è costruito per tenerti lontano da lì: è pensato per i contatti con cui hai già una chat (ai numeri nuovi scrive pochissimo al giorno) e per pochi promemoria mirati, non per liste. Ci sono limiti automatici che ti fermano prima di esagerare: nei primi giorni dopo il collegamento si parte da 5 messaggi al giorno e si sale piano piano. Il collegamento è lo stesso di WhatsApp Web (dispositivi collegati). Le regole che seguiamo sono scritte nei Termini, non nascoste.',
   },
   {
-    q: "In cosa è diverso da WhatsApp Business o dallo scheduling nativo?",
-    a: "WhatsApp Business serve a chi ha un catalogo, risposte automatiche e un profilo aziendale. WhatsApp sta anche aggiungendo la programmazione dei messaggi: dalle prime versioni di prova serve per un singolo messaggio tra qualche giorno, dentro una chat, senza ricorrenze e con il telefono acceso. WhatsLater è per i promemoria che mandi ogni settimana a decine di persone, anche tra sei mesi, tutti in una coda sola, dal tuo numero e anche col telefono spento.",
+    q: "In cosa è diverso da WhatsApp Business o dalla programmazione dei messaggi di WhatsApp?",
+    a: "WhatsApp Business serve a chi ha un catalogo, risposte automatiche e un profilo aziendale. WhatsApp sta anche aggiungendo la programmazione dei messaggi: dalle prime versioni di prova serve per un singolo messaggio tra qualche giorno, dentro una chat, senza ricorrenze e con il telefono acceso. WhatsLater è per i promemoria che mandi ogni settimana a tante persone (un promemoria per ciascuna), anche tra sei mesi, tutti in una coda sola, dal tuo numero e anche col telefono spento.",
   },
   {
     q: 'Cosa succede se il mio telefono è spento?',
-    a: 'Il messaggio parte lo stesso. WhatsLater gira su un server dedicato connesso al tuo account WhatsApp via linked devices — stessa tecnologia di WhatsApp Web, funziona anche col tuo telefono offline. Spegni la sera senza pensieri.',
+    a: 'Il messaggio parte lo stesso. WhatsLater è collegato al tuo WhatsApp come WhatsApp Web, tra i dispositivi collegati: funziona anche col telefono spento. Spegni la sera senza pensieri. Solo una cosa: se il telefono resta spento o senza internet per più di 2 settimane, WhatsApp scollega WhatsLater e va ricollegato.',
   },
   {
     q: 'Posso vedere il messaggio prima che parta?',
@@ -38,8 +38,8 @@ const faqs = [
     a: "I messaggi programmati sono cifrati a riposo su server nell'Unione Europea (Germania e Irlanda). Una volta inviati, restano visibili nell'app per il periodo di storico previsto dal piano (7/30/60/90 giorni) e vengono cancellati del tutto quando elimini l'account. Non leggiamo le tue chat, non analizziamo il contenuto, non usiamo tracker né pubblicità, non condividiamo nulla con terze parti.",
   },
   {
-    q: 'Posso programmare messaggi ricorrenti tipo "ogni lunedì alle 7 alla squadra"?',
-    a: 'Sì. Quando programmi il messaggio, tocca "Ripeti" e scegli: ogni giorno, ogni settimana (stesso giorno) o ogni mese (stesso giorno del mese). Per "ogni lunedì alle 7" programmi il primo lunedì alle 7 e imposti Ripeti → ogni lunedì: le occorrenze successive si creano da sole, e l\'orario resta quello italiano anche al cambio d\'ora legale.',
+    q: 'Posso programmare messaggi ricorrenti tipo "ogni lunedì alle 7 a Marco, papà di Luca"?',
+    a: 'Sì. Quando programmi il messaggio, tocca "Opzioni avanzate" e poi "Ripeti", e scegli: ogni giorno, ogni settimana (stesso giorno) o ogni mese (stesso giorno del mese). Per "ogni lunedì alle 7" programmi il primo lunedì alle 7 e imposti Ripeti → ogni lunedì: le occorrenze successive si creano da sole, e l\'orario resta quello italiano anche al cambio d\'ora legale. Ogni promemoria va a una persona: per avvisare tutti i genitori della squadra ne programmi uno per ciascuno. I gruppi WhatsApp sono in prova e non ancora aperti a tutti.',
   },
 ];
 
@@ -101,7 +101,8 @@ export default function FAQSection({ theme = 'light', billingEnabled = true }: F
               <div
                 className={cn(
                   'px-6 overflow-hidden transition-all duration-300 ease-in-out',
-                  openIndex === i ? 'max-h-96 pb-5 opacity-100' : 'max-h-0 opacity-0'
+                  // 40rem: le risposte più lunghe su un telefono stretto superano i 24rem di prima.
+                  openIndex === i ? 'max-h-[40rem] pb-5 opacity-100' : 'max-h-0 opacity-0'
                 )}
               >
                 <p className={`text-sm leading-relaxed ${answer}`}>{faq.a}</p>

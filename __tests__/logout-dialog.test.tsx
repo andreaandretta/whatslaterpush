@@ -16,13 +16,35 @@ test('closed → nothing rendered', () => {
   expect(container).toBeEmptyDOMElement();
 });
 
-test('the first choice exits this device only, and says reminders keep going', () => {
+test('"Resta collegato" is the first and only green choice; it does not exit', () => {
+  const onConfirm = jest.fn();
+  const onCancel = jest.fn();
+  render(<LogoutDialog open pendingCount={3} onCancel={onCancel} onConfirm={onConfirm} />);
+  const buttons = screen.getAllByRole('button');
+  expect(buttons[0]).toHaveTextContent('Resta collegato');
+  expect(buttons[0].className).toMatch(/\bbg-primary\b/);
+  expect(buttons[0].className).toMatch(/text-\[#0B141A\]/);
+  buttons.slice(1).forEach((b) => expect(b.className).not.toMatch(/\bbg-primary\b/));
+  expect(screen.getByText(/Sul tuo telefono non serve uscire: puoi chiudere la pagina\./)).toBeInTheDocument();
+  expect(screen.getByText(/Se esci, per rientrare dovrai scriverci\./)).toBeInTheDocument();
+  fireEvent.click(buttons[0]);
+  expect(onCancel).toHaveBeenCalled();
+  expect(onConfirm).not.toHaveBeenCalled();
+});
+
+// Revisione: "puoi chiudere la pagina" non deve valere per il PC della parrocchia.
+test('on a computer that is not yours the text says to exit this device', () => {
+  render(<LogoutDialog open pendingCount={0} onCancel={() => {}} onConfirm={() => {}} />);
+  expect(screen.getByText(/Su un computer non tuo, esci da questo dispositivo\./)).toBeInTheDocument();
+  expect(screen.queryByText(/Di solito non serve uscire/)).not.toBeInTheDocument();
+});
+
+test('the device exit is secondary, exits this device only, and says reminders keep going', () => {
   const onConfirm = jest.fn();
   render(<LogoutDialog open pendingCount={3} onCancel={() => {}} onConfirm={onConfirm} />);
-  const buttons = screen.getAllByRole('button');
-  expect(buttons[0]).toHaveTextContent('Esci da questo dispositivo');
-  expect(buttons[0]).toHaveTextContent(/partono lo stesso/);
-  fireEvent.click(buttons[0]);
+  const exit = screen.getByRole('button', { name: /Esci da questo dispositivo/ });
+  expect(exit).toHaveTextContent(/partono lo stesso/);
+  fireEvent.click(exit);
   expect(onConfirm).toHaveBeenCalledWith('device');
 });
 

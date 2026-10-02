@@ -14,6 +14,10 @@ export type LogoutChoice = 'device' | 'pause' | 'cancel' | 'keep';
 //    futuro, settimane dopo, con promemoria di eventi già passati).
 // Per rientrare, in entrambi i casi, oggi serve il supporto (il recupero
 // self-service con codice non esiste ancora): il testo lo dice.
+// La scelta principale (verde, in alto) è "Resta collegato": prima il verde era
+// "Esci", e un tocco per sbaglio chiudeva fuori (rapporto 360, T6). "Puoi
+// chiudere la pagina" vale solo per il proprio telefono: su un computer di
+// altri la sessione resterebbe aperta per mesi (cookie di 395 giorni).
 export function LogoutDialog({ open, pendingCount, onCancel, onConfirm }: {
   open: boolean;
   pendingCount: number;
@@ -33,16 +37,22 @@ export function LogoutDialog({ open, pendingCount, onCancel, onConfirm }: {
         className="w-full sm:max-w-sm sm:mx-4 bg-[#1F2C33] border border-[#2A3942] rounded-t-2xl sm:rounded-2xl p-5 space-y-3"
       >
         <h2 id="logout-title" className="text-white font-bold text-lg">Vuoi uscire?</h2>
-        <button type="button" onClick={() => onConfirm('device')} className={`${btn} bg-primary text-white hover:opacity-90`}>
+        <p className="text-sm text-gray-300 leading-snug">
+          Sul tuo telefono non serve uscire: puoi chiudere la pagina. Su un computer non tuo, esci da questo dispositivo. Se esci, per rientrare dovrai scriverci.
+        </p>
+        <button type="button" onClick={onCancel} className={`${btn} text-center bg-primary text-[#0B141A] hover:opacity-90`}>
+          Resta collegato
+        </button>
+        <button type="button" onClick={() => onConfirm('device')} className={`${btn} bg-white/[0.06] text-white hover:bg-white/10`}>
           Esci da questo dispositivo
-          <span className="block text-xs font-normal opacity-80">
-            WhatsApp resta collegato: i messaggi programmati partono lo stesso. Per rientrare da qui dovrai contattare il supporto.
+          <span className="block text-xs font-normal text-gray-400">
+            WhatsApp resta collegato: i messaggi programmati partono lo stesso.
           </span>
         </button>
 
         <div className="pt-2 border-t border-[#2A3942] space-y-3">
           <p className="text-sm text-gray-300 leading-snug pt-2">
-            Oppure scollega WhatsLater dal tuo WhatsApp: <strong className="text-white">nessun messaggio parte</strong> finché non lo ricolleghi, e per ricollegarlo dovrai contattare il supporto.
+            Oppure scollega WhatsLater dal tuo WhatsApp: <strong className="text-white">nessun messaggio parte</strong> finché non lo ricolleghi, e per ricollegarlo dovrai scriverci.
           </p>
           {n > 0 ? (
             <>
@@ -68,9 +78,6 @@ export function LogoutDialog({ open, pendingCount, onCancel, onConfirm }: {
             </button>
           )}
         </div>
-        <button type="button" onClick={onCancel} className={`${btn} text-center text-gray-400 hover:text-white`}>
-          Resta collegato
-        </button>
       </div>
     </div>
   );

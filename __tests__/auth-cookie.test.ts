@@ -1,4 +1,4 @@
-import { signCookie, verifyCookie, shouldRefresh } from '../app/lib/auth-cookie';
+import { signCookie, verifyCookie, shouldRefresh, AUTH_COOKIE_MAX_AGE } from '../app/lib/auth-cookie';
 
 const SECRET = '0'.repeat(128);
 const ORIGINAL_ENV = process.env;
@@ -22,10 +22,12 @@ describe('signCookie + verifyCookie round-trip', () => {
     expect(payload!.exp).toBeGreaterThan(payload!.iat);
   });
 
-  test('exp is iat + 90 days', async () => {
+  test('exp is iat + 180 days', async () => {
     const cookie = await signCookie({ phone: '393331234567', instanceName: 'SchedWhats-393331234567' });
     const p = (await verifyCookie(cookie))!;
-    expect(p.exp - p.iat).toBe(90 * 24 * 60 * 60);
+    expect(p.exp - p.iat).toBe(180 * 24 * 60 * 60);
+    expect(AUTH_COOKIE_MAX_AGE).toBe(180 * 24 * 60 * 60);
+    expect(AUTH_COOKIE_MAX_AGE).toBeLessThan(400 * 24 * 60 * 60);
   });
 });
 

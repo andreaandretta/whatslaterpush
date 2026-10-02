@@ -168,7 +168,7 @@ export default function LabelManagerSheet({ open, onClose, onChange }: Props) {
             <button
               type="button"
               onClick={() => setCreateOpen(true)}
-              className="w-full bg-primary hover:bg-primary/90 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
+              className="w-full bg-primary hover:bg-primary/90 text-[#0B141A] font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
             >
               <Plus className="w-4 h-4" />
               Nuova etichetta

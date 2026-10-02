@@ -152,7 +152,7 @@ export default function StepCodice({ code, expiresAt, phoneNumber, connState = n
             <button
               type="button"
               onClick={handleCopy}
-              className="bg-primary text-white rounded-xl px-4 text-[11px] font-extrabold uppercase tracking-wider flex flex-col items-center justify-center gap-1 shadow-lg shadow-primary/40 min-w-[72px]"
+              className="bg-primary text-[#0B141A] rounded-xl px-4 text-[11px] font-extrabold uppercase tracking-wider flex flex-col items-center justify-center gap-1 shadow-lg shadow-primary/40 min-w-[72px]"
             >
               {copied ? (
                 <>

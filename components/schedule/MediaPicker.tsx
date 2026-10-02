@@ -87,11 +87,12 @@ const KIND_TO_ACCEPT: Record<string, string> = {
   audio: 'audio/mpeg,audio/ogg,audio/wav,audio/webm,audio/aac,audio/x-m4a,audio/mp4',
 };
 
+// Solo parole: l'icona c'è già accanto (prima l'emoji la ripeteva).
 const KIND_LABELS: Record<string, { icon: any; label: string }> = {
-  image: { icon: ImageIcon, label: '📷 Foto' },
-  video: { icon: Video, label: '🎥 Video' },
-  document: { icon: FileText, label: '📄 Documento' },
-  audio: { icon: Mic, label: '🎤 Audio' },
+  image: { icon: ImageIcon, label: 'Foto' },
+  video: { icon: Video, label: 'Video' },
+  document: { icon: FileText, label: 'Documento' },
+  audio: { icon: Mic, label: 'Audio' },
 };
 
 // Per-kind color treatment for the icon disc (picker grid) and chip.
@@ -192,13 +193,13 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
       className="fixed inset-0 z-sheet flex items-end justify-center"
       role="dialog"
       aria-modal="true"
-      aria-label="Allega media"
+      aria-label="Allega"
     >
       <button type="button" aria-label="Chiudi" tabIndex={-1} className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="relative w-full sm:max-w-sm bg-[#1F2C33] rounded-t-3xl pb-6 pt-4 px-3 animate-slide-up">
         <div aria-hidden="true" className="w-12 h-1 bg-gray-600 rounded-full mx-auto mb-4" />
         <div className="flex items-center justify-between mb-3 px-1">
-          <h3 className="text-white font-semibold">Allega media</h3>
+          <h3 className="text-white font-semibold">Allega</h3>
           <button type="button" onClick={onClose} aria-label="Chiudi" className="w-11 h-11 -mr-2 inline-flex items-center justify-center rounded-full hover:bg-white/10 text-white focus:outline-none focus:ring-2 focus:ring-primary/30">
             <X className="w-4 h-4" />
           </button>
@@ -320,7 +321,7 @@ export function MediaAttachmentChip({ media, onClear }: { media: MediaAttachment
       <button
         type="button"
         onClick={onClear}
-        aria-label="Rimuovi media"
+        aria-label="Rimuovi allegato"
         className="w-11 h-11 -mr-2 shrink-0 inline-flex items-center justify-center rounded-full hover:bg-white/10 text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary/30"
       >
         <X className="w-4 h-4" />

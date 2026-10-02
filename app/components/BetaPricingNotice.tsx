@@ -21,7 +21,8 @@ export default function BetaPricingNotice() {
 
         <ul className="inline-flex flex-col items-start gap-3 text-left text-[#1A1F2C] mb-10">
           {[
-            '50 messaggi programmati al giorno',
+            // Vero anche nei primi giorni: la rampa anti-blocco parte da 5 (app/lib/anti-ban.ts).
+            'Fino a 50 messaggi al giorno (nei primi giorni meno, per proteggere il numero appena collegato)',
             '300 contatti attivi',
             'Storico di 90 giorni',
             'Etichette personalizzate incluse',
@@ -41,7 +42,7 @@ export default function BetaPricingNotice() {
 
         <Link
           href="/connect"
-          className="inline-flex items-center justify-center bg-primary text-white px-8 h-14 rounded-full text-base font-bold shadow-2xl shadow-primary/40 hover:bg-primary-hover transition-colors"
+          className="inline-flex items-center justify-center bg-primary text-[#0B141A] px-8 h-14 rounded-full text-base font-bold shadow-2xl shadow-primary/40 hover:bg-primary-hover transition-colors"
         >
           Inizia gratis
         </Link>
