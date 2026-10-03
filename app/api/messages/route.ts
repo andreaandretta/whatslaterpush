@@ -17,9 +17,14 @@ import { hasTemplateVariables } from '../../lib/template-variables';
 import { truncateAtGrapheme } from '../../lib/text';
 import { apiErrorText } from '../../lib/api-error-text';
 import { groupsEnabledFor, lookupGroup, takeGroupsToken, rememberGroupCheck, recentGroupCheck, type GroupLookup } from '../../lib/groups';
+import { buildTodayLimit, type TodayLimit } from '../../lib/daily-limit';
 
 // Tipi di allegato accettati (POST e PATCH). Il CHECK in DB è identico.
 const ALLOWED_MEDIA = ['image', 'video', 'document', 'audio', 'sticker', 'location', 'contact'];
+
+// GET: il contatore del limite di oggi non si legge (colonna mancante, RLS…).
+// Si avvisa una volta per lambda, poi si tace: la dashboard torna al testo generico.
+let todayLimitWarned = false;
 
 // Stati "vivi" di una catena ricorrente: stessi di recurring_chains_needing_next()
 // (migration 20260621). Se uno di questi esiste, la catena va avanti da sola.
@@ -184,6 +189,35 @@ export async function GET(req: NextRequest) {
     .select('id', { count: 'exact', head: true })
     .eq('instance_phone', phone);
 
+  // Limite di OGGI (rapporto 360 B3): rampa dei primi giorni ∧ piano, invii
+  // già fatti, coda di oggi. Stessa funzione del cron (app/lib/daily-limit.ts).
+  // Query a parte e best-effort: se fallisce today_limit è null e la dashboard
+  // torna al testo generico, mai una dashboard vuota per colpa del contatore.
+  let todayLimit: TodayLimit | null = null;
+  try {
+    const { data: quota, error: quotaErr } = await supabase
+      .from('user_instances')
+      .select('paired_at, messages_sent_today, last_daily_reset_at')
+      .eq('phone_number', phone)
+      .maybeSingle();
+    if (quotaErr && !todayLimitWarned) {
+      todayLimitWarned = true;
+      console.warn('[messages GET] today_limit non letto:', quotaErr.message);
+    }
+    if (!quotaErr && quota) {
+      todayLimit = buildTodayLimit({
+        planLimit: planLimits.dailyLimit,
+        pairedAt: (quota as any).paired_at,
+        sentToday: (quota as any).messages_sent_today,
+        lastResetDay: (quota as any).last_daily_reset_at,
+        rows: (data || []) as Array<Record<string, any>>,
+        now: new Date(),
+      });
+    }
+  } catch (e) {
+    console.warn('[messages GET] today_limit non calcolato:', (e as Error)?.message);
+  }
+
   // Client contract: subscription_plan is the plan whose limits/UI apply —
   // the dashboard gates ALL plan UI on it (pricing, trial banner, counter,
   // upsell copy). raw_plan mirrors the stored one: the Stripe portal button
@@ -201,6 +235,7 @@ export async function GET(req: NextRequest) {
     trial_ends_at: user?.trial_ends_at || null,
     connection_status: user?.connection_status || null,
     total_scheduled_lifetime: lifetimeCount ?? 0,
+    today_limit: todayLimit,
   });
 }
 

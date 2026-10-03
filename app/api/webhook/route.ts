@@ -1086,7 +1086,7 @@ export async function POST(req) {
               // Step 3: Welcome message
               await notifyOwner(evoInstance, inst.phone_number,
                 '✅ WhatsApp collegato!\n\n' +
-                'Apri *whatslaterpush.vercel.app/dashboard* (o l\'app installata) e tocca *"Manda messaggio"*: ' +
+                'Apri *whatslaterpush.vercel.app/dashboard* (o l\'app installata) e tocca *"Programma"*: ' +
                 'scegli il contatto, scrivi, imposta data e ora. Ci pensiamo noi a inviarlo al momento giusto.\n\n' +
                 'Buon lavoro! 🎯'
               );

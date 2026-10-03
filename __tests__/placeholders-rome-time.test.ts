@@ -42,7 +42,7 @@ describe('recurrenceTagLabel', () => {
   test.each([
     ['FREQ=DAILY', 'ogni giorno'],
     ['FREQ=WEEKLY;BYDAY=TU', 'ogni martedì'],
-    ['FREQ=WEEKLY;BYDAY=MO,WE', 'ogni lunedì, mercoledì'],
+    ['FREQ=WEEKLY;BYDAY=MO,WE', 'ogni lunedì e mercoledì'],
     ['FREQ=MONTHLY;BYMONTHDAY=31', 'il 31 di ogni mese'],
   ])('%s → %s', (rule, label) => {
     expect(recurrenceTagLabel(rule)).toBe(label);

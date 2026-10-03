@@ -82,11 +82,12 @@ describe('contatore del giorno', () => {
 });
 
 describe('pulsante principale e dashboard vuota', () => {
-  test('il pulsante verde "Manda messaggio" ha il testo scuro', async () => {
+  // B6/T24: il pulsante ora si chiama "Programma" (prima "Manda messaggio").
+  test('il pulsante verde "Programma" ha il testo scuro', async () => {
     mockFetch([]);
     await renderPage();
-    await waitFor(() => expect(screen.getAllByRole('button', { name: /Manda messaggio/ }).length).toBeGreaterThan(0));
-    for (const btn of screen.getAllByRole('button', { name: /Manda messaggio/ })) {
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /Programma un messaggio/ }).length).toBeGreaterThan(0));
+    for (const btn of screen.getAllByRole('button', { name: /Programma un messaggio/ })) {
       expect(btn.className).toMatch(/text-\[#0B141A\]/);
       expect(btn.className).not.toMatch(/\btext-white\b/);
     }
@@ -95,7 +96,7 @@ describe('pulsante principale e dashboard vuota', () => {
   test('la dashboard vuota non parla di "clienti"', async () => {
     mockFetch([]);
     await renderPage();
-    await waitFor(() => expect(screen.getAllByRole('button', { name: /Manda messaggio/ }).length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /Programma un messaggio/ }).length).toBeGreaterThan(0));
     expect(document.body.textContent).not.toMatch(/client/i);
   });
 });

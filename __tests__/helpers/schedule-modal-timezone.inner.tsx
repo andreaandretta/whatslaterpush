@@ -43,7 +43,6 @@ test('weekly rule uses the Rome weekday (TU), not the phone weekday (MO), and ti
   expect(screen.getByRole('button', { name: /Modifica orario/ })).toHaveTextContent('00:30');
   expect(screen.getByRole('button', { name: /Invia/i })).toHaveTextContent('0:30');
 
-  fireEvent.click(screen.getByRole('button', { name: /Opzioni avanzate/ }));
   fireEvent.click(screen.getByRole('button', { name: /Ripeti/ }));
   const sheet = screen.getAllByRole('dialog').pop()!;
   fireEvent.click(within(sheet).getByText('Ogni martedì'));

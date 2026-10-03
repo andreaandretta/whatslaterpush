@@ -99,7 +99,7 @@ export function TemplateBottomSheet({ open, onClose, onSelect }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-sheet flex items-end justify-center"
+      className="wl-viewport z-sheet flex items-end justify-center"
       role="dialog"
       aria-modal="true"
       aria-label="Scegli un modello"
@@ -112,7 +112,7 @@ export function TemplateBottomSheet({ open, onClose, onSelect }: Props) {
         className="absolute inset-0 bg-black/50"
         onClick={onClose}
       />
-      <div className="relative w-full sm:max-w-sm bg-[#1F2C33] rounded-t-3xl pb-6 pt-3 max-h-[80vh] flex flex-col animate-slide-up">
+      <div className="relative w-full sm:max-w-sm bg-[#1F2C33] rounded-t-3xl pb-6 pt-3 max-h-[80%] flex flex-col animate-slide-up">
         <div aria-hidden="true" className="w-12 h-1 bg-gray-600 rounded-full mx-auto mb-3 shrink-0" />
 
         <div className="px-3 shrink-0">
@@ -143,7 +143,7 @@ export function TemplateBottomSheet({ open, onClose, onSelect }: Props) {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-2 mt-3">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-2 mt-3">
           {loading ? (
             <div className="text-gray-400 text-sm text-center py-8">Caricamento…</div>
           ) : tab === 'mine' ? (
@@ -286,7 +286,7 @@ export function SaveTemplateDialog({ open, defaultTitle, defaultEmoji, onCancel,
 
   return (
     <div
-      className="fixed inset-0 z-dialog flex items-center justify-center p-4"
+      className="wl-viewport z-dialog flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Salva modello"

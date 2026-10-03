@@ -27,12 +27,19 @@ export interface ScheduleDraft {
   /** Data e ora scelte, ISO. */
   scheduledAt: string;
   recurrence: RecurrenceValue;
+  /** Giorni scelti per "ogni settimana" (Date.getDay()); assente nelle bozze vecchie. */
+  weekDays?: number[];
   /** Riferimento al file già caricato su Storage (non il file). */
   media: MediaAttachment | null;
   savedAt: number;
 }
 
 const RECURRENCES: RecurrenceValue[] = ['none', 'daily', 'weekly', 'monthly'];
+
+function weekDaysOf(v: unknown): number[] {
+  if (!Array.isArray(v)) return [];
+  return Array.from(new Set(v.filter((d): d is number => Number.isInteger(d) && d >= 0 && d <= 6)));
+}
 
 function isMedia(m: unknown): m is MediaAttachment {
   if (!m || typeof m !== 'object') return false;
@@ -74,6 +81,7 @@ export function loadScheduleDraft(contactNumber: string, now = Date.now()): Sche
       message,
       scheduledAt: typeof d.scheduledAt === 'string' ? d.scheduledAt : '',
       recurrence: RECURRENCES.includes(d.recurrence as RecurrenceValue) ? (d.recurrence as RecurrenceValue) : 'none',
+      weekDays: weekDaysOf(d.weekDays),
       media,
       savedAt: d.savedAt,
     };

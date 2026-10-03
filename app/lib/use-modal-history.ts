@@ -19,12 +19,16 @@
  * Se nel frattempo il router ha navigato altrove, NON si torna indietro alla
  * cieca (si finirebbe sulla pagina precedente): la voce vecchia resta e basta.
  *
+ * Lo stesso conteggio degli strati blocca la pagina sotto e lega le finestre
+ * alla parte visibile dello schermo, sopra la tastiera (page-layer.ts).
+ *
  * Ogni voce porta la sua profondità (1 = primo strato). Tutto il resto si
  * ricava confrontando quella profondità con quanti strati sono aperti: regge
  * anche il passaggio ContactPicker → ScheduleModal (uno si chiude e l'altro si
  * apre nello stesso render: la voce viene riusata, niente back+push in gara).
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { setPageLayerOpen, __resetPageLayerForTests } from './page-layer';
 
 /** Ritorna false per restare aperto (es. conferma annullata): la voce si ripristina. */
 export type ModalBackHandler = () => boolean | void;
@@ -38,6 +42,26 @@ const stack: Layer[] = [];
 let pushed = 0;
 let trimTimer: ReturnType<typeof setTimeout> | null = null;
 let listening = false;
+
+// Chi vuole sapere se c'è una finestra aperta (la barra della dashboard si
+// nasconde) e il blocco della pagina sotto (page-layer.ts, rapporto 360 B1).
+const layerListeners = new Set<() => void>();
+let unlockTimer: ReturnType<typeof setTimeout> | null = null;
+
+function layersChanged() {
+  if (stack.length > 0) {
+    if (unlockTimer !== null) { clearTimeout(unlockTimer); unlockTimer = null; }
+    setPageLayerOpen(true);
+  } else if (unlockTimer === null && typeof window !== 'undefined') {
+    // Come per la cronologia: ContactPicker → ScheduleModal chiude e apre nello
+    // stesso render. Si sblocca la pagina solo se a fine giro non c'è niente.
+    unlockTimer = setTimeout(() => {
+      unlockTimer = null;
+      if (stack.length === 0) setPageLayerOpen(false);
+    }, 0);
+  }
+  layerListeners.forEach((l) => { try { l(); } catch { /* un ascoltatore rotto non ferma gli altri */ } });
+}
 
 function depthOf(state: unknown): number {
   const v = state && typeof state === 'object' ? (state as Record<string, unknown>)[STATE_KEY] : undefined;
@@ -74,9 +98,11 @@ function onPopState(e: PopStateEvent) {
       // rimetto la sua voce, così il prossimo Indietro lo richiude.
       stack.push(layer);
       pushEntry(stack.length);
+      layersChanged();
       return;
     }
   }
+  layersChanged();
 }
 
 // Dopo un ricaricamento con una modale aperta Next conserva il nostro segno
@@ -134,6 +160,7 @@ function openLayer(layer: Layer) {
   // la si riusa; l'eventuale eccesso sopra la toglie la pulizia.
   if (pushed >= depth) scheduleTrim();
   else pushEntry(depth);
+  layersChanged();
 }
 
 function releaseLayer(layer: Layer) {
@@ -141,11 +168,28 @@ function releaseLayer(layer: Layer) {
   if (i === -1) return; // già tolto dal popstate (chiusura via Indietro)
   stack.splice(i, 1);
   scheduleTrim();
+  layersChanged();
 }
 
 /** Strati aperti in questo momento: il service worker ricarica solo a zero. */
 export function openModalLayerCount(): number {
   return stack.length;
+}
+
+function subscribeLayers(listener: () => void): () => void {
+  layerListeners.add(listener);
+  return () => { layerListeners.delete(listener); };
+}
+const anyLayerOpen = () => stack.length > 0;
+const noLayerOnServer = () => false;
+
+/**
+ * true finché è aperta almeno una finestra o un foglio (registrati con
+ * useModalHistory). La dashboard ci nasconde la sua barra in alto: prima
+ * restava sopra la finestra del messaggio, con l'uscita toccabile (T9).
+ */
+export function useModalLayerOpen(): boolean {
+  return useSyncExternalStore(subscribeLayers, anyLayerOpen, noLayerOnServer);
 }
 
 /**
@@ -169,4 +213,7 @@ export function __resetModalHistoryForTests() {
   pushed = 0;
   if (trimTimer !== null) clearTimeout(trimTimer);
   trimTimer = null;
+  if (unlockTimer !== null) clearTimeout(unlockTimer);
+  unlockTimer = null;
+  __resetPageLayerForTests();
 }

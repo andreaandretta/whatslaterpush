@@ -6,7 +6,8 @@ import { isBillingEnabled, getEffectivePlan } from '../../../lib/billing';
 import { getPlanLimits } from '../../../lib/plans';
 import { canSend, recordSend, markBlocked } from '../../../lib/rate-limit';
 import { reconcileRecurringChain } from '../../../lib/recurrence';
-import { effectiveDailyLimit, nextRomeMorning, newRecipientsPerDay, romeDayStart, applyCourtesyWindow, isWithinCourtesyWindow } from '../../../lib/anti-ban';
+import { nextRomeMorning, newRecipientsPerDay, romeDayStart, applyCourtesyWindow, isWithinCourtesyWindow } from '../../../lib/anti-ban';
+import { dailyLimitNow, BIG_GROUP_WARMUP_SIZE } from '../../../lib/daily-limit';
 import { isKnownRecipient, countNewRecipientsSentToday } from '../../../lib/first-contact';
 import { getSuppression, suppressionsEnabled, suppressionReasonText } from '../../../lib/suppressions';
 import { computeTypingDelay, sendTypingPresence } from '../../../lib/typing-presence';
@@ -40,7 +41,6 @@ let resetStampWarned = false;
 const GROUPS_OFF_TEXT = 'In pausa: gli invii nei gruppi sono sospesi per ora. Tocca Riprendi più tardi.';
 const GROUP_FROM_SELF_CHAT_TEXT = 'In pausa: i messaggi nei gruppi si programmano solo dall\'app.';
 const BIG_GROUP_WARMUP_TEXT = 'Gruppo con più di 50 persone: nei primi giorni dal collegamento si aspetta — riprogrammato a domattina';
-const BIG_GROUP_WARMUP_SIZE = 50;
 const GROUP_CHECK_RETRY_TEXT = 'Controllo del gruppo non riuscito (WhatsApp non ha risposto): si riprova più tardi, per proteggere il tuo WhatsApp';
 const groupNotMemberText = (name: string) => 'In pausa: non risulti più nel gruppo «' + name + '» (o il gruppo non esiste più). Se ci rientri, tocca Riprendi.';
 const groupAdminsOnlyText = (name: string) => 'In pausa: nel gruppo «' + name + '» ora scrivono solo gli amministratori.';
@@ -564,10 +564,9 @@ export async function GET(req: NextRequest) {
         // parte col cap pieno del piano ma con 5/5/10/15/25/35 nei primi 6 giorni
         // (Baileys #1983: 15-20 numeri nuovi al giorno da un'istanza fresca →
         // restrizioni progressive e ban). WARMUP_RAMP_DISABLED=true la spegne.
-        const dailyLimit = process.env.WARMUP_RAMP_DISABLED === 'true'
-          ? planLimits.dailyLimit
-          : effectiveDailyLimit(planLimits.dailyLimit, msg.user_instances.paired_at, new Date());
-        const inWarmup = dailyLimit < planLimits.dailyLimit;
+        // Stessa funzione che la GET /api/messages usa per mostrare il limite
+        // di oggi in dashboard (app/lib/daily-limit.ts, rapporto 360 B3).
+        const { limit: dailyLimit, inWarmup } = dailyLimitNow(planLimits.dailyLimit, msg.user_instances.paired_at, new Date());
         const sentToday = msg.user_instances.messages_sent_today || 0;
         if (sentToday >= dailyLimit) {
           console.log('CRON: DAILY LIMIT reached for ' + ownerPhone + ' (' + sentToday + '/' + dailyLimit + ' plan=' + plan + (inWarmup ? ' warmup' : '') + ')');

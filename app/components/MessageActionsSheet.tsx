@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Copy, Pencil, Pause, Play, Trash2, RotateCcw, X, Clock } from 'lucide-react';
 import { snoozeOptions } from '../lib/schedule-quick';
+import { useModalHistory } from '../lib/use-modal-history';
 
 export interface MessageActions {
   onDuplicate: () => void;
@@ -38,12 +39,11 @@ export function MessageActionsSheet({
 }: Props) {
   const sheetRef = useRef<HTMLDivElement>(null);
 
-  // Lock scroll while open
-  useEffect(() => {
-    if (open) document.body.style.overflow = 'hidden';
-    else document.body.style.overflow = '';
-    return () => { document.body.style.overflow = ''; };
-  }, [open]);
+  // Indietro (swipe dal bordo, tasto di Android) chiude solo il foglio: prima
+  // usciva dalla pagina e la dashboard restava grigia e vuota sotto il foglio
+  // (rapporto 360, T13). Lo stesso strato blocca anche la pagina sotto
+  // (page-layer.ts): il vecchio body.style.overflow qui non serve più.
+  useModalHistory(open, onClose);
 
   // Esc to close
   useEffect(() => {
@@ -74,7 +74,8 @@ export function MessageActionsSheet({
 
   return (
     <div
-      className="fixed inset-0 z-sheet flex items-end sm:items-center justify-center"
+      className="wl-viewport z-sheet flex items-end sm:items-center justify-center"
+      data-testid="message-actions-sheet"
       onClick={onClose}
     >
       {/* Backdrop */}
@@ -84,7 +85,7 @@ export function MessageActionsSheet({
       <div
         ref={sheetRef}
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full sm:max-w-sm sm:mx-4 sm:rounded-2xl bg-[#1F2C33] border-t sm:border border-[#2A3942] rounded-t-2xl pb-safe shadow-2xl animate-slide-up"
+        className="relative w-full max-h-full overflow-y-auto overscroll-contain sm:max-w-sm sm:mx-4 sm:rounded-2xl bg-[#1F2C33] border-t sm:border border-[#2A3942] rounded-t-2xl pb-safe shadow-2xl animate-slide-up"
       >
         {/* Drag handle (mobile only) */}
         <div className="sm:hidden flex justify-center pt-3 pb-1">
@@ -94,15 +95,18 @@ export function MessageActionsSheet({
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-3 sm:pt-5 pb-2">
           <div className="min-w-0">
-            <div className="text-[11px] uppercase tracking-wider text-gray-500 font-semibold">Messaggio</div>
+            {/* 12px #8696A0 su #1F2C33 = 4,7:1 (prima 11px gray-500, 2,96:1). */}
+            <div className="text-xs uppercase tracking-wider text-[#8696A0] font-semibold">Messaggio</div>
             <div className="text-white font-semibold truncate">{title}</div>
           </div>
+          {/* X da 44×44 (rapporto 360, T33/T14). */}
           <button
+            type="button"
             onClick={onClose}
             aria-label="Chiudi"
-            className="text-gray-500 hover:text-gray-300 p-2 -m-2"
+            className="shrink-0 w-11 h-11 -mr-2.5 inline-flex items-center justify-center rounded-full text-[#AEBAC1] hover:text-white hover:bg-white/5"
           >
-            <X className="w-5 h-5" />
+            <X className="w-5 h-5" aria-hidden="true" />
           </button>
         </div>
 
@@ -116,7 +120,7 @@ export function MessageActionsSheet({
           const opts = snoozeOptions(scheduledAt ? new Date(scheduledAt) : null, new Date());
           return (
             <div className="px-5 pt-1 pb-2">
-              <div className="flex items-center gap-2 text-gray-500 text-[11px] uppercase tracking-wider font-semibold mb-2">
+              <div className="flex items-center gap-2 text-[#8696A0] text-xs uppercase tracking-wider font-semibold mb-2">
                 <Clock className="w-3.5 h-3.5" /> Posticipa
               </div>
               <div className="flex gap-2 flex-wrap">
@@ -155,9 +159,11 @@ export function MessageActionsSheet({
           )}
         </div>
 
-        {/* 12px #8696A0 su #1F2C33: 4,7:1 (prima 11px gray-500, 2,96:1). */}
+        {/* 12px #8696A0 su #1F2C33: 4,7:1 (prima 11px gray-500, 2,96:1).
+            Basta un tocco sulla riga (rapporto 360, T14): prima serviva la
+            pressione lunga, che resta ma non va più insegnata. */}
         <div className="px-5 pb-5 pt-2 text-xs text-[#8696A0]">
-          Tieni premuto un messaggio per riaprire questo menu.
+          Tocca un messaggio della lista per aprire questo menu.
         </div>
       </div>
 

@@ -1,18 +1,19 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, ArrowLeft, Calendar as CalendarIcon, UserCheck, Bell, ChevronRight, ChevronDown, Settings, Repeat, FileText, Paperclip } from 'lucide-react';
+import { X, ArrowLeft, Calendar as CalendarIcon, UserCheck, Bell, ChevronRight, Repeat, FileText, Paperclip } from 'lucide-react';
 import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { DarkCalendarDialog } from './schedule/DarkCalendarDialog';
 import { AnalogClockDialog } from './schedule/AnalogClockDialog';
 import { ReminderBottomSheet, ReminderValue } from './schedule/ReminderBottomSheet';
-import { RecurrenceBottomSheet, RecurrenceValue, buildRRule, recurrenceLabel } from './schedule/RecurrenceBottomSheet';
+import { RecurrenceBottomSheet, RecurrenceValue, buildRRule, recurrenceLabel, weeklyDays, firstWeeklySend } from './schedule/RecurrenceBottomSheet';
 import { TemplateBottomSheet, TemplatePick } from './schedule/TemplateBottomSheet';
 import { MediaPicker, MediaAttachmentChip, MediaAttachment } from './schedule/MediaPicker';
 import { SendFab } from './schedule/SendFab';
 import { applyTemplateVariables, hasTemplateVariables, firstNameOf } from '../app/lib/template-variables';
-import { formatSendCta, quickDateChips, isSameDay, courtesyHint, proposedSendTime, sendBlockReason, recurrenceTagLabel } from '../app/lib/schedule-quick';
+import { formatSendCta, quickDateChips, isSameDay, courtesyHint, proposedSendTime, sendBlockReason, recurrenceTagLabel, weekdaysPhrase, mondayFirst } from '../app/lib/schedule-quick';
+import { parseRule } from '../app/lib/recurrence';
 import { apiErrorText } from '../app/lib/api-error-text';
 import { romeWallClock, instantFromRomeWallClock, browserIsOutsideRome } from '../app/lib/rome-time';
 import { unfilledPlaceholders } from '../app/lib/placeholders';
@@ -20,6 +21,7 @@ import { useModalHistory } from '../app/lib/use-modal-history';
 import { useScheduleDraft, ScheduleDraftBanner } from './schedule/ScheduleDraftBanner';
 import { isGroupJid, realPersonName, formatPhoneForDisplay } from '../app/lib/jid';
 import { getGroupsSnapshot } from '../app/lib/contacts-client-cache';
+import { dayFullHint, bigGroupWarmupHint, type TodayLimit, type QueueRow } from '../app/lib/daily-limit';
 import type { PickedContact } from './ContactPickerModal';
 
 // Feature flag: "Richiedi approvazione" e "Promemoria" sono raccolti dalla UI
@@ -52,6 +54,11 @@ interface ScheduleModalProps {
   /** Edit mode aperto da "Riattiva" su un orario passato: al salvataggio il
    *  messaggio torna anche in coda (status pending), non resta in pausa. */
   resumeOnSave?: boolean;
+  /** Limite di oggi dalla GET /api/messages (rampa dei primi giorni, piano,
+   *  invii già fatti). null = sconosciuto: nessun avviso sul giorno pieno. */
+  todayLimit?: TodayLimit | null;
+  /** La coda dell'utente (le righe della dashboard), per contare il giorno scelto. */
+  queue?: QueueRow[];
 }
 
 const REMINDER_LABELS: Record<ReminderValue, string> = {
@@ -99,14 +106,24 @@ function combineDateTime(date: Date, time: string): Date {
   return d;
 }
 
-// Regola salvata → valore del selettore. null = nessuna ripetizione; 'unknown'
-// = una regola che la modale non sa rappresentare (va lasciata com'è).
-function recurrenceFromRule(rule: string | null | undefined, at: Date | null): RecurrenceValue | 'unknown' {
-  if (!rule) return 'none';
+const BYDAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+
+// Regola salvata → valore del selettore (+ i giorni, se settimanale con più
+// giorni). 'unknown' = una regola che la modale non sa rappresentare (va
+// lasciata com'è).
+function recurrenceFromRule(rule: string | null | undefined, at: Date | null): { value: RecurrenceValue; days: number[] } | 'unknown' {
+  if (!rule) return { value: 'none', days: [] };
   // Riconosciuta solo se la modale la ricostruirebbe IDENTICA (niente INTERVAL,
-  // BYDAY multipli...): altrimenti 'unknown' e il PATCH non la tocca.
+  // un giorno solo diverso da quello della data...): altrimenti 'unknown' e il
+  // PATCH non la tocca.
   const candidates: RecurrenceValue[] = ['daily', 'weekly', 'monthly'];
-  for (const v of candidates) if (at && buildRRule(v, at) === rule) return v;
+  for (const v of candidates) if (at && buildRRule(v, at) === rule) return { value: v, days: [] };
+  // Più giorni insieme (rapporto 360 B2): "ogni lunedì e giovedì".
+  const p = parseRule(rule);
+  if (at && p?.freq === 'WEEKLY' && p.byDay && p.byDay.length >= 2) {
+    const days = p.byDay.map((code) => BYDAY_CODES.indexOf(code));
+    if (buildRRule('weekly', at, days) === rule) return { value: 'weekly', days };
+  }
   return 'unknown';
 }
 
@@ -132,13 +149,16 @@ function sameMinute(a: Date, iso: string | null | undefined): boolean {
   return Math.floor(a.getTime() / 60_000) === Math.floor(b.getTime() / 60_000);
 }
 
-export default function ScheduleModal({ open, onClose, onBack, contact, onScheduled, initialMessage = '', editMsgId = null, initialMedia = null, initialScheduledAt = null, initialRecurrenceRule = null, mediaUnavailable = false, connected = true, resumeOnSave = false }: ScheduleModalProps) {
+export default function ScheduleModal({ open, onClose, onBack, contact, onScheduled, initialMessage = '', editMsgId = null, initialMedia = null, initialScheduledAt = null, initialRecurrenceRule = null, mediaUnavailable = false, connected = true, resumeOnSave = false, todayLimit = null, queue = [] }: ScheduleModalProps) {
   const init = defaultDateTime();
   const [selectedDate, setSelectedDate] = useState<Date>(init.date);
   const [selectedTime, setSelectedTime] = useState<string>(init.time);
   const [message, setMessage] = useState(initialMessage);
   const [reminder, setReminder] = useState<ReminderValue>('never');
   const [recurrence, setRecurrence] = useState<RecurrenceValue>('none');
+  // Giorni scelti per "ogni settimana" (Date.getDay()). Vuoto o uno solo = il
+  // giorno della data, come prima (weeklyDays in RecurrenceBottomSheet).
+  const [weekDays, setWeekDays] = useState<number[]>([]);
   const [approval, setApproval] = useState(false);
 
   // Template selection state. selectedSeedId is set when the user picks a seed
@@ -162,7 +182,6 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const [templateSheetOpen, setTemplateSheetOpen] = useState(false);
   const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
   const [media, setMedia] = useState<MediaAttachment | null>(null);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   // La ripetizione esistente si rimanda al PATCH solo se l'utente la tocca o se
   // cambia davvero: prima ogni modifica mandava recurrence_rule=null e un
   // promemoria settimanale smetteva di ripetersi senza che nessuno lo chiedesse.
@@ -179,7 +198,8 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       setSelectedTime(d.time);
       setMessage(initialMessage);
       setReminder('never');
-      setRecurrence(initialRecurrence === 'unknown' ? 'none' : initialRecurrence);
+      setRecurrence(initialRecurrence === 'unknown' ? 'none' : initialRecurrence.value);
+      setWeekDays(initialRecurrence === 'unknown' ? [] : initialRecurrence.days);
       setRecurrenceTouched(false);
       setApproval(false);
       setSelectedSeedId(null);
@@ -196,7 +216,6 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
       // Modifica E Duplica: l'allegato del messaggio d'origine resta. Prima
       // Duplica lo perdeva in silenzio (partiva solo la didascalia).
       setMedia(initialMedia);
-      setAdvancedOpen(false);
     }
   }, [open]);
 
@@ -204,7 +223,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   useModalHistory(open && !!contact, onClose);
   useModalHistory(open && (calendarOpen || clockOpen || reminderSheetOpen || recurrenceSheetOpen || templateSheetOpen), () => { setCalendarOpen(false); setClockOpen(false); setReminderSheetOpen(false); setRecurrenceSheetOpen(false); setTemplateSheetOpen(false); });
   // Bozza in sessionStorage: sopravvive a un Indietro, a un reload o alla chiusura della scheda.
-  const draft = useScheduleDraft({ enabled: open && !editMsgId && !!contact, contact, initialMessage, initialMedia, values: { message, date: selectedDate, time: selectedTime, recurrence, media }, apply: (d) => { setMessage(d.message); setMedia(d.media); setRecurrence(d.recurrence); if (d.when) { setSelectedDate(d.when.date); setSelectedTime(d.when.time); } } });
+  const draft = useScheduleDraft({ enabled: open && !editMsgId && !!contact, contact, initialMessage, initialMedia, values: { message, date: selectedDate, time: selectedTime, recurrence, weekDays, media }, apply: (d) => { setMessage(d.message); setMedia(d.media); setRecurrence(d.recurrence); setWeekDays(d.weekDays); if (d.when) { setSelectedDate(d.when.date); setSelectedTime(d.when.time); } } });
 
   if (!open || !contact) return null;
 
@@ -252,23 +271,42 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
   const seriesContinues = !!editMsgId && !!initialRecurrenceRule
     && (recurrence !== 'none' || (initialRecurrence === 'unknown' && !recurrenceTouched));
   const seriesLabel = recurrence !== 'none'
-    ? recurrenceLabel(recurrence, wallDate).toLowerCase()
+    ? recurrenceLabel(recurrence, wallDate, weekDays).toLowerCase()
     : recurrenceTagLabel(initialRecurrenceRule);
   const seriesMediaChanged = seriesContinues && !!media && mediaChanged(initialMedia, media);
 
-  const hasReminder = reminder !== 'never';
+  // Limiti dei primi giorni (rapporto 360 B3): il giorno scelto è già pieno, o
+  // il gruppo è troppo grande per i primi giorni → lo si dice PRIMA, con il
+  // giorno in cui partirà davvero. Stessi conti del cron (app/lib/daily-limit.ts).
+  const limitsNow = new Date();
+  const dayFullText = isValidDate ? dayFullHint(todayLimit, queue, scheduledDate, limitsNow, editMsgId) : null;
+  const bigGroupText = isGroup && isValidDate ? bigGroupWarmupHint(todayLimit, groupSize, scheduledDate, limitsNow) : null;
+
+  // Riga "Ripeti" sotto data e ora (rapporto 360 B2/T5): prima era dentro
+  // "Opzioni avanzate", chiusa, e chi programma l'allenamento non la trovava.
   const hasRecurrence = recurrence !== 'none';
-  const advancedSummary = !ADVANCED_APPROVAL_REMINDER_ENABLED
-    ? (hasRecurrence
-        ? `Ripeti: ${recurrenceLabel(recurrence, wallDate).toLowerCase()}`
-        : 'Nessuna notifica · invio automatico')
-    : (!approval && !hasReminder && !hasRecurrence
-        ? 'Nessuna notifica · invio automatico'
-        : [
-            approval ? 'Approvazione richiesta' : null,
-            hasReminder ? `Promemoria: ${REMINDER_LABELS[reminder]}` : null,
-            hasRecurrence ? `Ripeti: ${recurrenceLabel(recurrence, wallDate).toLowerCase()}` : null,
-          ].filter(Boolean).join(' · '));
+  // Modifica di una serie con una regola che la modale non sa riscrivere (tipico:
+  // "ogni venerdì 22:00" spostato dal cron a sabato 08:03): la regola resta com'è
+  // e la riga la dice, invece di un falso "Non si ripete".
+  const keepsStoredRule = !!editMsgId && !!initialRecurrenceRule && initialRecurrence === 'unknown' && !recurrenceTouched;
+  const storedRuleLabel = keepsStoredRule ? recurrenceTagLabel(initialRecurrenceRule) : null;
+  const recurrenceValueLabel = hasRecurrence
+    ? recurrenceLabel(recurrence, wallDate, weekDays)
+    : keepsStoredRule
+      ? (storedRuleLabel ? storedRuleLabel.charAt(0).toUpperCase() + storedRuleLabel.slice(1) : 'Si ripete')
+      : 'Non si ripete';
+  // Più giorni scelti ma la data cade in un altro giorno (data cambiata dopo, o
+  // riga spostata dal cron): quella data parte comunque, poi la serie segue i
+  // giorni della regola. Lo si dice.
+  const storedRule = keepsStoredRule ? parseRule(initialRecurrenceRule!) : null;
+  const weeklySet = recurrence === 'weekly'
+    ? weeklyDays(wallDate, weekDays)
+    : storedRule?.freq === 'WEEKLY' && storedRule.byDay
+      ? storedRule.byDay.map((code) => BYDAY_CODES.indexOf(code))
+      : [];
+  const offPatternNote = (weeklySet.length >= 2 || storedRule) && weeklySet.length > 0 && !weeklySet.includes(wallDate.getDay())
+    ? `${editMsgId ? 'Questa volta' : 'Primo invio'} ${dateLabel}, poi ${weekdaysPhrase(weeklySet)}`
+    : null;
 
   function pickTemplate(pick: TemplatePick) {
     setMessage(pick.body);
@@ -305,11 +343,43 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
     }
   }
 
+  // Stessa scelta di quella a schermo? Si confrontano valore e giorni, non la
+  // regola: un "ogni martedì" scelto su una data di sabato darebbe la stessa
+  // regola di "ogni sabato" (un giorno solo segue la data).
+  function sameRecurrenceChoice(v: RecurrenceValue, days: number[]): boolean {
+    if (v !== recurrence) return false;
+    if (v !== 'weekly') return true;
+    return mondayFirst(days).join(',') === weeklyDays(wallDate, weekDays).join(',');
+  }
+
   function recurrenceChanged(): boolean {
     if (recurrenceTouched) return true;
     if (initialRecurrence === 'unknown') return false;
-    // Stessa scelta ma data spostata: BYDAY/BYMONTHDAY seguono la nuova data.
-    return buildRRule(recurrence, wallDate) !== (initialRecurrenceRule || null);
+    // Stessa scelta ma data spostata: BYDAY/BYMONTHDAY seguono la nuova data
+    // (un giorno solo; più giorni scelti restano quelli).
+    return buildRRule(recurrence, wallDate, weekDays) !== (initialRecurrenceRule || null);
+  }
+
+  // Scelta confermata nel foglio Ripeti. Settimanale con giorni che non
+  // comprendono quello della data: la data va al primo giorno scelto, stessa
+  // ora (il foglio lo mostra già come "Primo invio").
+  function applyRecurrence(v: RecurrenceValue, days: number[]) {
+    // Confermata la stessa scelta di prima (stessa ripetizione, stessi giorni):
+    // non cambia niente. Prima la data saltava al primo giorno scelto e, in
+    // modifica, il PATCH riscriveva l'ancora: una volta spostata dal cron a
+    // mar 08:03 di un "lunedì e giovedì 18:00" finiva a gio 08:03 e tutta la
+    // serie passava alle 08:03; una data scelta a mano ("Questa volta dom 4
+    // ott") veniva annullata. Eccezione: serie con una regola che la modale non
+    // sa riscrivere (keepsStoredRule), dove il foglio mostra "Non ripetere" e
+    // confermarlo resta "ferma la serie", come prima.
+    if (!keepsStoredRule && sameRecurrenceChoice(v, days)) return;
+    setRecurrence(v);
+    setWeekDays(v === 'weekly' ? days : []);
+    setRecurrenceTouched(true);
+    if (v === 'weekly' && days.length > 0) {
+      const first = firstWeeklySend(wallDate, days);
+      if (!isSameDay(first, wallDate)) setSelectedDate(first);
+    }
   }
 
   async function handleSubmit() {
@@ -337,7 +407,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
             id: editMsgId,
             message: message.trim(),
             ...(timeDirty || recurrenceDirty ? { scheduled_at: scheduledDate.toISOString() } : {}),
-            ...(recurrenceDirty ? { recurrence_rule: buildRRule(recurrence, wallDate) ?? null } : {}),
+            ...(recurrenceDirty ? { recurrence_rule: buildRRule(recurrence, wallDate, weekDays) ?? null } : {}),
             // Aperta da "Riattiva" su un orario passato: il nuovo orario rimette
             // anche in coda (il server lo accetta perché arriva con scheduled_at).
             ...(resumeOnSave ? { status: 'pending' } : {}),
@@ -360,7 +430,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
             ...(contact.manualEntry === true && !isGroup ? { manual_entry: true } : {}),
             message: message.trim(),
             scheduled_at: scheduledDate.toISOString(),
-            recurrence_rule: buildRRule(recurrence, wallDate),
+            recurrence_rule: buildRRule(recurrence, wallDate, weekDays),
             ...(media ? {
               media_type: media.media_type,
               media_url: media.media_url,
@@ -396,30 +466,41 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
     }
   }
 
+  // Finestra legata alla parte visibile dello schermo (wl-viewport, rapporto 360
+  // B1/T2): con la tastiera aperta la testata resta in cima e "Invia" subito
+  // sopra la tastiera. Prima era `inset-0`, alta quanto la pagina: la testata
+  // usciva in alto e il pulsante finiva sotto la barra delle frecce.
+  // Colonna: testata fissa → parte che scorre → avvisi e Invia, fuori dallo scroll.
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center"
+      className="wl-viewport z-modal bg-black/60 flex items-center justify-center"
       role="dialog"
       aria-modal="true"
+      data-testid="schedule-modal"
       onClick={onClose}
     >
       <div
-        className="relative bg-text-primary w-full h-full sm:w-[400px] sm:h-[700px] sm:max-h-[90vh] sm:rounded-3xl sm:shadow-2xl overflow-hidden flex flex-col"
+        className="relative bg-text-primary w-full h-full sm:w-[400px] sm:h-[700px] sm:max-h-[90%] sm:rounded-3xl sm:shadow-2xl overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 px-3 h-14 bg-[#202C33] shrink-0">
-          <button
-            onClick={onBack}
-            aria-label="Indietro"
-            className="p-2 rounded-full hover:bg-white/10 text-white focus:outline-none focus:ring-2 focus:ring-primary/30"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div className="text-white font-medium text-base">{editMsgId ? 'Modifica messaggio' : 'Programma un messaggio'}</div>
+        <div className="shrink-0 bg-[#202C33] pt-[env(safe-area-inset-top)]" data-testid="schedule-modal-header">
+          <div className="flex items-center gap-3 px-3 h-14">
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label="Indietro"
+              className="w-11 h-11 -ml-1 inline-flex items-center justify-center rounded-full hover:bg-white/10 text-white focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <ArrowLeft className="w-5 h-5" aria-hidden="true" />
+            </button>
+            <div className="text-white font-medium text-base">{editMsgId ? 'Modifica messaggio' : 'Programma un messaggio'}</div>
+          </div>
         </div>
 
-        {/* pb-6: il CTA non è più un FAB sovrapposto ma una barra in-flow */}
-        <div className="flex-1 overflow-y-auto pb-6">
+        {/* pb-6: il CTA non è più un FAB sovrapposto ma una barra in-flow.
+            overscroll-contain: arrivati in cima o in fondo, il trascinamento non
+            passa alla pagina sotto (che ricaricava e chiudeva la finestra, M8). */}
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pb-6" data-testid="schedule-modal-scroll">
           <div className="flex items-start justify-between px-4 pt-5 pb-3">
             <div className="min-w-0">
               <div className="text-white font-bold text-xl">
@@ -431,12 +512,14 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                 </div>
               )}
             </div>
+            {/* X da 44×44 (prima 28px, rapporto 360 T33). */}
             <button
+              type="button"
               onClick={onClose}
               aria-label="Chiudi"
-              className="p-1 rounded-full hover:bg-white/10 text-white -mr-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="shrink-0 w-11 h-11 -mr-2.5 -mt-1.5 inline-flex items-center justify-center rounded-full hover:bg-white/10 text-white focus:outline-none focus:ring-2 focus:ring-primary/30"
             >
-              <X className="w-5 h-5" />
+              <X className="w-6 h-6" aria-hidden="true" />
             </button>
           </div>
 
@@ -450,7 +533,9 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
 
           {/* Chip data rapide (pattern beta nativa WhatsApp): un tap imposta la
               data mantenendo l'orario; il calendario resta per tutto il resto. */}
-          <div className="flex items-center gap-2 px-4 pt-3 flex-wrap">
+          {/* Aree di tocco alte 44px (prima 34px): il pulsante è alto 44, il
+              chip a vista dentro resta della misura di prima (come Allega). */}
+          <div className="flex items-center gap-x-2 px-4 pt-1.5 flex-wrap" data-testid="quick-date-chips">
             {quickDateChips(romeNow).map((chip) => {
               const active = isSameDay(selectedDate, chip.date);
               return (
@@ -458,22 +543,31 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                   key={chip.label}
                   type="button"
                   onClick={() => setSelectedDate(chip.date)}
-                  className={`text-xs px-3 py-1.5 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 ${
-                    active
-                      ? 'bg-primary/15 text-primary border border-primary'
-                      : 'bg-[#1F2C33] text-gray-400 border border-transparent hover:text-gray-200'
-                  }`}
+                  aria-pressed={active}
+                  className="min-h-[44px] flex items-center rounded-full focus:outline-none focus:ring-2 focus:ring-primary/30"
                 >
-                  {chip.label}
+                  {/* Scelta attiva bianca su grigio, non verde: il verde è per le
+                      azioni (rapporto 360, T35). Bianco su bianco 12% = 12,3:1. */}
+                  <span
+                    className={`text-[13px] px-3 py-1.5 rounded-full transition-colors ${
+                      active
+                        ? 'bg-white/[0.12] text-white font-semibold border border-[#8696A0]'
+                        : 'bg-[#1F2C33] text-gray-400 border border-transparent hover:text-gray-200'
+                    }`}
+                  >
+                    {chip.label}
+                  </span>
                 </button>
               );
             })}
             <button
               type="button"
               onClick={() => setCalendarOpen(true)}
-              className="text-xs px-3 py-1.5 rounded-full bg-[#1F2C33] text-gray-400 border border-transparent hover:text-gray-200 inline-flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="min-h-[44px] flex items-center rounded-full focus:outline-none focus:ring-2 focus:ring-primary/30"
             >
-              <CalendarIcon className="w-3.5 h-3.5" /> Altra data
+              <span className="text-[13px] px-3 py-1.5 rounded-full bg-[#1F2C33] text-gray-400 border border-transparent hover:text-gray-200 inline-flex items-center gap-1">
+                <CalendarIcon className="w-3.5 h-3.5" aria-hidden="true" /> Altra data
+              </span>
             </button>
           </div>
 
@@ -502,90 +596,70 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           {/* Telefono in un altro fuso: data e ora qui sopra sono quelle italiane
               (come il server calcola ripetizioni e fascia 08-21). Lo si dice. */}
           {outsideRome && (
-            <div className="px-4 -mt-1 pb-1 text-[11px] text-gray-500" data-testid="rome-time-note">
+            <div className="px-4 -mt-1 pb-1 text-[13px] text-[#AEBAC1]" data-testid="rome-time-note">
               Orari in ora italiana
             </div>
           )}
 
           <button
             type="button"
-            onClick={() => setAdvancedOpen((v) => !v)}
-            aria-expanded={advancedOpen}
-            aria-controls="advanced-options"
+            onClick={() => setRecurrenceSheetOpen(true)}
+            aria-haspopup="dialog"
+            data-testid="recurrence-row"
             className="w-full flex items-center gap-4 px-4 py-3 hover:bg-white/5 text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
           >
-            <Settings className="w-5 h-5 text-gray-400 shrink-0" />
+            <Repeat className="w-5 h-5 text-gray-400 shrink-0" />
+            {/* Due righe, non "Ripeti … valore" affiancati: con "Ogni lunedì,
+                mercoledì e venerdì" la scritta Ripeti si schiacciava a 0px e
+                finiva sotto il valore (revisione B2). Valore e nota hanno tutta
+                la larghezza e vanno a capo. */}
             <div className="flex-1 min-w-0">
-              <div className="text-white text-base">Opzioni avanzate</div>
-              <div className="text-gray-400 text-sm mt-0.5 truncate">{advancedSummary}</div>
+              <div className="text-white text-base">Ripeti</div>
+              {/* Valore in grigio chiaro, non verde (T35): #D1D5DB su #111B21 = 11,9:1. */}
+              <div className={`text-[15px] leading-snug mt-0.5 ${hasRecurrence || keepsStoredRule ? 'text-[#D1D5DB]' : 'text-gray-400'}`} data-testid="recurrence-value">{recurrenceValueLabel}</div>
+              {offPatternNote && (
+                <div className="text-gray-400 text-sm mt-0.5" data-testid="recurrence-first-send">{offPatternNote}</div>
+              )}
             </div>
-            <ChevronDown
-              className={`w-5 h-5 text-gray-500 shrink-0 transition-transform ${advancedOpen ? 'rotate-180' : ''}`}
-            />
+            <ChevronRight className="w-5 h-5 text-gray-500 shrink-0" />
           </button>
 
-          {advancedOpen && (
-            <div id="advanced-options" className="border-t border-[#2A3942] mx-4 mt-1">
-              {ADVANCED_APPROVAL_REMINDER_ENABLED && (
-                <>
-                  <div className="flex items-start gap-4 py-4">
-                    <UserCheck className="w-5 h-5 text-gray-400 shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                      <div className="text-white text-base">Richiedi approvazione per l&apos;invio</div>
-                      <div className="text-gray-400 text-sm mt-0.5">
-                        Prima dell&apos;invio riceverai una notifica di conferma
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={approval}
-                      aria-label="Richiedi approvazione"
-                      onClick={() => setApproval((v) => !v)}
-                      className={`relative w-11 h-6 rounded-full transition-colors shrink-0 focus:outline-none focus:ring-2 focus:ring-primary/30 ${
-                        approval ? 'bg-primary' : 'bg-gray-600'
-                      }`}
-                    >
-                      <span
-                        className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
-                          approval ? 'translate-x-5' : ''
-                        }`}
-                      />
-                    </button>
+          {ADVANCED_APPROVAL_REMINDER_ENABLED && (
+            <div className="border-t border-[#2A3942] mx-4 mt-1">
+              <div className="flex items-start gap-4 py-4">
+                <UserCheck className="w-5 h-5 text-gray-400 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <div className="text-white text-base">Richiedi approvazione per l&apos;invio</div>
+                  <div className="text-gray-400 text-sm mt-0.5">
+                    Prima dell&apos;invio riceverai una notifica di conferma
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setReminderSheetOpen(true)}
-                    className="w-full flex items-center gap-4 py-3 hover:bg-white/5 text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  >
-                    <Bell className="w-5 h-5 text-gray-400 shrink-0" />
-                    <div className="flex-1 text-white text-base">Promemoria</div>
-                    <div className="text-primary text-base">{REMINDER_LABELS[reminder]}</div>
-                    <ChevronRight className="w-5 h-5 text-gray-500" />
-                  </button>
-                </>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setRecurrenceSheetOpen(true)}
-                className="w-full flex items-center gap-4 py-3 hover:bg-white/5 text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                <Repeat className="w-5 h-5 text-gray-400 shrink-0" />
-                <div className="flex-1 text-white text-base">Ripeti</div>
-                <div className="text-primary text-base">{recurrenceLabel(recurrence, wallDate)}</div>
-                <ChevronRight className="w-5 h-5 text-gray-500" />
-              </button>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={approval}
+                  aria-label="Richiedi approvazione"
+                  onClick={() => setApproval((v) => !v)}
+                  className={`relative w-11 h-6 rounded-full transition-colors shrink-0 focus:outline-none focus:ring-2 focus:ring-primary/30 ${
+                    approval ? 'bg-primary' : 'bg-gray-600'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                      approval ? 'translate-x-5' : ''
+                    }`}
+                  />
+                </button>
+              </div>
 
               <button
                 type="button"
-                onClick={() => setTemplateSheetOpen(true)}
+                onClick={() => setReminderSheetOpen(true)}
                 className="w-full flex items-center gap-4 py-3 hover:bg-white/5 text-left focus:outline-none focus:ring-2 focus:ring-primary/30"
               >
-                <FileText className="w-5 h-5 text-gray-400 shrink-0" />
-                <div className="flex-1 text-white text-base">Modello</div>
-                <div className="text-primary text-base">{selectedSeedId ? 'Modificato' : 'Scegli…'}</div>
+                <Bell className="w-5 h-5 text-gray-400 shrink-0" />
+                <div className="flex-1 text-white text-base">Promemoria</div>
+                <div className="text-[#D1D5DB] text-base">{REMINDER_LABELS[reminder]}</div>
                 <ChevronRight className="w-5 h-5 text-gray-500" />
               </button>
             </div>
@@ -604,50 +678,64 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
 
           <ScheduleDraftBanner draft={draft} />
 
-          <div className="px-4 pt-4">
-            {/* Campo stile WhatsApp: la graffetta vive DENTRO il bordo del campo,
-                sempre a vista (prima era una riga sepolta in "Opzioni avanzate").
-                In modifica si può togliere o sostituire (PATCH con `media`). */}
-            <div className="flex items-end bg-[#1F2C33] rounded-xl pl-1 focus-within:ring-2 focus-within:ring-primary/30">
-              {(
-                <button
-                  type="button"
-                  onClick={() => setMediaPickerOpen(true)}
-                  aria-label="Allega"
-                  aria-haspopup="dialog"
-                  title="Allega foto, video, documento o audio"
-                  className={`relative shrink-0 w-11 h-11 mb-0.5 rounded-full inline-flex items-center justify-center hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-primary/30 ${
-                    media ? 'text-primary' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <Paperclip className="w-5 h-5" />
-                  {media && (
-                    <span aria-hidden="true" className="absolute top-2 right-2 w-2 h-2 rounded-full bg-primary" />
-                  )}
-                </button>
-              )}
+          <div className="px-4 pt-2">
+            {/* "Usa un modello" sopra il campo (rapporto 360 T5): prima era la
+                riga "Modello" dentro "Opzioni avanzate". */}
+            <button
+              type="button"
+              onClick={() => setTemplateSheetOpen(true)}
+              aria-haspopup="dialog"
+              className="min-h-[44px] -ml-1 px-1 inline-flex items-center gap-1.5 text-sm text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary/30 rounded"
+            >
+              <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
+              {selectedSeedId ? 'Cambia modello' : 'Usa un modello'}
+            </button>
+            {/* Testo a tutta larghezza (rapporto 360, T26): prima la graffetta
+                occupava una colonna a sinistra e il testo partiva spostato di
+                44px. La graffetta è nella riga sotto, sempre a vista; in modifica
+                si può togliere o sostituire l'allegato (PATCH con `media`). */}
+            <div className="bg-[#1F2C33] rounded-xl focus-within:ring-2 focus-within:ring-primary/30">
               <textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Scrivi il messaggio…"
+                aria-label="Messaggio"
                 rows={5}
                 maxLength={3500}
-                className="flex-1 min-w-0 bg-transparent text-white placeholder-gray-500 px-2 py-2 outline-none resize-none"
+                className="block w-full bg-transparent text-base text-white placeholder-gray-500 px-3 py-2.5 outline-none resize-none"
               />
             </div>
-            <div className="flex items-center justify-between mt-1">
-              {isGroup ? <span /> : (
-                // Area di tocco alta 44px, il chip a vista resta piccolo.
+            {/* Aree di tocco alte 44px, i chip a vista restano piccoli. */}
+            <div className="flex items-center gap-2 mt-1">
+              <button
+                type="button"
+                onClick={() => setMediaPickerOpen(true)}
+                aria-haspopup="dialog"
+                title="Allega foto, video, documento o audio"
+                className={`min-h-[44px] -ml-1 px-1 flex items-center focus:outline-none focus:ring-2 focus:ring-primary/30 rounded-full ${
+                  media ? 'text-white' : 'text-gray-300 hover:text-white'
+                }`}
+              >
+                <span className="relative inline-flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded-full bg-[#1F2C33]">
+                  <Paperclip className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  Allega
+                  {media && (
+                    <span aria-hidden="true" className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-primary ring-2 ring-[#111B21]" />
+                  )}
+                </span>
+              </button>
+              {!isGroup && (
                 <button
                   type="button"
                   onClick={() => setMessage((m) => (m.includes('{nome}') ? m : m + (m && !m.endsWith(' ') ? ' ' : '') + '{nome}'))}
-                  className="min-h-[44px] min-w-[44px] -ml-1 px-1 flex items-center text-gray-400 hover:text-primary"
+                  className="min-h-[44px] px-1 flex items-center text-gray-300 hover:text-white focus:outline-none focus:ring-2 focus:ring-primary/30 rounded-full"
                   title="Inserisci il nome del contatto"
                 >
                   <span className="text-[13px] px-3 py-1.5 rounded-full bg-[#1F2C33]">Inserisci il nome</span>
                 </button>
               )}
-              <div className="text-xs text-gray-500 text-right">{message.length}/3500</div>
+              {/* #8696A0 su #111B21 = 5,7:1 (prima gray-500, 3,6:1). */}
+              <div className="ml-auto text-xs text-[#8696A0] text-right tabular-nums">{message.length}/3500</div>
             </div>
             {groupNome && (
               <div className="mt-2 text-xs text-amber-200 bg-amber-900/30 rounded-lg px-3 py-2" role="status" data-testid="group-nome-warning">
@@ -694,7 +782,7 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
                   />
                   <span className={`text-sm ${message.trim().length === 0 ? 'text-gray-500' : 'text-gray-300'}`}>
                     Salva come mio modello
-                    {message.trim().length === 0 && <span className="block text-xs text-gray-500">Scrivi un testo per salvarlo come modello</span>}
+                    {message.trim().length === 0 && <span className="block text-xs text-[#8696A0]">Scrivi un testo per salvarlo come modello</span>}
                   </span>
                 </label>
                 {saveTemplateChecked && message.trim().length > 0 && (
@@ -724,21 +812,40 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           )}
         </div>
 
+        {/* Avvisi gialli sopra Invia: 13px, a sinistra (si leggono; prima 12px
+            centrati su tre righe). Mentre si scrive c'è poco spazio sopra la
+            tastiera e data e ora non si possono correggere: l'avviso sulla serie
+            e quelli che dicono QUANDO parte ("Questo partirà domattina: …")
+            restano su una riga, gli altri spariscono finché la tastiera è
+            aperta (globals.css). Revisione B3, rapporto 360 T22. */}
         {seriesContinues && (
-          <div className="mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-xs text-center" role="status" data-testid="series-edit-note">
+          <div className="wl-clamp-on-keyboard mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-[13px] leading-snug" role="status" data-testid="series-edit-note">
             Le modifiche valgono anche per tutte le prossime volte{seriesLabel ? ` (${seriesLabel})` : ''}.
             {seriesMediaChanged && ' Anche il nuovo allegato partirà ogni volta.'}
           </div>
         )}
 
         {courtesyHint(wallDate) && (
-          <div className="mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-xs text-center" role="status">
+          <div className="wl-hide-on-keyboard mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-[13px] leading-snug" role="status" data-testid="courtesy-warning">
             {courtesyHint(wallDate)}
           </div>
         )}
 
+        {dayFullText && (
+          <div className="wl-clamp-on-keyboard mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-[13px] leading-snug" role="status" data-testid="day-full-warning">
+            {dayFullText}
+          </div>
+        )}
+        {bigGroupText && (
+          <div className="wl-clamp-on-keyboard mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-[13px] leading-snug" role="status" data-testid="big-group-warmup-warning">
+            {bigGroupText}
+          </div>
+        )}
+
         {isGroup && (
-          <div className="px-5 pt-2 text-[11px] text-gray-400 text-center" data-testid="group-hint">
+          // Note sotto la finestra a 13px #AEBAC1: 8,8:1 su #111B21 (prima 11px,
+          // gray-500 3,6:1). Rapporto 360, T22.
+          <div className="wl-hide-on-keyboard px-5 pt-2 text-[13px] leading-snug text-[#AEBAC1] text-center" data-testid="group-hint">
             Parte un solo messaggio nel gruppo, dal tuo numero.
           </div>
         )}
@@ -749,16 +856,16 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
             server controlla il gruppo dal vivo e rifiuta (409): il pulsante
             resta attivo, decide lui (accetta anche "connecting"). */}
         {isGroup && !connected ? (
-          <div className="mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-xs text-center" role="status" data-testid="group-disconnected-warning">
+          <div className="wl-hide-on-keyboard mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-[13px] leading-snug" role="status" data-testid="group-disconnected-warning">
             Per programmare in un gruppo WhatsApp deve essere collegato: ricollegalo e riprova.{' '}
             <a href="/connect" className="underline font-semibold">Ricollega</a>
           </div>
         ) : connected ? (
-          <div className="px-5 pt-2 text-[11px] text-gray-500 text-center">
+          <div className="wl-hide-on-keyboard px-5 pt-2 text-[13px] leading-snug text-[#AEBAC1] text-center" data-testid="disconnect-microcopy">
             Se WhatsApp è disconnesso all&apos;orario previsto, il messaggio parte appena si riconnette.
           </div>
         ) : (
-          <div className="mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-xs text-center" role="status" data-testid="disconnected-warning">
+          <div className="wl-hide-on-keyboard mx-4 mt-2 p-2.5 rounded-xl bg-amber-900/30 text-amber-200 text-[13px] leading-snug" role="status" data-testid="disconnected-warning">
             WhatsApp è scollegato: ricollegalo prima dell&apos;orario scelto, altrimenti il messaggio resta in coda e non parte.{' '}
             <a href="/connect" className="underline font-semibold">Ricollega</a>
           </div>
@@ -794,8 +901,10 @@ export default function ScheduleModal({ open, onClose, onBack, contact, onSchedu
           open={recurrenceSheetOpen}
           onClose={() => setRecurrenceSheetOpen(false)}
           value={recurrence}
-          onChange={(v) => { setRecurrence(v); setRecurrenceTouched(true); }}
+          onChange={applyRecurrence}
           referenceDate={wallDate}
+          days={recurrence === 'weekly' ? weekDays : []}
+          firstLabel={editMsgId ? 'Questa volta' : 'Primo invio'}
         />
         <TemplateBottomSheet
           open={templateSheetOpen}

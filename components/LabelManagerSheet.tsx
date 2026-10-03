@@ -85,7 +85,7 @@ export default function LabelManagerSheet({ open, onClose, onChange }: Props) {
   return (
     <>
       <div
-        className="fixed inset-0 z-sheet flex items-end sm:items-center justify-center"
+        className="wl-viewport z-sheet flex items-end sm:items-center justify-center"
         role="dialog"
         aria-modal="true"
         aria-label="Gestisci etichette"
@@ -93,7 +93,7 @@ export default function LabelManagerSheet({ open, onClose, onChange }: Props) {
       >
         <div className="absolute inset-0 bg-black/60" />
         <div
-          className="relative bg-[#202C33] w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl border-t sm:border border-[#2A3942] max-h-[80vh] flex flex-col"
+          className="relative bg-[#202C33] w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl border-t sm:border border-[#2A3942] max-h-[80%] flex flex-col"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Drag handle (mobile only) */}
@@ -113,7 +113,7 @@ export default function LabelManagerSheet({ open, onClose, onChange }: Props) {
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-5 pb-3">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 pb-3">
             {loading ? (
               <div className="py-10 text-center">
                 <Loader2 className="w-5 h-5 text-primary animate-spin mx-auto" />

@@ -28,27 +28,28 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
     expect(screen.getByText(/Messaggio per Mario Rossi/i)).toBeInTheDocument();
   });
 
-  test('shows message, FAB; advanced options collapsed by default with silent summary', () => {
+  test('shows message, FAB; "Ripeti" in sight under date and time (no "Opzioni avanzate")', () => {
     render(
       <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} />
     );
     expect(screen.queryByPlaceholderText(/Descrizione/i)).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText(/Scrivi il messaggio/i)).toBeInTheDocument();
-    expect(screen.getByText(/Opzioni avanzate/i)).toBeInTheDocument();
-    expect(screen.getByText(/Nessuna notifica · invio automatico/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Opzioni avanzate/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Nessuna notifica · invio automatico/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId('recurrence-row')).toHaveTextContent(/Ripeti.*Non si ripete/);
     expect(screen.queryByText(/Richiedi approvazione per l'invio/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^Promemoria$/i)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Invia/i })).toBeInTheDocument();
   });
 
-  test('expanding "Opzioni avanzate" does NOT reveal the flagged-off approval/reminder toggles', () => {
+  test('the flagged-off approval/reminder toggles never appear', () => {
     // Task 11: "Richiedi approvazione" and "Promemoria" are gated behind
-    // ADVANCED_APPROVAL_REMINDER_ENABLED (off) until implemented end-to-end,
-    // so they must not appear even when advanced options are expanded.
+    // ADVANCED_APPROVAL_REMINDER_ENABLED (off) until implemented end-to-end.
+    // B2: "Opzioni avanzate" is gone, so there is nothing to expand.
     render(
       <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} />
     );
-    fireEvent.click(screen.getByRole('button', { name: /Opzioni avanzate/i }));
+    expect(screen.queryByRole('button', { name: /Opzioni avanzate/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/Richiedi approvazione per l'invio/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^Promemoria$/i)).not.toBeInTheDocument();
   });
@@ -357,14 +358,13 @@ describe('ScheduleModal (new WhatsApp UI)', () => {
       expect(sheet.textContent).not.toMatch(/📷|🎥|📄|🎤|media/);
     });
 
-    test('la riga "Allega" non sta più dentro Opzioni avanzate', () => {
+    test('Ripeti e "Usa un modello" sono a vista, senza opzioni da aprire', () => {
       render(
         <ScheduleModal open={true} onClose={() => {}} onBack={() => {}} contact={contact} onScheduled={() => {}} />
       );
-      fireEvent.click(screen.getByRole('button', { name: /Opzioni avanzate/i }));
       expect(screen.getByText(/^Ripeti$/)).toBeInTheDocument();
-      expect(screen.getByText(/^Modello$/)).toBeInTheDocument();
-      expect(document.getElementById('advanced-options')!.textContent).not.toMatch(/Allega/i);
+      expect(screen.getByRole('button', { name: 'Usa un modello' })).toBeInTheDocument();
+      expect(document.getElementById('advanced-options')).toBeNull();
     });
 
     // 22 set 2026: in modifica l'allegato si vede, si toglie e si sostituisce.

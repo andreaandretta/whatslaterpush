@@ -161,8 +161,10 @@ describe('A4 — modifica di una serie', () => {
   });
 
   test('regola che la modale non sa leggere → l\'avviso c\'è lo stesso', () => {
-    render(<ScheduleModal {...base} initialMessage="Uscita" editMsgId="msg-1" initialScheduledAt={nextThursdayAt18()} initialRecurrenceRule="FREQ=WEEKLY;BYDAY=TU,TH" />);
-    expect(screen.getByTestId('series-edit-note')).toHaveTextContent('ogni martedì, giovedì');
+    // B2: "TU,TH" ora la modale la legge (più giorni insieme); scritta in un
+    // ordine diverso dal suo non la riscriverebbe identica → resta com'è.
+    render(<ScheduleModal {...base} initialMessage="Uscita" editMsgId="msg-1" initialScheduledAt={nextThursdayAt18()} initialRecurrenceRule="FREQ=WEEKLY;BYDAY=TH,TU" />);
+    expect(screen.getByTestId('series-edit-note')).toHaveTextContent('ogni martedì e giovedì');
   });
 
   test('messaggio singolo in modifica, o messaggio nuovo → nessun avviso', () => {

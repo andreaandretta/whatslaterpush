@@ -56,9 +56,11 @@ describe('A2 + M3 — domande frequenti', () => {
     expect(text).toMatch(/In cosa è diverso da WhatsApp Business o dalla programmazione dei messaggi di WhatsApp\?/);
   });
 
-  test('Ripeti: si dice dove si trova oggi (Opzioni avanzate)', () => {
+  test('Ripeti: si dice dove si trova oggi (sotto giorno e ora, più giorni insieme)', () => {
     const { container } = render(<FAQSection billingEnabled={false} />);
-    expect(container.textContent).toMatch(/tocca "Opzioni avanzate" e poi "Ripeti"/);
+    expect(container.textContent).toMatch(/tocca "Ripeti", subito sotto il giorno e l'ora/);
+    expect(container.textContent).toMatch(/anche più giorni insieme, per esempio lunedì e giovedì/);
+    expect(container.textContent).not.toMatch(/Opzioni avanzate/);
   });
 
   test('le risposte aperte non vengono tagliate (altezza massima più ampia di 24rem)', () => {

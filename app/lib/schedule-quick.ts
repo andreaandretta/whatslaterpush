@@ -14,7 +14,7 @@
  */
 import { addDays, addHours, isSameDay, format } from 'date-fns';
 import { it } from 'date-fns/locale';
-import { parseRule } from './recurrence';
+import { parseRule, reconcileRecurringChain } from './recurrence';
 
 // "Posticipa" deve SEMPRE spostare in avanti rispetto all'orario del messaggio.
 // Prima i preset partivano da ADESSO: lunedì, "+1 ora" su una convocazione di
@@ -74,6 +74,17 @@ export function formatShortWhen(d: Date, now: Date = new Date()): string {
   if (isSameDay(d, now)) return `oggi ${time}`;
   if (isSameDay(d, addDays(now, 1))) return `domani ${time}`;
   return `${format(d, 'EEE d MMM', { locale: it })} ${time}`;
+}
+
+/**
+ * Data e ora di una riga della lista: "sab 4 ott · 18:00" (rapporto 360, T22).
+ * Prima "4 ott · 18:00", senza il giorno della settimana: allenatori e
+ * catechisti ragionano per giorni ("quello del sabato"). Un altro anno lo dice:
+ * "mer 3 giu 2025 · 09:05". `wall` è già l'orologio di Roma (romeWallClock).
+ */
+export function formatRowWhen(wall: Date, now: Date = new Date()): string {
+  const year = wall.getFullYear() !== now.getFullYear() ? ` ${wall.getFullYear()}` : '';
+  return `${format(wall, 'EEE d MMM', { locale: it })}${year} · ${format(wall, 'HH:mm')}`;
 }
 
 export function formatSendCta(scheduled: Date, now: Date = new Date()): string {
@@ -158,9 +169,28 @@ export function quickDateChips(now: Date = new Date()): QuickDateChip[] {
   ];
 }
 
-const WEEKDAYS: Record<string, string> = {
-  MO: 'lunedì', TU: 'martedì', WE: 'mercoledì', TH: 'giovedì', FR: 'venerdì', SA: 'sabato', SU: 'domenica',
-};
+// Indice = Date.getDay() (0 = domenica), come i codici BYDAY di recurrence.ts.
+const WEEKDAY_NAMES = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+
+/** Giorni della settimana in ordine italiano: dal lunedì alla domenica, senza doppioni. */
+export function mondayFirst(days: number[]): number[] {
+  const set = new Set(days.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6));
+  return [1, 2, 3, 4, 5, 6, 0].filter((d) => set.has(d));
+}
+
+/**
+ * "ogni martedì", "ogni lunedì e giovedì", "ogni lunedì, mercoledì e venerdì",
+ * "dal lunedì al venerdì", "ogni giorno" (tutti e sette). Giorni = Date.getDay().
+ */
+export function weekdaysPhrase(days: number[]): string {
+  const ds = mondayFirst(days);
+  if (ds.length === 7) return 'ogni giorno';
+  if (ds.join(',') === '1,2,3,4,5') return 'dal lunedì al venerdì';
+  const names = ds.map((d) => WEEKDAY_NAMES[d]);
+  if (names.length <= 1) return `ogni ${names[0] ?? ''}`.trim();
+  return `ogni ${names.slice(0, -1).join(', ')} e ${names[names.length - 1]}`;
+}
 
 /**
  * "ogni martedì", "ogni giorno", "il 5 di ogni mese": etichetta breve della
@@ -174,12 +204,41 @@ export function recurrenceTagLabel(rule: string | null | undefined): string | nu
   if (!p) return null;
   if (p.freq === 'DAILY') return 'ogni giorno';
   if (p.freq === 'WEEKLY') {
-    const days = (p.byDay || []).map((d) => WEEKDAYS[d]).filter(Boolean);
+    const days = (p.byDay || []).map((d) => DAY_CODES.indexOf(d)).filter((d) => d >= 0);
     if (days.length === 0) return null;
-    return days.length === 1 ? `ogni ${days[0]}` : `ogni ${days.join(', ')}`;
+    return weekdaysPhrase(days);
   }
   if (p.freq === 'MONTHLY') return `${dayOfMonthPhrase(p.byMonthDay!)} di ogni mese`;
   return null;
+}
+
+/**
+ * "Riprendi dalla prossima volta" (rapporto 360 B2/T17): per una serie in pausa
+ * con l'orario passato, la prima volta della regola dopo adesso, all'ora
+ * dell'ancora (l'orario scelto dall'utente, non quello spostato dal cron).
+ * È lo stesso calcolo del cron quando crea la volta dopo, e dello "Solo questa
+ * volta" dell'Elimina (reconcileRecurringChain): la serie resta com'era, le
+ * volte perse si saltano invece di partire tutte insieme. Margine di 2 minuti
+ * (il PATCH vuole almeno 60 s nel futuro). null = regola illeggibile o niente
+ * prossima volta: si resta alle scelte di prima.
+ */
+export function resumeNextOccurrence(
+  msg: { recurrence_rule?: string | null; scheduled_at?: string | null; recurrence_anchor_at?: string | null },
+  nowMs: number = Date.now(),
+): Date | null {
+  if (!msg.recurrence_rule || !msg.scheduled_at) return null;
+  if (isNaN(new Date(msg.scheduled_at).getTime())) return null;
+  const anchor = msg.recurrence_anchor_at && !isNaN(new Date(msg.recurrence_anchor_at).getTime())
+    ? msg.recurrence_anchor_at
+    : null;
+  const decision = reconcileRecurringChain({
+    hasLiveRow: false,
+    latestStatus: 'sent',
+    latestScheduledAt: msg.scheduled_at,
+    rule: msg.recurrence_rule,
+    anchorAt: anchor,
+  }, nowMs + 2 * 60_000);
+  return decision.insert ? new Date(decision.scheduledAt) : null;
 }
 
 export { isSameDay };

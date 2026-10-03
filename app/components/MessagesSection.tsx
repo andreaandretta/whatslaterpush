@@ -1,14 +1,15 @@
 'use client';
 import React, { useMemo, useState, useEffect } from 'react';
-import { Search, X, MoreVertical, Calendar, Inbox, Clock, AlertCircle, RotateCcw, Plug, Loader2, Paperclip, UserRound, Users } from 'lucide-react';
+import { Search, X, MoreVertical, Calendar, Inbox, AlertCircle, RotateCcw, Plug, Loader2, Paperclip, UserRound, Users } from 'lucide-react';
 import { ContactAvatar } from '../../components/ContactAvatar';
-import { StatusBadge, formatCountdown, formatRelativePast } from './StatusBadge';
+import { StatusBadge, formatCountdown } from './StatusBadge';
 import { MessageActionsSheet } from './MessageActionsSheet';
 import { DeliveryStatusIcon } from './DeliveryStatusIcon';
 import FakeDoorCard from './FakeDoorCard';
 import { mapErrorReason, isNotOnWhatsAppError, isIndeterminateSend, mapPendingReason } from '../lib/message-error';
 import { looksLikeLidDigits, isGroupJid, recipientDisplayName } from '../lib/jid';
-import { recurrenceTagLabel } from '../lib/schedule-quick';
+import { recurrenceTagLabel, formatRowWhen } from '../lib/schedule-quick';
+import { useModalHistory } from '../lib/use-modal-history';
 import { romeWallClock } from '../lib/rome-time';
 
 export interface ScheduledMessage {
@@ -32,6 +33,9 @@ export interface ScheduledMessage {
   // Id di Evolution (key.id): assente su una riga 'sent' = invio mai confermato.
   evolution_message_id?: string | null;
   recurrence_rule?: string | null;
+  // Orario scelto dall'utente per la serie (l'ora delle volte dopo): serve a
+  // "Riprendi dalla prossima volta". La GET fa select('*'), il campo c'era già.
+  recurrence_anchor_at?: string | null;
 }
 
 const MEDIA_LABEL: Record<string, string> = { image: 'Foto', video: 'Video', document: 'Documento', audio: 'Audio' };
@@ -43,7 +47,7 @@ export function AttachmentChip({ msg }: { msg: Pick<ScheduledMessage, 'media_typ
   const label = MEDIA_LABEL[msg.media_type] || 'Allegato';
   return (
     <span
-      className="inline-flex items-center gap-1 max-w-full text-[11px] font-medium text-emerald-300 bg-emerald-500/10 rounded-full px-2 py-0.5"
+      className="inline-flex items-center gap-1 max-w-full text-xs font-medium text-[#D1D7DB] bg-white/[0.06] rounded-full px-2 py-0.5"
       aria-label={`Allegato: ${label}`}
       title={msg.media_filename || label}
       data-testid="attachment-chip"
@@ -55,10 +59,12 @@ export function AttachmentChip({ msg }: { msg: Pick<ScheduledMessage, 'media_typ
 }
 
 // Chip "Gruppo": la riga va in un gruppo WhatsApp, non a una persona.
+// Chip informativi neutri, 12px: il verde resta per le azioni (rapporto 360,
+// T35). #D1D7DB su bianco 6% sopra #202C33 = 8,2:1.
 export function GroupTag() {
   return (
     <span
-      className="inline-flex items-center gap-1 text-[11px] font-medium rounded-full px-2 py-0.5 text-[#BFF0D5] bg-[#1F5A45]/60"
+      className="inline-flex items-center gap-1 text-xs font-medium rounded-full px-2 py-0.5 text-[#D1D7DB] bg-white/[0.06]"
       data-testid="group-tag"
     >
       <Users className="w-3 h-3 shrink-0" aria-hidden="true" />
@@ -74,7 +80,7 @@ export function RecurrenceTag({ rule }: { rule?: string | null }) {
   if (!label) return null;
   return (
     <span
-      className="inline-flex items-center gap-1 text-[11px] font-medium text-sky-300 bg-sky-500/10 rounded-full px-2 py-0.5"
+      className="inline-flex items-center gap-1 text-xs font-medium text-sky-300 bg-sky-500/10 rounded-full px-2 py-0.5"
       title={`Promemoria ricorrente: ${label}`}
       data-testid="recurrence-tag"
     >
@@ -260,9 +266,11 @@ export default function MessagesSection({
       <div className="flex items-center justify-between mb-3 gap-3">
         <div className="min-w-0">
           <h2 className="text-xl font-bold tracking-tight text-white">I tuoi messaggi</h2>
-          <p className="text-xs text-gray-400 mt-0.5 truncate">
+          {/* 13px gray-400 su #111B21 = 6,9:1. Il "quando" in bianco, non in
+              verde: il verde è per le azioni (rapporto 360, T35). */}
+          <p className="text-[13px] text-gray-400 mt-0.5 truncate">
             {nextCountdown ? (
-              <>Prossimo invio <span className="text-primary font-medium">{nextCountdown.replace(/^Parte /, '')}</span></>
+              <>Prossimo invio <span className="text-gray-100 font-medium">{nextCountdown.replace(/^Parte /, '')}</span></>
             ) : upcoming.length === 0 && sent.length > 0 ? (
               <>Nessun invio in coda · {sentThisMonth} inviati questo mese</>
             ) : (
@@ -321,7 +329,7 @@ export default function MessagesSection({
             {q
               ? `Nessun risultato per "${query}"`
               : tab === 'upcoming'
-                ? 'Nessun messaggio in coda. Programmane uno col bottone verde.'
+                ? 'Nessun messaggio in coda. Tocca «Programma» per crearne uno.'
                 : 'Nessun messaggio inviato ancora.'}
           </p>
         </div>
@@ -332,11 +340,11 @@ export default function MessagesSection({
           {showFailedSection && (
             <div>
               <div className="flex items-baseline gap-2 mb-2 px-1">
-                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-red-400/90">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-red-400">
                   Non inviati
                 </h3>
-                <span className="text-[11px] text-gray-600">·</span>
-                <span className="text-[11px] text-gray-500">{visibleFailed.length}</span>
+                <span className="text-xs text-[#8696A0]" aria-hidden="true">·</span>
+                <span className="text-xs text-[#8696A0]">{visibleFailed.length}</span>
               </div>
               <div className="space-y-2">
                 {visibleFailed.map((msg) => (
@@ -359,12 +367,14 @@ export default function MessagesSection({
             if (!items || items.length === 0) return null;
             return (
               <div key={bucket}>
+                {/* Titoli 12px #8696A0 su #111B21 = 5,7:1 (prima 11px gray-500, 3,6:1;
+                    il conteggio gray-600 era 2,3:1). Stesso stile nel selettore. */}
                 <div className="flex items-baseline gap-2 mb-2 px-1">
-                  <h3 className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-[#8696A0]">
                     {titles[bucket]}
                   </h3>
-                  <span className="text-[11px] text-gray-600">·</span>
-                  <span className="text-[11px] text-gray-500">{items.length}</span>
+                  <span className="text-xs text-[#8696A0]" aria-hidden="true">·</span>
+                  <span className="text-xs text-[#8696A0]">{items.length}</span>
                 </div>
                 <div className="bg-[#202C33] rounded-2xl border border-[#2A3942] divide-y divide-[#2A3942] overflow-hidden">
                   {items.map((msg) => (
@@ -422,9 +432,11 @@ export default function MessagesSection({
 function RecurringDeleteDialog({ msg, onCancel, onChoose }: {
   msg: ScheduledMessage; onCancel: () => void; onChoose: (scope: DeleteScope) => void;
 }) {
+  // Indietro chiude solo questa finestra, come "Annulla" (rapporto 360, T13).
+  useModalHistory(true, onCancel);
   const label = recurrenceTagLabel(msg.recurrence_rule) || 'ricorrente';
   return (
-    <div className="fixed inset-0 z-sheet flex items-end sm:items-center justify-center" onClick={onCancel}>
+    <div className="wl-viewport z-sheet flex items-end sm:items-center justify-center" onClick={onCancel}>
       <div className="absolute inset-0 bg-black/60" />
       <div
         role="dialog"
@@ -432,7 +444,7 @@ function RecurringDeleteDialog({ msg, onCancel, onChoose }: {
         aria-labelledby="recurring-delete-title"
         data-testid="recurring-delete-dialog"
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full sm:max-w-sm sm:mx-4 bg-[#1F2C33] border-t sm:border border-[#2A3942] rounded-t-2xl sm:rounded-2xl p-5 pb-safe shadow-2xl"
+        className="relative w-full max-h-full overflow-y-auto overscroll-contain sm:max-w-sm sm:mx-4 bg-[#1F2C33] border-t sm:border border-[#2A3942] rounded-t-2xl sm:rounded-2xl p-5 pb-safe shadow-2xl"
       >
         <h3 id="recurring-delete-title" className="text-white font-semibold">Promemoria ricorrente</h3>
         <p className="text-sm text-gray-400 mt-1">
@@ -476,7 +488,7 @@ function TabButton({ active, onClick, count, children }: {
       }`}
     >
       {children}
-      <span className={`ml-1.5 text-[11px] tabular-nums ${active ? 'opacity-80' : 'opacity-60'}`}>
+      <span className={`ml-1.5 text-xs tabular-nums ${active ? 'text-gray-300' : 'text-gray-400'}`}>
         {count}
       </span>
     </button>
@@ -508,47 +520,93 @@ function pendingReasonFor(msg: ScheduledMessage): string | null {
   return mapPendingReason(msg.error_message);
 }
 
+// Un tocco su una riga apre il menu (rapporto 360, T14): prima solo il ⋮ da
+// 32px o la pressione lunga, che nessuno scopre. I comandi dentro la riga
+// (Riprova, Ricollega, ⋮) restano loro: il tocco su un bottone o un link non
+// apre il menu.
+function isInnerControl(target: EventTarget | null, row: HTMLElement): boolean {
+  const el = target instanceof Element ? target.closest('button, a, input, textarea, select') : null;
+  return !!el && el !== row && row.contains(el);
+}
+
+// Pressione lunga (500 ms) e tasto destro aprono il menu come il tocco. Dopo una
+// pressione lunga il "click" che il telefono genera al rilascio viene annullato:
+// senza, poteva finire sul fondo del foglio appena aperto e richiuderlo.
+function useRowPress(onOpenActions: () => void) {
+  const pressTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const moved = React.useRef(false);
+  const longPressed = React.useRef(false);
+  const cancel = () => { if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; } };
+  React.useEffect(() => cancel, []);
+  return {
+    onClick: (e: React.MouseEvent<HTMLElement>) => {
+      if (longPressed.current) { longPressed.current = false; return; }
+      if (isInnerControl(e.target, e.currentTarget)) return;
+      onOpenActions();
+    },
+    onTouchStart: (e: React.TouchEvent<HTMLElement>) => {
+      moved.current = false;
+      longPressed.current = false;
+      if (isInnerControl(e.target, e.currentTarget)) return;
+      pressTimer.current = setTimeout(() => {
+        pressTimer.current = null;
+        if (!moved.current) { longPressed.current = true; onOpenActions(); }
+      }, 500);
+    },
+    onTouchEnd: (e: React.TouchEvent<HTMLElement>) => {
+      cancel();
+      if (longPressed.current) e.preventDefault();
+    },
+    onTouchMove: () => { moved.current = true; cancel(); },
+    onContextMenu: (e: React.MouseEvent<HTMLElement>) => { e.preventDefault(); onOpenActions(); },
+  };
+}
+
+// ⋮ da 44×44 (prima ~32px con l'icona da 16). #AEBAC1 su #202C33 = 7,2:1.
+// I margini negativi gli fanno occupare il bordo della riga invece di stringere
+// il testo: il tocco vicino al ⋮ apre comunque lo stesso menu.
+function ActionsButton({ onOpenActions }: { onOpenActions: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpenActions}
+      aria-label="Azioni messaggio"
+      aria-haspopup="dialog"
+      className="shrink-0 w-11 h-11 -mr-3 -ml-2 -mt-2.5 inline-flex items-center justify-center rounded-full text-[#AEBAC1] hover:text-white hover:bg-white/5 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30"
+      data-testid="row-actions"
+    >
+      <MoreVertical className="w-5 h-5" aria-hidden="true" />
+    </button>
+  );
+}
+
 function MessageRow({ msg, tab, onOpenActions }: {
   msg: ScheduledMessage; tab: Tab; onOpenActions: () => void;
 }) {
   const text = msg.parsed_message || msg.caption || '';
   const isGroup = isGroupJid(msg.recipient_number);
   const displayName = recipientDisplayName(msg);
-
-  // Long-press to open actions on mobile
-  const pressTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const moved = React.useRef(false);
-  const startPress = () => {
-    moved.current = false;
-    pressTimer.current = setTimeout(() => { if (!moved.current) onOpenActions(); }, 500);
-  };
-  const cancelPress = () => { if (pressTimer.current) clearTimeout(pressTimer.current); };
+  const press = useRowPress(onOpenActions);
 
   const countdown = tab === 'upcoming' ? formatCountdown(msg.scheduled_at) || undefined : undefined;
-  const relative = tab === 'sent' ? formatRelativePast(msg.scheduled_at) : '';
   // Invio senza conferma (timeout/lambda morta): non la stessa ✓ di uno confermato.
   const unverified = isIndeterminateSend(msg);
   const pendingReason = pendingReasonFor(msg);
 
-  // Ora italiana, come nella modale (telefono in un altro fuso: stessi numeri
-  // che l'utente ha scelto). In Italia è identico a new Date().
-  const target = romeWallClock(new Date(msg.scheduled_at));
-  const hh = target.getHours().toString().padStart(2, '0');
-  const mm = target.getMinutes().toString().padStart(2, '0');
-  const time = `${hh}:${mm}`;
-  const months = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
-  const dateStr = `${target.getDate()} ${months[target.getMonth()]}`;
+  // "sab 4 ott · 18:00" a 14px #D1D5DB (9,7:1 su #202C33), in tutte e due le
+  // schede (rapporto 360, T22): prima 11px gray-500 (2,96:1), senza giorno, e
+  // negli Inviati "2 mesi fa". Ora italiana, come nella modale; negli Inviati
+  // l'ora vera dell'invio quando c'è.
+  const when = tab === 'sent' && msg.status === 'sent' && msg.sent_at ? msg.sent_at : msg.scheduled_at;
+  const whenLabel = formatRowWhen(romeWallClock(new Date(when)), romeWallClock(new Date()));
 
   return (
     // select-none + niente menu di iOS: la pressione lunga apre il foglio, non
     // seleziona il testo né colora la pagina di blu.
     <div
-      className="flex items-start gap-3 p-4 hover:bg-[#2A3942]/50 transition-colors select-none [-webkit-touch-callout:none]"
+      className="flex items-start gap-3 p-4 cursor-pointer hover:bg-[#2A3942]/50 active:bg-[#2A3942]/70 transition-colors select-none [-webkit-touch-callout:none]"
       data-testid="message-row"
-      onTouchStart={startPress}
-      onTouchEnd={cancelPress}
-      onTouchMove={() => { moved.current = true; cancelPress(); }}
-      onContextMenu={(e) => { e.preventDefault(); onOpenActions(); }}
+      {...press}
     >
       <ContactAvatar
         name={msg.recipient_name}
@@ -558,57 +616,51 @@ function MessageRow({ msg, tab, onOpenActions }: {
         variant={isGroup ? 'group' : undefined}
       />
       <div className="flex-1 min-w-0">
-        <div className="flex items-baseline justify-between gap-2 mb-0.5">
-          <p className="font-semibold text-sm truncate text-white">{displayName}</p>
-          <div className="flex items-center gap-1.5 shrink-0 text-[11px] text-gray-500 font-medium tabular-nums">
-            {tab === 'upcoming' ? (
-              <span><Clock className="inline w-3 h-3 -mt-0.5 mr-1" />{dateStr} · {time}</span>
-            ) : (
-              <span>{relative}</span>
-            )}
-          </div>
-        </div>
+        {/* Data e ora su una riga loro, sotto il nome: con il giorno della
+            settimana a 14px non stanno più accanto al nome senza tagliarlo
+            ("Mario R…") su un telefono largo 390px. */}
+        <p className="font-semibold text-[15px] leading-snug truncate text-white">{displayName}</p>
+        <p className="text-sm text-[#D1D5DB] font-medium tabular-nums leading-snug" data-testid="row-when">
+          {whenLabel}
+        </p>
 
         {text && (
-          <p className="text-sm text-gray-400 mt-0.5 mb-2 line-clamp-2 leading-snug">{text}</p>
+          <p className="text-sm text-gray-400 mt-1 line-clamp-2 leading-snug">{text}</p>
         )}
 
-        <div className="flex items-center gap-2 flex-wrap">
+        {/* Un solo segno di stato (T34): in coda "Parte tra 3 ore", inviato
+            "✓ Inviato" / "✓✓ Consegnato" / "✓✓ Letto" come WhatsApp. Prima una
+            riga inviata aveva la pillola "✓ Inviato" più una spunta a parte. */}
+        <div className="flex items-center gap-2 flex-wrap mt-2">
           {unverified ? (
             <span
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ring-1 bg-amber-500/12 text-amber-400 ring-amber-500/30"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ring-1 bg-amber-500/12 text-amber-400 ring-amber-500/30"
               title={isGroup
                 ? "WhatsApp non ci ha confermato l'invio: guarda nel gruppo se è arrivato prima di rimandarlo."
                 : "WhatsApp non ha confermato l'invio: controlla nella chat se è arrivato prima di rimandarlo."}
               data-testid="status-unverified"
             >
-              <AlertCircle className="w-3 h-3" aria-hidden="true" />
+              <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
               Da verificare
             </span>
+          ) : msg.status === 'sent' ? (
+            <DeliveryStatusIcon msg={msg} isGroup={isGroup} showLabel />
           ) : (
-            <>
-              <StatusBadge status={msg.status} countdown={countdown} />
-              <DeliveryStatusIcon msg={msg} isGroup={isGroup} />
-            </>
+            <StatusBadge status={msg.status} countdown={countdown} />
           )}
           {isGroup && <GroupTag />}
           <AttachmentChip msg={msg} />
           <RecurrenceTag rule={msg.recurrence_rule} />
         </div>
         {pendingReason && (
-          <p className="text-[12px] text-gray-500 mt-1.5 leading-snug" data-testid="pending-reason">
+          // 13px #AEBAC1 su #202C33 = 7,2:1 (prima 12px gray-500, 2,96:1).
+          <p className="text-[13px] text-[#AEBAC1] mt-1.5 leading-snug" data-testid="pending-reason">
             {pendingReason}
           </p>
         )}
       </div>
 
-      <button
-        onClick={onOpenActions}
-        aria-label="Azioni messaggio"
-        className="text-gray-500 hover:text-white shrink-0 p-2 -m-2 transition-colors"
-      >
-        <MoreVertical className="w-4 h-4" />
-      </button>
+      <ActionsButton onOpenActions={onOpenActions} />
     </div>
   );
 }
@@ -638,6 +690,7 @@ function FailedMessageCard({ msg, connected, onRetry, onDuplicate, onChooseOther
   // messaggio (Duplica porta con sé testo e allegato) per cambiare il file.
   const mediaRejected = reason.kind === 'media_rejected';
   const canRetry = isRetryable(msg);
+  const press = useRowPress(onOpenActions);
   // Offer "Ricollega" when the failure looks like a dropped session OR the
   // Evolution link is currently down — a plain Riprova won't fix either.
   const showReconnect = (reason.kind === 'disconnected' || !connected) && !notOnWhatsApp;
@@ -653,7 +706,13 @@ function FailedMessageCard({ msg, connected, onRetry, onDuplicate, onChooseOther
   };
 
   return (
-    <div className="rounded-xl bg-[#2a1f1f] ring-1 ring-red-500/40 p-3 flex items-start gap-3">
+    // Come le righe: un tocco sulla card apre il menu; Riprova, "Scegli un altro
+    // contatto", "Cambia allegato" e Ricollega restano i loro comandi.
+    <div
+      className="rounded-xl bg-[#2a1f1f] ring-1 ring-red-500/40 p-3 flex items-start gap-3 cursor-pointer select-none [-webkit-touch-callout:none]"
+      data-testid="failed-card"
+      {...press}
+    >
       <ContactAvatar
         name={msg.recipient_name}
         number={msg.recipient_number || ''}
@@ -664,8 +723,8 @@ function FailedMessageCard({ msg, connected, onRetry, onDuplicate, onChooseOther
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline justify-between gap-2 mb-0.5">
           <p className="font-semibold text-sm truncate text-white">{displayName}</p>
-          <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-red-400">
-            <AlertCircle className="w-3 h-3" />
+          <span className="shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-red-400">
+            <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
             Non inviato
           </span>
         </div>
@@ -683,9 +742,10 @@ function FailedMessageCard({ msg, connected, onRetry, onDuplicate, onChooseOther
           <div className="mb-1.5"><RecurrenceTag rule={msg.recurrence_rule} /></div>
         )}
 
-        <p className="text-[12px] text-red-400/80 mb-2.5">{reason.label}</p>
+        {/* 13px red-300 su #2a1f1f = 8,4:1 (prima 12px red-400 all'80%, 4,2:1). */}
+        <p className="text-[13px] text-red-300 mb-2.5">{reason.label}</p>
         {notOnWhatsApp && (
-          <p className="text-[12px] text-gray-400 -mt-1.5 mb-2.5 leading-snug" data-testid="invalid-number-hint">
+          <p className="text-[13px] text-[#AEBAC1] -mt-1.5 mb-2.5 leading-snug" data-testid="invalid-number-hint">
             {/* Il "codice interno" si nomina solo se le cifre sembrano davvero un
                 LID: per un numero sbagliato a mano sarebbe una spiegazione falsa. */}
             {looksLikeLidDigits(msg.recipient_number)
@@ -694,7 +754,7 @@ function FailedMessageCard({ msg, connected, onRetry, onDuplicate, onChooseOther
           </p>
         )}
         {mediaRejected && (
-          <p className="text-[12px] text-gray-400 -mt-1.5 mb-2.5 leading-snug" data-testid="media-rejected-hint">
+          <p className="text-[13px] text-[#AEBAC1] -mt-1.5 mb-2.5 leading-snug" data-testid="media-rejected-hint">
             Riprovare con lo stesso file non serve. Riapri il messaggio e scegli un altro allegato (o toglilo).
           </p>
         )}
@@ -743,13 +803,7 @@ function FailedMessageCard({ msg, connected, onRetry, onDuplicate, onChooseOther
         </div>
       </div>
 
-      <button
-        onClick={onOpenActions}
-        aria-label="Azioni messaggio"
-        className="text-gray-500 hover:text-white shrink-0 p-2 -m-2 transition-colors"
-      >
-        <MoreVertical className="w-4 h-4" />
-      </button>
+      <ActionsButton onOpenActions={onOpenActions} />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 import React from 'react';
-import { Check, CheckCheck } from 'lucide-react';
+import { AlertCircle, Check, CheckCheck } from 'lucide-react';
 
 interface MsgLike {
   status: string;
@@ -25,43 +25,53 @@ function formatTime(iso: string | null | undefined): string {
 // caller can keep the existing pending/awaiting badge unchanged.
 // Gruppi: Evolution non inoltra le ricevute dei gruppi, quindi solo ✓ (un
 // delivered_at/read_at su un gruppo non dice niente di tutti i membri).
-export function DeliveryStatusIcon({ msg, isGroup = false }: { msg: MsgLike; isGroup?: boolean }) {
+// `showLabel`: spunte + parola ("✓ Inviato", "✓✓ Consegnato", "✓✓ Letto"), un
+// solo segno di stato per riga della lista. Prima la riga diceva lo stato tre
+// volte: pillola "✓ Inviato", spunta a parte e pillola "Gruppo" (rapporto 360, T34).
+// Parola 12px #AEBAC1 su #202C33 = 7,2:1; spunte blu sky-400 = 6,7:1.
+export function DeliveryStatusIcon({ msg, isGroup = false, showLabel = false }: { msg: MsgLike; isGroup?: boolean; showLabel?: boolean }) {
+  const view = deliveryView(msg, isGroup);
+  if (!view) return null;
+  if (!showLabel) {
+    return (
+      <span title={view.title} aria-label={view.label} data-testid={view.testId} className={view.kind === 'ack_error' ? 'text-red-400 font-bold' : undefined}>
+        {view.kind === 'ack_error' ? '!' : view.icon}
+      </span>
+    );
+  }
+  return (
+    <span
+      title={view.title}
+      aria-label={view.label}
+      data-testid={view.testId}
+      className={`inline-flex items-center gap-1 text-xs font-medium ${view.kind === 'ack_error' ? 'text-red-400' : 'text-[#AEBAC1]'}`}
+    >
+      {view.kind === 'ack_error' ? <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> : view.icon}
+      {view.label}
+    </span>
+  );
+}
+
+type DeliveryKind = 'ack_error' | 'sent' | 'delivered' | 'read';
+
+function deliveryView(msg: MsgLike, isGroup: boolean): { kind: DeliveryKind; label: string; title: string; testId: string; icon: React.ReactNode } | null {
   // Custody ack: WhatsApp ha rifiutato il messaggio DOPO il nostro 'sent'.
   if (msg.ack_error_at) {
-    return (
-      <span title={`Non accettato da WhatsApp ${formatTime(msg.ack_error_at)}`} aria-label="Non accettato da WhatsApp" data-testid="status-ack-error" className="text-red-400 font-bold">
-        !
-      </span>
-    );
+    return { kind: 'ack_error', label: 'Non accettato da WhatsApp', title: `Non accettato da WhatsApp ${formatTime(msg.ack_error_at)}`, testId: 'status-ack-error', icon: null };
   }
+  const single = <Check className="w-3.5 h-3.5 text-gray-400 shrink-0" aria-hidden="true" />;
   if (isGroup) {
     if (msg.status !== 'sent') return null;
-    return (
-      <span title="Inviato nel gruppo (per i gruppi WhatsApp non ci manda le spunte di consegna)" aria-label="Inviato" data-testid="status-sent">
-        <Check className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-      </span>
-    );
+    return { kind: 'sent', label: 'Inviato', title: 'Inviato nel gruppo (per i gruppi WhatsApp non ci manda le spunte di consegna)', testId: 'status-sent', icon: single };
   }
   if (msg.read_at) {
-    return (
-      <span title={`Letto ${formatTime(msg.read_at)}`} aria-label="Letto" data-testid="status-read">
-        <CheckCheck className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-      </span>
-    );
+    return { kind: 'read', label: 'Letto', title: `Letto ${formatTime(msg.read_at)}`, testId: 'status-read', icon: <CheckCheck className="w-3.5 h-3.5 text-sky-400 shrink-0" aria-hidden="true" /> };
   }
   if (msg.delivered_at) {
-    return (
-      <span title={`Consegnato ${formatTime(msg.delivered_at)}`} aria-label="Consegnato" data-testid="status-delivered">
-        <CheckCheck className="w-3.5 h-3.5 text-gray-300 shrink-0" />
-      </span>
-    );
+    return { kind: 'delivered', label: 'Consegnato', title: `Consegnato ${formatTime(msg.delivered_at)}`, testId: 'status-delivered', icon: <CheckCheck className="w-3.5 h-3.5 text-gray-300 shrink-0" aria-hidden="true" /> };
   }
   if (msg.status === 'sent') {
-    return (
-      <span title={`Inviato ${formatTime(msg.sent_at || msg.scheduled_at)}`} aria-label="Inviato" data-testid="status-sent">
-        <Check className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-      </span>
-    );
+    return { kind: 'sent', label: 'Inviato', title: `Inviato ${formatTime(msg.sent_at || msg.scheduled_at)}`, testId: 'status-sent', icon: single };
   }
   return null;
 }

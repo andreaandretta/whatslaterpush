@@ -23,6 +23,16 @@
   animation: onboarding-pulse-ring 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
   transform-origin: center;
 }
+/* Pillola "+ Programma" (rapporto 360, T24): larga il triplo del vecchio
+   cerchio, lo stesso 1.7× diventava una macchia di 240px. Si allarga meno in
+   orizzontale che in verticale, così l'alone resta intorno al pulsante. */
+@keyframes onboarding-pulse-pill {
+  0%   { transform: scale(1, 1);       opacity: 0.55; }
+  100% { transform: scale(1.18, 1.6);  opacity: 0;    }
+}
+.onboarding-pulse-ring.pulse-pill {
+  animation-name: onboarding-pulse-pill;
+}
 
 @keyframes onboarding-nudge {
   0%, 100% { transform: translateY(0);   opacity: 1;    }
@@ -103,4 +113,65 @@
   .hero-pop {
     animation: hero-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.3s both;
   }
+}
+
+/* === Pagine dell'app (dashboard): fondo scuro anche sopra e sotto.
+   Il body è bianco per tutto il sito (layout.tsx): su iPhone si vedeva una fascia
+   bianca sotto l'orologio e sotto la barra di Safari (rapporto 360, T10).
+   app/dashboard/layout.tsx avvolge la pagina in .app-dark. */
+html:has(.app-dark),
+html:has(.app-dark) body {
+  background-color: #111B21;
+}
+/* La pagina bloccata sotto una finestra non deve "saltare" di lato da computer
+   quando sparisce la barra di scorrimento. */
+html:has(.app-dark) {
+  scrollbar-gutter: stable;
+}
+
+/* === Finestre e fogli sopra la tastiera (rapporto 360, B1: T2, T9, M6, M8).
+   Le variabili le scrive app/lib/page-layer.ts dalla parte visibile dello
+   schermo (visualViewport): su iPhone la tastiera non accorcia la pagina, e una
+   finestra `inset-0` finiva per metà sotto la tastiera. Senza JavaScript o
+   senza visualViewport valgono i valori di riserva: 100% di un elemento fixed è
+   l'altezza della finestra, cioè lo stesso `inset-0` di prima. */
+.wl-viewport {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--wl-vv-top, 0px);
+  height: var(--wl-vv-height, 100%);
+}
+
+/* Una finestra aperta: la pagina sotto non scorre e non si "tira giù per
+   ricaricare" (Safari ricaricava e la finestra si chiudeva, M8). */
+html.wl-layer-open,
+html.wl-layer-open body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Mentre si scrive c'è poco spazio sopra la tastiera: via le righe di contorno
+   grigie e gli avvisi che non si possono correggere scrivendo (fascia oraria,
+   WhatsApp scollegato); quelli che dicono quando parte restano su UNA riga,
+   più bassa. Prima, con tre avvisi, il campo del messaggio spariva e Invia
+   finiva tagliato sotto il bordo (revisione B3). */
+html.wl-keyboard-open .wl-hide-on-keyboard {
+  display: none;
+}
+/* Una riga con i puntini (non line-clamp: con il padding la seconda riga
+   si vedeva a metà sotto la prima). */
+html.wl-keyboard-open .wl-clamp-on-keyboard {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-top: 0.375rem;
+  padding-bottom: 0.375rem;
+}
+
+/* Margine in basso per la barretta dell'iPhone (B5 del 30/9): era usata in tre
+   punti ma non era definita da nessuna parte. Almeno 1.25rem anche dove il
+   browser non dà la misura (env = 0). Fuori da @layer: vince su p-5 e simili. */
+.pb-safe {
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
 }

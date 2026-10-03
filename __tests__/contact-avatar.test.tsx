@@ -59,9 +59,12 @@ describe('ContactAvatar', () => {
     expect(container.textContent || '').not.toMatch(/\d/);
   });
 
-  test('variant="group" con nome → iniziali del gruppo e mai la foto', () => {
+  // B6/T34: con le iniziali ("PW") un gruppo sembrava una persona. Ora sempre
+  // l'icona con due persone, come WhatsApp.
+  test('variant="group" con nome → icona Users, niente iniziali, mai la foto', () => {
     const { container } = render(<ContactAvatar name="🏀 Under 12" number="120363000000000001@g.us" variant="group" photoSrc="https://example.test/p.jpg" />);
-    expect(screen.getByText('U1')).toBeInTheDocument();
+    expect(screen.queryByText('U1')).not.toBeInTheDocument();
+    expect(container.querySelector('svg.lucide-users')).toBeInTheDocument();
     expect(container.querySelector('img')).toBeNull();
   });
 });

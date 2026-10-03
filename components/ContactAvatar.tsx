@@ -9,7 +9,8 @@ interface ContactAvatarProps {
   size?: 'sm' | 'md' | 'lg';
   className?: string;
   photoSrc?: string;
-  // 'group' = gruppo WhatsApp: fondo verde scuro, icona Users, mai foto.
+  // 'group' = gruppo WhatsApp: fondo verde scuro, sempre l'icona con due
+  // persone (mai iniziali né foto).
   variant?: 'person' | 'group';
 }
 
@@ -30,6 +31,14 @@ const SIZES = {
   lg: 'w-14 h-14 text-base',
 };
 
+// Icona a metà del cerchio. Prima `w-1/2` dentro uno <span> senza larghezza:
+// l'icona del gruppo usciva minuscola (rapporto 360, T34).
+const ICON_SIZES = {
+  sm: 'w-4 h-4',
+  md: 'w-5 h-5',
+  lg: 'w-7 h-7',
+};
+
 function hashNumber(number: string): number {
   let h = 0;
   for (let i = 0; i < number.length; i++) h = (h * 31 + number.charCodeAt(i)) >>> 0;
@@ -39,8 +48,10 @@ function hashNumber(number: string): number {
 export function ContactAvatar({ name, number, size = 'md', className = '', photoSrc, variant = 'person' }: ContactAvatarProps) {
   const isGroup = variant === 'group';
   // Persona col suo numero come "nome": niente "3" nel cerchio, l'omino. Un
-  // nome scelto ("118") e un gruppo "2012" (l'annata) tengono le iniziali.
-  const initials = computeInitials(isGroup ? name : realPersonName(name, number));
+  // nome scelto ("118") tiene le iniziali. Un gruppo invece mostra SEMPRE
+  // l'icona con due persone, come WhatsApp: con le iniziali ("PW") sembrava
+  // una persona (rapporto 360, T34).
+  const initials = isGroup ? '' : computeInitials(realPersonName(name, number));
   const sizeClass = SIZES[size];
 
   const [loaded, setLoaded] = useState(false);
@@ -70,8 +81,8 @@ export function ContactAvatar({ name, number, size = 'md', className = '', photo
     >
       <span className={`flex items-center justify-center ${loaded && showImage ? 'opacity-0' : 'opacity-100'}`}>
         {initials || (isGroup
-          ? <Users className="w-1/2 h-1/2" aria-hidden="true" />
-          : <User className="w-1/2 h-1/2" aria-hidden="true" />)}
+          ? <Users className={ICON_SIZES[size]} aria-hidden="true" />
+          : <User className={ICON_SIZES[size]} aria-hidden="true" />)}
       </span>
       {showImage && (
         <img

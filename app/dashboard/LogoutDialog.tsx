@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useModalHistory } from '../lib/use-modal-history';
 
 export type LogoutChoice = 'device' | 'pause' | 'cancel' | 'keep';
 
@@ -24,17 +25,21 @@ export function LogoutDialog({ open, pendingCount, onCancel, onConfirm }: {
   onCancel: () => void;
   onConfirm: (choice: LogoutChoice) => void;
 }) {
+  // Indietro chiude solo questa finestra, come "Resta collegato" (rapporto 360, T13).
+  useModalHistory(open, onCancel);
   if (!open) return null;
   const n = pendingCount;
   const btn = 'w-full rounded-xl px-4 py-3 text-sm font-semibold text-left transition-colors';
+  // Con la coda le scelte sono tante: su un telefono piccolo la finestra scorre
+  // da sola (non la pagina sotto) e l'ultima scelta resta sopra la barretta.
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center" onClick={onCancel}>
+    <div className="wl-viewport z-modal bg-black/60 flex items-end sm:items-center justify-center" onClick={onCancel} data-testid="logout-overlay">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="logout-title"
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-sm sm:mx-4 bg-[#1F2C33] border border-[#2A3942] rounded-t-2xl sm:rounded-2xl p-5 space-y-3"
+        className="w-full max-h-full overflow-y-auto overscroll-contain sm:max-w-sm sm:mx-4 bg-[#1F2C33] border border-[#2A3942] rounded-t-2xl sm:rounded-2xl p-5 pb-safe space-y-3"
       >
         <h2 id="logout-title" className="text-white font-bold text-lg">Vuoi uscire?</h2>
         <p className="text-sm text-gray-300 leading-snug">

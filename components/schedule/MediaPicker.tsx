@@ -190,7 +190,7 @@ export function MediaPicker({ open, onClose, onAttached }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-sheet flex items-end justify-center"
+      className="wl-viewport z-sheet flex items-end justify-center"
       role="dialog"
       aria-modal="true"
       aria-label="Allega"

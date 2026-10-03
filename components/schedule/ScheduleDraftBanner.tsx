@@ -18,6 +18,8 @@ interface DraftValues {
   date: Date;
   time: string;
   recurrence: RecurrenceValue;
+  /** Giorni scelti per "ogni settimana" (Date.getDay()). */
+  weekDays?: number[];
   media: MediaAttachment | null;
 }
 
@@ -25,6 +27,7 @@ export interface DraftApply {
   message: string;
   media: MediaAttachment | null;
   recurrence: RecurrenceValue;
+  weekDays: number[];
   /** null = l'orario della bozza è già passato: resta quello di default. */
   when: { date: Date; time: string } | null;
 }
@@ -62,9 +65,10 @@ export function useScheduleDraft(o: Options): ScheduleDraftControl {
   applyRef.current = o.apply;
 
   const { message, date, time, recurrence, media } = o.values;
+  const weekDays = o.values.weekDays ?? [];
   const number = o.contact?.number ?? null;
   const name = o.contact?.name;
-  const sig = JSON.stringify([message, date.getTime(), time, recurrence, media?.media_url ?? null]);
+  const sig = JSON.stringify([message, date.getTime(), time, recurrence, weekDays, media?.media_url ?? null]);
 
   useEffect(() => {
     if (!o.enabled || !number) {
@@ -93,6 +97,7 @@ export function useScheduleDraft(o: Options): ScheduleDraftControl {
         message,
         scheduledAt: scheduledIso(date, time),
         recurrence,
+        weekDays,
         media,
       });
       savedThisOpen.current = true;
@@ -108,7 +113,7 @@ export function useScheduleDraft(o: Options): ScheduleDraftControl {
     resume: () => {
       const d = pending;
       if (!d) return;
-      applyRef.current({ message: d.message, media: d.media, recurrence: d.recurrence, when: draftDateTime(d) });
+      applyRef.current({ message: d.message, media: d.media, recurrence: d.recurrence, weekDays: d.weekDays ?? [], when: draftDateTime(d) });
       setPending(null);
     },
     discard: () => {

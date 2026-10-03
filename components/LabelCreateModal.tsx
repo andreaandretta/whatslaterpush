@@ -76,7 +76,7 @@ export default function LabelCreateModal({ open, onClose, onCreated }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-dialog flex items-center justify-center p-4"
+      className="wl-viewport z-dialog flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Nuova etichetta"

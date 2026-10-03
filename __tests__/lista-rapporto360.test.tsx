@@ -39,7 +39,7 @@ describe('A11 — pressione lunga', () => {
     expect(row.className).toContain('[-webkit-touch-callout:none]');
   });
 
-  test('il foglio dice "Tieni premuto", non "Tap lungo"', () => {
+  test('il foglio non dice "Tap lungo" e il suggerimento si legge', () => {
     render(
       <MessageActionsSheet
         open onClose={() => {}} title="Mario"
@@ -47,7 +47,8 @@ describe('A11 — pressione lunga', () => {
         isPaused={false} canEdit canPause canRetry={false} canDelete
       />,
     );
-    const hint = screen.getByText('Tieni premuto un messaggio per riaprire questo menu.');
+    // B6/T14: basta un tocco sulla riga, il foglio insegna quello.
+    const hint = screen.getByText('Tocca un messaggio della lista per aprire questo menu.');
     expect(screen.queryByText(/Tap lungo/)).not.toBeInTheDocument();
     // Revisione: si legge (12px #8696A0, 4,7:1), non più 11px gray-500.
     expect(hint.className).toMatch(/\btext-xs\b/);
@@ -70,15 +71,17 @@ describe('A6 — nome fatto di cifre nella lista', () => {
     expect(screen.queryByText('+39 340 111 1111')).not.toBeInTheDocument();
   });
 
-  test('il cerchio di una persona non mostra la prima cifra; un gruppo "2012" tiene le iniziali', () => {
+  test('il cerchio di una persona non mostra la prima cifra; un gruppo mostra l\'icona, non le cifre', () => {
     const { container, rerender } = render(<ContactAvatar name="393331234567" number="393331234567" />);
     expect(container.textContent).toBe('');
     rerender(<ContactAvatar name="Mario Rossi" number="393331234567" />);
     expect(container.textContent).toBe('MR');
     rerender(<ContactAvatar name="118" number="393401111111" />);
     expect(container.textContent).toBe('1');
+    // B6/T34: un gruppo ha sempre l'icona con due persone (prima le iniziali, "2").
     rerender(<ContactAvatar name="2012" number="120363000000000001@g.us" variant="group" />);
-    expect(container.textContent).toBe('2');
+    expect(container.textContent).toBe('');
+    expect(container.querySelector('svg.lucide-users')).toBeInTheDocument();
   });
 
   test('{nome} con un nome fatto di cifre si toglie, non diventa "Ciao 393…"', () => {

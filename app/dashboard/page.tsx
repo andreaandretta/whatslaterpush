@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Calendar, CheckCircle2, CreditCard, Loader2, LogOut, Send, X,
+  Calendar, CheckCircle2, CreditCard, Loader2, LogOut, Plus, X,
 } from 'lucide-react';
 import ContactPickerModal, { type PickedContact } from '@/components/ContactPickerModal';
 import { prefetchContacts, setContactsCacheOwner } from '@/app/lib/contacts-client-cache';
@@ -18,8 +18,10 @@ import { MessagesEmptyState } from '../components/MessagesEmptyState';
 import { shouldShowOnboardingHints, markOnboardingDone } from '../../components/onboarding/OnboardingTour';
 import { getPlanLimits, getPlanName } from '../lib/plans';
 import { WARMUP_RAMP } from '../lib/anti-ban';
+import { todayStripText, type TodayLimit } from '../lib/daily-limit';
 import { apiErrorText } from '../lib/api-error-text';
-import { formatShortWhen } from '../lib/schedule-quick';
+import { formatShortWhen, recurrenceTagLabel, resumeNextOccurrence } from '../lib/schedule-quick';
+import { useModalHistory, useModalLayerOpen } from '../lib/use-modal-history';
 import { isGroupJid, recipientDisplayName } from '../lib/jid';
 import { LogoutDialog, type LogoutChoice } from './LogoutDialog';
 import { checkSession, sessionRetryDelayMs, goTo } from '../lib/session-load';
@@ -69,6 +71,9 @@ export default function DashboardPage() {
   const [messagesLoading, setMessagesLoading] = useState(true);
   const [subscription, setSubscription] = useState<SubscriptionState>({ plan: 'unknown', trial_ends_at: null, expired: false, rawPlan: 'unknown', billingEnabled: true, betaEndDate: null });
   const [connected, setConnected] = useState(true); // Evolution link state from /api/messages
+  // Limite di oggi dalla GET (rampa dei primi giorni, piano, invii fatti, coda):
+  // null = server vecchio o calcolo non riuscito → testo generico.
+  const [todayLimit, setTodayLimit] = useState<TodayLimit | null>(null);
   const [sessionValidated, setSessionValidated] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -184,6 +189,7 @@ export default function DashboardPage() {
           setMessages(Array.isArray(d.messages) ? d.messages : []);
           setSubscription({ plan: d.subscription_plan || 'free', trial_ends_at: d.trial_ends_at, expired: false, rawPlan: d.raw_plan || d.subscription_plan || 'free', billingEnabled: d.billing_enabled !== false, betaEndDate: d.beta_end_date || null });
           setConnected(d.connection_status === 'open');
+          setTodayLimit(d.today_limit && typeof d.today_limit.limit === 'number' ? d.today_limit : null);
           if (typeof d.total_scheduled_lifetime === 'number') {
             const next = d.total_scheduled_lifetime;
             if (prevLifetimeRef.current === 0 && next === 1) {
@@ -416,6 +422,30 @@ export default function DashboardPage() {
     }
   }, [fetchMessages, showToast]);
 
+  // "Riprendi dalla prossima volta" (serie in pausa con l'orario passato,
+  // rapporto 360 B2/T17): la riga torna in coda alla prossima volta della serie,
+  // all'ora di sempre. Il vecchio avviso non parte, le volte perse si saltano.
+  // keep_recurrence_anchor: l'ora delle volte dopo resta quella scelta all'inizio.
+  const handleResumeNext = useCallback(async (msg: MessagesSectionMessage, next: Date) => {
+    setTimePassedMsg(null);
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: msg.id, status: 'pending', scheduled_at: next.toISOString(), keep_recurrence_anchor: true }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.message || apiErrorText(data, res.status));
+      } else {
+        showToast(`Ripreso — la prossima volta parte ${formatShortWhen(next)}`);
+      }
+      fetchMessages();
+    } catch {
+      showToast('Errore di rete — riprova.');
+    }
+  }, [fetchMessages, showToast]);
+
   // "Scegli un nuovo orario": la modale di modifica, che salvando rimette in coda.
   const handleResumeWithNewTime = useCallback((msg: MessagesSectionMessage) => {
     setTimePassedMsg(null);
@@ -557,7 +587,7 @@ export default function DashboardPage() {
         {sessionOffline && (
           <div role="status" className="space-y-3">
             <p className="text-sm text-gray-300">Connessione assente — riprovo da solo.</p>
-            <p className="text-xs text-gray-500">WhatsApp resta collegato: i messaggi programmati partono comunque.</p>
+            <p className="text-xs text-gray-400">WhatsApp resta collegato: i messaggi programmati partono comunque.</p>
             <button
               type="button"
               onClick={() => sessionRetryRef.current()}
@@ -583,6 +613,7 @@ export default function DashboardPage() {
         subscription={subscription}
         messages={messages}
         connected={connected}
+        todayLimit={todayLimit}
       />
 
       <main className="flex-1 flex flex-col w-full max-w-2xl mx-auto px-4 pt-6 pb-12 space-y-8">
@@ -607,7 +638,7 @@ export default function DashboardPage() {
           ) : messagesLoading ? (
             <div className="bg-[#202C33] rounded-2xl border border-[#2A3942] p-12 text-center">
               <Loader2 className="w-6 h-6 text-primary animate-spin mx-auto mb-2" />
-              <p className="text-gray-500">Caricamento...</p>
+              <p className="text-gray-400">Caricamento...</p>
             </div>
           ) : messages.length === 0 ? (
             showOnboardingHints
@@ -669,6 +700,8 @@ export default function DashboardPage() {
           mediaUnavailable={mediaUnavailable}
           connected={connected}
           resumeOnSave={editingResume}
+          todayLimit={todayLimit}
+          queue={messages}
         />
 
         {timePassedMsg && (
@@ -676,6 +709,7 @@ export default function DashboardPage() {
             msg={timePassedMsg}
             onCancel={() => setTimePassedMsg(null)}
             onSendNow={() => { void handleResumeNow(timePassedMsg); }}
+            onResumeNext={(next) => { void handleResumeNext(timePassedMsg, next); }}
             onPickTime={() => handleResumeWithNewTime(timePassedMsg)}
           />
         )}
@@ -696,19 +730,26 @@ export default function DashboardPage() {
           "Prossimi" queue is empty (no pending/awaiting message), so any user
           without scheduled messages gets guided to the action — not just
           first-run onboarding. Auto-quiets the moment a message is queued. */}
-      <div className="sm:hidden fixed bottom-6 right-6 z-fab">
+      {/* Sopra la barretta dell'iPhone quando il browser ne dà la misura (B5 del 30/9).
+          Pillola "+ Programma" alta 56px, testo 16px #0B141A sul verde (9,4:1):
+          prima un cerchio con l'aeroplanino, che fa pensare a "invia adesso"
+          (rapporto 360, T24). Il nome per i lettori di schermo contiene la
+          scritta a vista. */}
+      <div className="sm:hidden fixed bottom-[calc(1.5rem+env(safe-area-inset-bottom))] right-4 z-fab" data-testid="mobile-fab">
         {queueEmpty && (
           <span
             aria-hidden
-            className="absolute inset-0 rounded-full bg-primary onboarding-pulse-ring pointer-events-none"
+            className="absolute inset-0 rounded-full bg-primary onboarding-pulse-ring pulse-pill pointer-events-none"
           ></span>
         )}
         <button
+          type="button"
           onClick={() => setContactPickerOpen(true)}
-          className="relative w-14 h-14 bg-primary text-[#0B141A] rounded-full shadow-2xl flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
-          aria-label="Manda messaggio"
+          className="relative h-14 pl-4 pr-5 bg-primary text-[#0B141A] rounded-full shadow-2xl flex items-center gap-1.5 text-base font-semibold hover:bg-primary-hover active:scale-95 transition-transform"
+          aria-label="Programma un messaggio"
         >
-          <Send className="w-6 h-6 -ml-0.5" fill="currentColor" />
+          <Plus className="w-6 h-6" strokeWidth={2.5} aria-hidden="true" />
+          Programma
         </button>
       </div>
 
@@ -716,15 +757,16 @@ export default function DashboardPage() {
         {queueEmpty && (
           <span
             aria-hidden
-            className="absolute inset-0 rounded-full bg-primary onboarding-pulse-ring pointer-events-none"
+            className="absolute inset-0 rounded-full bg-primary onboarding-pulse-ring pulse-pill pointer-events-none"
           ></span>
         )}
         <button
+          type="button"
           onClick={() => setContactPickerOpen(true)}
-          className="relative bg-primary text-[#0B141A] rounded-full shadow-2xl px-6 py-4 flex items-center gap-2 font-semibold hover:scale-105 active:scale-95 transition-transform"
+          className="relative bg-primary text-[#0B141A] rounded-full shadow-2xl h-14 px-6 flex items-center gap-2 text-base font-semibold hover:bg-primary-hover active:scale-95 transition-transform"
         >
-          <Send className="w-5 h-5 -ml-0.5" fill="currentColor" />
-          Manda messaggio
+          <Plus className="w-5 h-5" strokeWidth={2.5} aria-hidden="true" />
+          Programma un messaggio
         </button>
       </div>
 
@@ -733,8 +775,10 @@ export default function DashboardPage() {
       {/* Micro-riga legale — sostituisce il footer marketing su dashboard.
           Niente blocco verde / CTA, solo riassicurazione cifratura.
           shrink-0 so the flex-col root keeps it anchored at the bottom. */}
-      <footer className="shrink-0 border-t border-[#2A3942] bg-[#0B141A] py-3 px-4 text-center">
-        <p className="text-[11px] text-gray-600 leading-relaxed">
+      {/* 12px #8696A0 su #0B141A = 6,1:1 (prima 11px gray-600, 2,46:1). pb-24 su
+          telefono: la riga non finisce sotto la pillola "+ Programma". */}
+      <footer className="shrink-0 border-t border-[#2A3942] bg-[#0B141A] pt-3 pb-24 sm:pb-3 px-4 text-center">
+        <p className="text-xs text-[#8696A0] leading-relaxed">
           © 2026 WhatsLater · I tuoi messaggi sono cifrati. Non li leggiamo mai.
         </p>
       </footer>
@@ -768,16 +812,21 @@ export default function DashboardPage() {
   );
 }
 
-// Allegato di una riga nel formato della modale (null se manca o è stato
-// già rimosso dallo Storage dalla pulizia dei 30 giorni).
 // "Riattiva" su un messaggio in pausa il cui orario è già passato. Pull-only:
 // si apre solo dal tocco dell'utente, nessuna notifica.
-function TimePassedDialog({ msg, onCancel, onSendNow, onPickTime }: {
-  msg: MessagesSectionMessage; onCancel: () => void; onSendNow: () => void; onPickTime: () => void;
+// Serie (rapporto 360 B2/T17): prima c'erano solo "Invia ora" (che manda il
+// vecchio avviso) e "Scegli un nuovo orario" (che rifà l'ora di tutte le volte
+// dopo). Ora la prima scelta è "Riprendi dalla prossima volta (…)".
+function TimePassedDialog({ msg, onCancel, onSendNow, onResumeNext, onPickTime }: {
+  msg: MessagesSectionMessage; onCancel: () => void; onSendNow: () => void; onResumeNext: (next: Date) => void; onPickTime: () => void;
 }) {
+  // Indietro chiude solo questa finestra, come "Lascia in pausa" (rapporto 360, T13).
+  useModalHistory(true, onCancel);
   const when = formatShortWhen(new Date(msg.scheduled_at));
+  const next = msg.recurrence_rule ? resumeNextOccurrence(msg) : null;
+  const seriesLabel = msg.recurrence_rule ? recurrenceTagLabel(msg.recurrence_rule) : null;
   return (
-    <div className="fixed inset-0 z-sheet flex items-end sm:items-center justify-center" onClick={onCancel}>
+    <div className="wl-viewport z-sheet flex items-end sm:items-center justify-center" onClick={onCancel}>
       <div className="absolute inset-0 bg-black/60" />
       <div
         role="dialog"
@@ -785,16 +834,32 @@ function TimePassedDialog({ msg, onCancel, onSendNow, onPickTime }: {
         aria-labelledby="time-passed-title"
         data-testid="time-passed-dialog"
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full sm:max-w-sm sm:mx-4 bg-[#1F2C33] border-t sm:border border-[#2A3942] rounded-t-2xl sm:rounded-2xl p-5 pb-safe shadow-2xl"
+        className="relative w-full max-h-full overflow-y-auto overscroll-contain sm:max-w-sm sm:mx-4 bg-[#1F2C33] border-t sm:border border-[#2A3942] rounded-t-2xl sm:rounded-2xl p-5 pb-safe shadow-2xl"
       >
         <h3 id="time-passed-title" className="text-white font-semibold">L&apos;orario è già passato</h3>
-        <p className="text-sm text-gray-400 mt-1">
-          Era programmato per {when}. Se lo riprendi così parte subito, con il testo di allora: controlla che sia ancora giusto.
-        </p>
+        {next ? (
+          <p className="text-sm text-gray-400 mt-1">
+            Era programmato per {when}. È un messaggio che si ripete{seriesLabel ? ` (${seriesLabel})` : ''}: puoi ripartire dalla prossima volta, senza mandare quello vecchio.
+          </p>
+        ) : (
+          <p className="text-sm text-gray-400 mt-1">
+            Era programmato per {when}. Se lo riprendi così parte subito, con il testo di allora: controlla che sia ancora giusto.
+          </p>
+        )}
         <div className="mt-4 flex flex-col gap-2">
+          {next && (
+            <button
+              onClick={() => onResumeNext(next)}
+              className="w-full py-3 rounded-xl bg-primary/15 text-primary font-semibold hover:bg-primary/25 transition-colors"
+            >
+              Riprendi dalla prossima volta ({formatShortWhen(next)})
+            </button>
+          )}
           <button
             onClick={onSendNow}
-            className="w-full py-3 rounded-xl bg-primary/15 text-primary font-semibold hover:bg-primary/25 transition-colors"
+            className={next
+              ? 'w-full py-3 rounded-xl bg-white/[0.06] text-gray-100 font-semibold hover:bg-white/10 transition-colors'
+              : 'w-full py-3 rounded-xl bg-primary/15 text-primary font-semibold hover:bg-primary/25 transition-colors'}
           >
             Invia ora
           </button>
@@ -816,6 +881,8 @@ function TimePassedDialog({ msg, onCancel, onSendNow, onPickTime }: {
   );
 }
 
+// Allegato di una riga nel formato della modale (null se manca o è stato
+// già rimosso dallo Storage dalla pulizia dei 30 giorni).
 function mediaOf(msg: MessagesSectionMessage): { media_type: 'image' | 'video' | 'document' | 'audio'; media_url: string; media_filename: string; bytes: number } | null {
   const mt = msg.media_type;
   return msg.media_url && (mt === 'image' || mt === 'video' || mt === 'document' || mt === 'audio')
@@ -824,17 +891,22 @@ function mediaOf(msg: MessagesSectionMessage): { media_type: 'image' | 'video' |
 }
 
 // --- Status Strip (fuses ConnectedCard + PlanBadge + DailyCapBadge + contextual upgrade) ---
-function StatusStrip({ userPhone, subscription, messages, connected }: {
+function StatusStrip({ userPhone, subscription, messages, connected, todayLimit }: {
   userPhone: string;
   subscription: SubscriptionState;
   messages: ScheduledMessage[];
   connected: boolean;
+  todayLimit: TodayLimit | null;
 }) {
   const planKnown = subscription.plan !== 'unknown';
   const planLabel = getPlanName(subscription.plan);
   const limits = getPlanLimits(subscription.plan);
   // 'beta' included: transparency on the beta cap (50/day) beats hiding it.
-  const showCounter = planKnown && (subscription.plan === 'free' || subscription.plan === 'personal' || subscription.plan === 'professional' || subscription.plan === 'beta');
+  // Nei primi giorni dal collegamento si vede con qualunque piano: è lì che
+  // il limite vero (5, 10…) è lontano da quello del piano.
+  const showCounter = planKnown && (subscription.plan === 'free' || subscription.plan === 'personal' || subscription.plan === 'professional' || subscription.plan === 'beta' || !!todayLimit?.warmup);
+  // Numero vero dal server (B3): "Oggi partono 2 messaggi (massimo 5 oggi) · nei primi giorni…".
+  const strip = todayLimit ? todayStripText(todayLimit) : null;
 
   // Count messages scheduled or sent today (matches legacy DailyCapBadge logic)
   const today = new Date();
@@ -924,9 +996,18 @@ function StatusStrip({ userPhone, subscription, messages, connected }: {
         {/* Riga 2 mobile / parte destra desktop: counter + upgrade */}
         {(showCounter || upgradeCopy || showTrialBanner || betaEndLabel) && (
           <div className="flex items-center justify-between gap-2 flex-wrap sm:justify-end sm:gap-3">
-            {showCounter && (
-              // "meno nei primi giorni" solo se la rampa (da 5) scende sotto il piano:
-              // col Free (3 al giorno) non è vero. Grigio chiaro a 13px: 8,8:1 sul fondo.
+            {showCounter && strip && (
+              // Il limite di OGGI calcolato come il cron (rampa ∧ piano). Grigio
+              // chiaro a 13px per la nota: 8,8:1 sul fondo.
+              <span className="text-white font-medium" data-testid="daily-counter">
+                {strip.main}
+                {strip.detail && <span className="text-[#AEBAC1] text-[13px]">{' '}{strip.detail}</span>}
+                {strip.note && <span className="text-[#AEBAC1] text-[13px]">{' · '}{strip.note}</span>}
+              </span>
+            )}
+            {showCounter && !strip && (
+              // Senza il dato del server: "meno nei primi giorni" solo se la rampa
+              // (da 5) scende sotto il piano: col Free (3 al giorno) non è vero.
               <span className="text-white font-medium" data-testid="daily-counter">
                 Oggi {countToday === 1 ? 'parte' : 'partono'} {countToday} messagg{countToday === 1 ? 'io' : 'i'}
                 <span className="text-[#AEBAC1] text-[13px] ml-1">(fino a {limits.dailyLimit} al giorno{limits.dailyLimit > WARMUP_RAMP[0] ? ', meno nei primi giorni' : ''})</span>
@@ -1056,7 +1137,7 @@ function EmptyState() {
         Nessun messaggio programmato
       </h2>
       <p className="text-gray-400 max-w-md mx-auto">
-        Programma il prossimo messaggio per la squadra o per le famiglie. Tocca il bottone in basso a destra per iniziare.
+        Programma il prossimo messaggio per la squadra o per le famiglie. Tocca «Programma» in basso a destra per iniziare.
       </p>
     </div>
   );
@@ -1069,6 +1150,10 @@ function DashboardNavbar({ userPhone, plan, onLogout }: {
   onLogout: () => void;
 }) {
   const isPaying = plan === 'personal' || plan === 'professional' || plan === 'business';
+  // Con una finestra o un foglio aperto la barra sparisce (rapporto 360, T9):
+  // prima restava sopra la finestra del messaggio, a piena luce, con l'icona di
+  // uscita toccabile mentre si scriveva.
+  const layerOpen = useModalLayerOpen();
 
   const handlePortal = async () => {
     try {
@@ -1085,7 +1170,11 @@ function DashboardNavbar({ userPhone, plan, onLogout }: {
   };
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-[#111B21]/95 backdrop-blur-md border-b border-[#2A3942] h-12">
+    <nav
+      className={`fixed top-0 left-0 right-0 z-50 bg-[#111B21]/95 backdrop-blur-md border-b border-[#2A3942] h-12${layerOpen ? ' invisible' : ''}`}
+      aria-hidden={layerOpen || undefined}
+      data-testid="dashboard-nav"
+    >
       <div className="max-w-4xl mx-auto h-full flex items-center justify-between gap-2 px-3 sm:px-4">
         <div className="flex items-center gap-1.5 min-w-0">
           <Logo size={22} />
@@ -1331,7 +1420,7 @@ function getWelcomeCopy(segment: Segment): string {
     case 'B':
     case 'C':
     default:
-      return 'Benvenuto! Clicca Manda messaggio per programmare il tuo primo messaggio.';
+      return 'Benvenuto! Tocca Programma per programmare il tuo primo messaggio.';
   }
 }
 
@@ -1359,7 +1448,7 @@ function HowToUseBox() {
       <ol className="space-y-3 text-sm">
         <li className="flex gap-3">
           <span className="bg-primary/10 text-primary w-6 h-6 rounded-full flex items-center justify-center font-bold shrink-0 text-xs">1</span>
-          <span>Clicca <strong>Manda messaggio</strong></span>
+          <span>Tocca <strong>Programma</strong></span>
         </li>
         <li className="flex gap-3">
           <span className="bg-primary/10 text-primary w-6 h-6 rounded-full flex items-center justify-center font-bold shrink-0 text-xs">2</span>

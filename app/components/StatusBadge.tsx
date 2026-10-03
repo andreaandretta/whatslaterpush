@@ -26,8 +26,9 @@ const TONE_STYLES: Record<string, { bg: string; text: string; ring: string; icon
   // Pending = waiting → AMBER (not green — waiting isn't a success state).
   pending:   { bg: 'bg-amber-500/12',   text: 'text-amber-400',   ring: 'ring-amber-500/30',    icon: Clock        },
   sending:   { bg: 'bg-sky-500/15',     text: 'text-sky-400',     ring: 'ring-sky-500/30',      icon: Loader2      },
-  // Sent = past-tense success → NEUTRAL pill with a small green check icon.
-  // Reserving solid green for the primary FAB only keeps the visual hierarchy.
+  // Sent = past-tense success → NEUTRAL pill. Nella lista una riga inviata usa
+  // DeliveryStatusIcon con la parola (spunte come WhatsApp, T34): questa resta
+  // per gli altri usi. Il verde è solo per le azioni (T35): spunta grigia.
   sent:      { bg: 'bg-white/[0.06]',   text: 'text-gray-400',    ring: 'ring-white/10',        icon: Check        },
   failed:    { bg: 'bg-red-500/15',     text: 'text-red-400',     ring: 'ring-red-500/30',      icon: AlertCircle  },
   cancelled: { bg: 'bg-gray-500/10',    text: 'text-gray-400',    ring: 'ring-gray-500/20',     icon: AlertCircle  },
@@ -40,11 +41,13 @@ export function StatusBadge({ status, countdown }: { status: string; countdown?:
   const Icon = style.icon;
   const isSpinner = meta.tone === 'sending';
   return (
+    // 12px (prima 11px, rapporto 360 T22). Contrasti sul fondo della riga
+    // #202C33: in coda ambra 6,9:1, in pausa 7,8:1, in invio 5,3:1, annullato 5,1:1.
     <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ring-1 ${style.bg} ${style.text} ${style.ring}`}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ring-1 ${style.bg} ${style.text} ${style.ring}`}
+      data-testid="status-badge"
     >
-      {/* Sent gets the green check; everything else takes the tone color. */}
-      <Icon className={`w-3 h-3 ${meta.tone === 'sent' ? 'text-primary' : ''} ${isSpinner ? 'animate-spin' : ''}`} />
+      <Icon className={`w-3.5 h-3.5 ${isSpinner ? 'animate-spin' : ''}`} aria-hidden="true" />
       {meta.tone === 'pending' && countdown ? countdown : meta.label}
     </span>
   );

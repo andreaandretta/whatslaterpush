@@ -19,7 +19,7 @@ export function MessagesEmptyState({ className = '' }: Props) {
       </div>
       <p className="text-base font-semibold text-white mb-1">Nessun messaggio in coda</p>
       <p className="text-sm text-gray-400 leading-relaxed max-w-[260px]">
-        Programma il tuo primo promemoria col bottone verde qui sotto.
+        Programma il tuo primo promemoria: tocca «Programma» qui sotto.
       </p>
     </div>
   );

@@ -37,6 +37,12 @@ function digitsQuery(q: string): string | null {
 
 // Quante righe si montano per volta. La ricerca lavora SEMPRE sull'intera lista:
 // è solo il render a essere a finestra.
+// Titoli di sezione come nella lista dei messaggi: 12px maiuscoletto #8696A0
+// (5,7:1 su #111B21). Prima erano verdi come le azioni (rapporto 360, T35):
+// il verde resta per "Aggiorna", "Mostra altri" e i pulsanti.
+const SECTION_TITLE = 'text-xs font-semibold uppercase tracking-wider';
+const SECTION_TITLE_COLOR = '#8696A0';
+
 const PAGE_SIZE = 60;
 
 // Lo snapshot dei gruppi (solo in memoria) vale 10 minuti: dentro questa
@@ -569,15 +575,20 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
     || groupsState.kind === 'disconnected'
     || ((groupsState.kind === 'waiting' || groupsState.kind === 'loading' || groupsState.kind === 'error') && groupsState.visible));
 
+  // Legato alla parte visibile dello schermo (wl-viewport, rapporto 360 B1/T2):
+  // con la tastiera aperta la testata con la X resta in cima e la lista finisce
+  // sopra la tastiera. Prima il contenitore interno era `fixed inset-0`, alto
+  // quanto la pagina: la testata usciva in alto e i risultati restavano sotto.
   return (
     <div
-      className="fixed inset-0 z-modal bg-black/60 sm:flex sm:items-center sm:justify-center sm:px-4"
+      className="wl-viewport z-modal bg-black/60 sm:flex sm:items-center sm:justify-center sm:px-4"
       role="dialog"
       aria-modal="true"
+      data-testid="contact-picker-modal"
       onClick={onClose}
     >
       <div
-        className="fixed inset-0 sm:static sm:h-auto sm:max-h-[85vh] sm:max-w-md sm:rounded-3xl sm:shadow-soft flex flex-col overflow-hidden"
+        className="absolute inset-0 sm:static sm:h-auto sm:max-h-[85%] sm:max-w-md sm:rounded-3xl sm:shadow-soft flex flex-col overflow-hidden"
         style={{ backgroundColor: '#111B21' }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -585,20 +596,18 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
           className="flex items-center justify-between px-4 pt-[max(env(safe-area-inset-top),12px)] pb-3 text-white shrink-0"
           style={{ backgroundColor: '#1F2C34' }}
         >
-          <h2 className="font-semibold">Nuovo messaggio</h2>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setCsvOpen(true)}
-              aria-label="Importa un elenco di contatti"
-              title="Importa un elenco di contatti (file CSV)"
-              className="p-1.5 rounded-full hover:bg-white/10"
-            >
-              <Upload className="w-4 h-4" />
-            </button>
-            <button onClick={onClose} aria-label="Chiudi" className="p-1 rounded-full hover:bg-white/10">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+          <h2 className="font-semibold text-base">Nuovo messaggio</h2>
+          {/* Testata con un solo comando, la X da 44×44 (rapporto 360, T33):
+              prima l'icona del CSV da 28px stava accanto alla X da 28px e un
+              tocco poteva prendere quella sbagliata. Il CSV è in fondo alla lista. */}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Chiudi"
+            className="shrink-0 w-11 h-11 -mr-2.5 -my-1 inline-flex items-center justify-center rounded-full hover:bg-white/10"
+          >
+            <X className="w-6 h-6" aria-hidden="true" />
+          </button>
         </div>
 
         <CsvImportDialog
@@ -620,9 +629,9 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
             onClick={() => setLabelManagerOpen(true)}
             aria-label="Gestisci etichette"
             title="Gestisci etichette"
-            className="shrink-0 p-2 mr-2 rounded-full text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+            className="shrink-0 w-11 h-11 mr-1 inline-flex items-center justify-center rounded-full text-[#AEBAC1] hover:text-white hover:bg-white/5 transition-colors"
           >
-            <Settings2 className="w-4 h-4" />
+            <Settings2 className="w-5 h-5" aria-hidden="true" />
           </button>
         </div>
 
@@ -654,10 +663,12 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
           </div>
         </div>
 
+        {/* overscroll-contain: in cima alla lista, tirare giù non ricarica la pagina (M8). */}
         <div
           ref={scrollRef}
-          className="flex-1 overflow-y-auto"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain"
           style={{ backgroundColor: '#111B21' }}
+          data-testid="contact-picker-scroll"
         >
           <button
             type="button"
@@ -741,9 +752,9 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
               {/* Aggiorna: area di tocco 44×44 che sborda nel padding dell'intestazione
                   (-my-3 dentro pt-3/pb-3) senza coprire la prima riga di gruppo. */}
               <div className="flex items-center justify-between min-h-[44px] px-4 pt-3 pb-3">
-                <span className="text-xs font-semibold uppercase" style={{ color: '#25D366' }}>
+                <h3 className={SECTION_TITLE} style={{ color: SECTION_TITLE_COLOR }}>
                   Gruppi
-                </span>
+                </h3>
                 {canRefreshGroups && (
                   <button
                     type="button"
@@ -771,12 +782,12 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
 
           {view.kind === 'list' && !searching && recents.length > 0 && (
             <>
-              <div
-                className="px-4 pt-3 pb-1 text-xs font-semibold uppercase"
-                style={{ color: '#25D366' }}
+              <h3
+                className={`px-4 pt-3 pb-1 ${SECTION_TITLE}`}
+                style={{ color: SECTION_TITLE_COLOR }}
               >
                 Recenti
-              </div>
+              </h3>
               {recents.map((c) => (
                 <ContactRow key={`r:${c.number}`} contact={c} onPick={handlePick} />
               ))}
@@ -785,12 +796,12 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
 
           {/* Conta quello che c'è sotto (anche durante la ricerca); 0 → niente titolo. */}
           {view.kind === 'list' && filtered.length > 0 && (
-            <div
-              className="px-4 pt-3 pb-1 text-xs font-semibold uppercase"
-              style={{ color: '#25D366' }}
+            <h3
+              className={`px-4 pt-3 pb-1 ${SECTION_TITLE}`}
+              style={{ color: SECTION_TITLE_COLOR }}
             >
               Contatti su WhatsApp ({filtered.length})
-            </div>
+            </h3>
           )}
 
           {view.kind === 'loading' && (
@@ -880,6 +891,21 @@ export default function ContactPickerModal({ open, onClose, onSelect }: ContactP
               </button>
             </>
           )}
+
+          {/* Importa da file: in fondo alla lista, non più nella testata (T33).
+              Serve di rado (un elenco della squadra preparato al computer). */}
+          <button
+            type="button"
+            onClick={() => setCsvOpen(true)}
+            className="w-full flex items-center gap-3 px-4 py-3 mt-2 mb-4 border-t border-[#2A3942] text-left text-sm hover:bg-[#1F2C34]"
+            style={{ color: '#D1D7DB' }}
+            data-testid="csv-import-row"
+          >
+            <span className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: '#2A3942' }}>
+              <Upload className="w-5 h-5" style={{ color: '#AEBAC1' }} aria-hidden="true" />
+            </span>
+            Importa un elenco di contatti (file CSV)
+          </button>
         </div>
       </div>
     </div>

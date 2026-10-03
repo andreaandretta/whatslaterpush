@@ -39,7 +39,7 @@ const faqs = [
   },
   {
     q: 'Posso programmare messaggi ricorrenti tipo "ogni lunedì alle 7 a Marco, papà di Luca"?',
-    a: 'Sì. Quando programmi il messaggio, tocca "Opzioni avanzate" e poi "Ripeti", e scegli: ogni giorno, ogni settimana (stesso giorno) o ogni mese (stesso giorno del mese). Per "ogni lunedì alle 7" programmi il primo lunedì alle 7 e imposti Ripeti → ogni lunedì: le occorrenze successive si creano da sole, e l\'orario resta quello italiano anche al cambio d\'ora legale. Ogni promemoria va a una persona: per avvisare tutti i genitori della squadra ne programmi uno per ciascuno. I gruppi WhatsApp sono in prova e non ancora aperti a tutti.',
+    a: 'Sì. Quando programmi il messaggio, tocca "Ripeti", subito sotto il giorno e l\'ora, e scegli: ogni giorno, ogni settimana (anche più giorni insieme, per esempio lunedì e giovedì) o ogni mese (stesso giorno del mese). Per "ogni lunedì alle 7" scegli lunedì alle 7 e imposti Ripeti → ogni lunedì: le volte successive si creano da sole, e l\'orario resta quello italiano anche al cambio d\'ora legale. Ogni promemoria va a una persona: per avvisare tutti i genitori della squadra ne programmi uno per ciascuno. I gruppi WhatsApp sono in prova e non ancora aperti a tutti.',
   },
 ];
 
